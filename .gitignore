@@ -1,0 +1,20 @@
+# Environnement Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Données générées à l'exécution (jamais versionnées)
+audio/
+messages/
+logs/
+status.json
+ring_trigger
+active_port.txt
+rclone_config.json
+dashboard_config.json
+secret_key.txt
+
+# Divers
+.DS_Store
+*.log
