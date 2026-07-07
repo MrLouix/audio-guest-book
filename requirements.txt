@@ -1,0 +1,8 @@
+# Dépendances Python du livre d'or téléphonique (§10 de la spécification)
+# Le pré-traitement audio (pydub) nécessite en plus le paquet système ffmpeg.
+
+RPi.GPIO
+Flask
+qrcode[pil]
+pydub
+werkzeug

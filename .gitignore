@@ -4,10 +4,15 @@ __pycache__/
 .venv/
 venv/
 
-# Données générées à l'exécution (jamais versionnées)
-audio/
-messages/
-logs/
+# Données générées/spécifiques à l'événement (jamais versionnées)
+audio_src/*
+!audio_src/.gitkeep
+audio/*
+!audio/.gitkeep
+messages/*
+!messages/.gitkeep
+logs/*
+!logs/.gitkeep
 status.json
 ring_trigger
 active_port.txt
