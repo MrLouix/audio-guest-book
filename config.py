@@ -71,6 +71,11 @@ DIAL_PULSE_PIN = _env_int("DIAL_PULSE_PIN", 22)
 HOOK_ACTIVE_STATE = _env("HOOK_ACTIVE_STATE", "LOW")
 OFFNORMAL_ACTIF_LEVEL = _env("OFFNORMAL_ACTIF_LEVEL", "LOW")
 
+# Anti-rebond logiciel (§7.2) : fenêtres typiques crochet ~50-100 ms,
+# impulsions du cadran nettement plus courtes (impulsion ~60 ms).
+HOOK_DEBOUNCE_SEC = _env_float("HOOK_DEBOUNCE_SEC", 0.075)
+DIAL_DEBOUNCE_SEC = _env_float("DIAL_DEBOUNCE_SEC", 0.02)
+
 # --- Comportement du parcours invité (§1.2, §9) --------------------------
 
 RING_INTERVAL_SEC = _env_int("RING_INTERVAL_SEC", 90)

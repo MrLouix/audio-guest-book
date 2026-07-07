@@ -37,6 +37,18 @@ python3 audio_io.py play audio/tonalite.wav
 python3 audio_io.py record test.wav --duration 5
 ```
 
+## Machine à états — scénario nominal (Sprint 2)
+
+```bash
+python3 livre_dor.py --test   # affichage temps réel des 3 GPIO, pour valider le câblage
+python3 livre_dor.py          # démarre la machine à états (nécessite un vrai Raspberry Pi)
+```
+
+Parcours implémenté (§1.2, hors sonnerie et scénario « appel entrant », voir Sprint 3) :
+attente → décroché (tonalité 440+480 Hz) → dès la première impulsion, la tonalité s'arrête → numérotation (comptage des impulsions, chiffre validé au retour du cadran au repos, 10 impulsions = chiffre 0) → lecture de `audio/message_N.wav` (repli sur `message_generique.wav` si absent) → bip → enregistrement (`messages/message_AAAA-MM-JJ_HH-MM-SS.wav`, jamais d'écrasement) → retour à l'attente. Toute lecture est interrompue immédiatement au raccroché ; l'enregistrement est plafonné à `MAX_RECORD_SEC`.
+
+`gpio_io.py` isole l'accès matériel (RPi.GPIO, callbacks avec anti-rebond `bouncetime`) derrière `PhoneInputs`, un état partagé thread-safe indépendant du matériel — ce qui permet de vérifier toute la logique de la machine à états sans Raspberry Pi (audio et GPIO simulés) avant le déploiement.
+
 ## Statut
 
-Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement) et 1 (pipeline audio) réalisés.
+Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio) et 2 (machine à états, scénario nominal) réalisés.
