@@ -6,6 +6,8 @@ Transformation d'un téléphone à cadran vintage Socotel S63 en livre d'or auto
 
 - [`docs/specification_livre_dor_telephonique.md`](docs/specification_livre_dor_telephonique.md) — cahier des charges technique complet (matériel, câblage, architecture logicielle, fiabilité).
 - [`docs/dev_plan.md`](docs/dev_plan.md) — plan de développement détaillé en sprints.
+- [`docs/guide_installation.md`](docs/guide_installation.md) — guide d'installation reproductible (câblage, dépendances, configuration, premier démarrage).
+- [`docs/checklist_mise_en_service.md`](docs/checklist_mise_en_service.md) — checklist de recette à dérouler sur le matériel final avant l'événement.
 
 ## Installation (Sprint 0)
 
@@ -168,6 +170,18 @@ python3 src/transcribe_batch.py              # transcrit (refuse si livre-dor.se
 
 Vérifié par un harnais dédié (15 contrôles) : détection incrémentale, refus si le service est actif (et `--force` qui l'outrepasse sans même consulter `systemctl`), échecs propres si le binaire ou le modèle whisper sont absents, transcription réussie avec non-modification vérifiée du WAV (contenu **et** date de modification identiques avant/après), idempotence au second passage, et isolation d'un échec ponctuel sans effet sur les autres fichiers du lot.
 
+## Recette finale (Sprint 12)
+
+- [`docs/guide_installation.md`](docs/guide_installation.md) : câblage, dépendances, tableau complet des paramètres de configuration, réglage du potentiomètre PAM8403, procédure de premier démarrage.
+- [`docs/checklist_mise_en_service.md`](docs/checklist_mise_en_service.md) : checklist dérivée du §7.6, à dérouler et signer sur le matériel final avant l'événement.
+- **`src/load_test.py`** : simule plusieurs cycles décroché/composition/enregistrement/raccroché à la suite pour détecter toute fuite de sous-processus (`aplay`/`arecord` orphelins) ou de fichiers — utilise un dossier d'enregistrement temporaire séparé, jamais `messages/`.
+
+  ```bash
+  python3 src/load_test.py --cycles 20
+  ```
+
+La plupart des points de la checklist (câblage réel, sens logique des contacts, redémarrage à froid du Pi, bascule WiFi/AP physique...) exigent le matériel assemblé et ne peuvent pas être vérifiés dans cet environnement de développement. Ce qui a pu être vérifié ici : la logique du test de charge elle-même (comptage de fichiers, détection d'orphelins, avec audio simulé — 5 contrôles), et la résilience des écritures atomiques de `status.json` (Sprint 4) face à une coupure brutale : 60 simulations de `SIGKILL` en pleine écriture, jamais de fichier corrompu.
+
 ## Statut
 
-Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web), 6 (authentification), 7 (QR codes, provisioning WiFi), 8 (bascule WiFi/AP), 9 (synchronisation Google Drive), 10 (services systemd, watchdog) et 11 (transcription batch) réalisés. Reste : Sprint 12 (recette finale, checklist de mise en service).
+Développement terminé — les 12 sprints du plan de développement sont réalisés. La checklist de mise en service reste à dérouler sur le matériel physique assemblé avant l'événement (voir [`docs/checklist_mise_en_service.md`](docs/checklist_mise_en_service.md)).
