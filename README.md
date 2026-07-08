@@ -63,6 +63,16 @@ En attente, `livre_dor.py` sonne (`audio/ring_out.wav`) toutes les `RING_INTERVA
 - **Logs** : rotation automatique (`RotatingFileHandler`, 5 × 1 Mo) sur `logs/livre_dor.log`, en plus de la console.
 - **Exception globale** : toute exception non prévue dans la machine à états est journalisée (traceback complet), `status.json` bascule en `erreur`, puis l'exception se propage pour que systemd relance le service (Sprint 10) — `GPIO.cleanup()` reste garanti par le bloc `finally`.
 
+## Dashboard web (Sprint 5)
+
+```bash
+python3 dashboard_app.py   # démarre le serveur sur http://0.0.0.0:5000/
+```
+
+⚠️ Lecture seule et **sans authentification** à ce stade (Sprint 6) : ne pas exposer ce dashboard sur un réseau non maîtrisé avant l'implémentation du mot de passe.
+
+Page `/` : état en direct avec code couleur, nombre de messages, mode réseau + IP (détection best-effort via `network_info.py`, en attendant `wifi_or_ap.sh` au Sprint 8), derniers logs (auto-rafraîchi : statut ~4 s, logs ~8 s, scroll préservé), et un bouton « Sonner maintenant ». API : `/api/status` (état + réseau + nb messages), `/api/logs` (150 dernières lignes), `/api/messages/count`, `/api/ring` (POST, crée `ring_trigger`). Toutes les lectures tolèrent l'absence de fichier (`status.json`, logs) sans jamais renvoyer d'erreur 500. Le port est fixe (`WEB_PORT=5000`) : s'il est déjà occupé, le service s'arrête avec un message explicite plutôt que de basculer sur un autre port ; le port réellement utilisé est écrit dans `active_port.txt`.
+
 ## Statut
 
-Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant) et 4 (fiabilité) réalisés.
+Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité) et 5 (dashboard web, lecture seule) réalisés.

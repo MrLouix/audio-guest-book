@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Livre d'or téléphonique — Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header>
+    <h1>💍 Livre d'or téléphonique</h1>
+    <span id="etat-badge" class="badge badge-inconnu">inconnu</span>
+  </header>
+
+  <main>
+    <section class="cards">
+      <div class="card">
+        <h2>État</h2>
+        <p id="etat-detail">—</p>
+        <p class="muted" id="etat-maj">dernière mise à jour : —</p>
+      </div>
+      <div class="card">
+        <h2>Messages enregistrés</h2>
+        <p class="big" id="messages-count">—</p>
+      </div>
+      <div class="card">
+        <h2>Réseau</h2>
+        <p id="reseau-mode">mode : —</p>
+        <p id="reseau-ip">IP : —</p>
+      </div>
+      <div class="card">
+        <h2>Sonnerie</h2>
+        <button id="ring-button">🔔 Sonner maintenant</button>
+        <p class="muted" id="ring-feedback"></p>
+      </div>
+    </section>
+
+    <section class="logs">
+      <h2>Derniers logs</h2>
+      <pre id="logs-content">chargement…</pre>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>
