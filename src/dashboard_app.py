@@ -23,7 +23,13 @@ import status_io
 
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+# dashboard_app.py vit dans src/ ; templates/ et static/ restent à la
+# racine du projet (§8), il faut donc les indiquer explicitement à Flask.
+app = Flask(
+    __name__,
+    template_folder=str(config.BASE_DIR / "templates"),
+    static_folder=str(config.BASE_DIR / "static"),
+)
 
 LOG_TAIL_LINES = 150
 

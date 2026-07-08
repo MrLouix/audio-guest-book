@@ -17,15 +17,17 @@ Sur le Raspberry Pi (Raspberry Pi OS Lite / Bookworm) :
 
 Installe les paquets système (`alsa-utils`, `rclone`, `ffmpeg`, `avahi-daemon`), configure le hostname `livredor` (mDNS), crée un environnement virtuel Python avec les dépendances de `requirements.txt`, et vérifie l'arborescence du projet ainsi que la présence de la carte son USB.
 
-Les paramètres (broches GPIO, carte son, seuils réseau, etc.) sont centralisés dans `config.py` et surchargeables par variables d'environnement — voir §9 de la spécification.
+Les paramètres (broches GPIO, carte son, seuils réseau, etc.) sont centralisés dans `src/config.py` et surchargeables par variables d'environnement — voir §9 de la spécification.
+
+Le code Python vit dans `src/` ; l'arborescence de données (`audio_src/`, `audio/`, `messages/`, `logs/`, `static/`, `templates/`, `status.json`...) reste à la racine du projet, conformément à l'arborescence de déploiement du §8. Tous les scripts s'exécutent directement (`python3 src/<script>.py`), sans installation du projet ni `PYTHONPATH` à configurer.
 
 ## Pré-traitement audio (Sprint 1)
 
 Placer les fichiers sources bruts dans `audio_src/` (`sonnerie.*`, `message_generique.*`, `message_0.*` … `message_9.*`), puis :
 
 ```bash
-python3 prepare_audio.py            # génère tous les fichiers panés/gainés dans audio/
-python3 prepare_audio.py --play-all  # rejoue chaque fichier généré, pour vérifier le panning au casque
+python3 src/prepare_audio.py            # génère tous les fichiers panés/gainés dans audio/
+python3 src/prepare_audio.py --play-all  # rejoue chaque fichier généré, pour vérifier le panning au casque
 ```
 
 `tonalite.wav` (440+480 Hz) et `bip.wav` sont générés par synthèse, sans fichier source. Un chiffre sans fichier `message_N.*` correspondant est simplement ignoré (le fallback `message_generique.wav` sera utilisé par `livre_dor.py`).
@@ -33,15 +35,15 @@ python3 prepare_audio.py --play-all  # rejoue chaque fichier généré, pour vé
 Les primitives de lecture/enregistrement bas niveau (`audio_io.py`) peuvent être testées isolément :
 
 ```bash
-python3 audio_io.py play audio/tonalite.wav
-python3 audio_io.py record test.wav --duration 5
+python3 src/audio_io.py play audio/tonalite.wav
+python3 src/audio_io.py record test.wav --duration 5
 ```
 
 ## Machine à états — scénario nominal (Sprint 2)
 
 ```bash
-python3 livre_dor.py --test   # affichage temps réel des 3 GPIO, pour valider le câblage
-python3 livre_dor.py          # démarre la machine à états (nécessite un vrai Raspberry Pi)
+python3 src/livre_dor.py --test   # affichage temps réel des 3 GPIO, pour valider le câblage
+python3 src/livre_dor.py          # démarre la machine à états (nécessite un vrai Raspberry Pi)
 ```
 
 Parcours implémenté (§1.2, scénario « appel sortant ») :
@@ -66,7 +68,7 @@ En attente, `livre_dor.py` sonne (`audio/ring_out.wav`) toutes les `RING_INTERVA
 ## Dashboard web (Sprint 5)
 
 ```bash
-python3 dashboard_app.py   # démarre le serveur sur http://0.0.0.0:5000/
+python3 src/dashboard_app.py   # démarre le serveur sur http://0.0.0.0:5000/
 ```
 
 ⚠️ Lecture seule et **sans authentification** à ce stade (Sprint 6) : ne pas exposer ce dashboard sur un réseau non maîtrisé avant l'implémentation du mot de passe.

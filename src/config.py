@@ -9,7 +9,9 @@ sur le Raspberry Pi final, sans toucher au code.
 import os
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
+# config.py vit dans src/ ; l'arborescence de données (audio/, messages/,
+# logs/, static/, templates/...) reste à la racine du projet (§8).
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def _env(name: str, default: str) -> str:

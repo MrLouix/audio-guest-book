@@ -19,7 +19,7 @@ python3 -m venv "$PROJECT_DIR/.venv"
 "$PROJECT_DIR/.venv/bin/pip" install -r "$PROJECT_DIR/requirements.txt"
 
 echo "== Arborescence du projet =="
-python3 - "$PROJECT_DIR" <<'PY'
+python3 - "$PROJECT_DIR/src" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1])
 import config
