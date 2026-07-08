@@ -1,17 +1,22 @@
 """Script principal du livre d'or téléphonique — machine à états (§5.1).
 
-Sprint 2 : scénario nominal (appel sortant) uniquement — attente → décroché
-(tonalité) → numérotation → lecture du message → enregistrement → retour à
-l'attente. La sonnerie, le scénario « appel entrant » et les surcouches de
-fiabilité (status.json, watchdog, contrôle d'espace disque...) seront
-ajoutés dans les sprints suivants.
+Sprint 2 : scénario nominal (appel sortant) — attente → décroché (tonalité)
+→ numérotation → lecture du message → enregistrement → retour à l'attente.
+
+Sprint 3 : sonnerie périodique + déclenchement à distance (ring_trigger), et
+scénario « appel entrant » (§1.2) — un décroché pendant la sonnerie ou dans
+la fenêtre de grâce qui suit simule un vrai appel : message tiré au hasard,
+sans tonalité ni cadran. Les surcouches de fiabilité (status.json, watchdog,
+contrôle d'espace disque...) seront ajoutées au Sprint 4.
 """
 
 import argparse
 import datetime
 import logging
+import random
 import time
 from pathlib import Path
+from typing import Callable, List, Optional
 
 import audio_io
 import config
@@ -20,9 +25,11 @@ import gpio_io
 logger = logging.getLogger(__name__)
 
 STATE_ATTENTE = "attente"
+STATE_SONNERIE = "sonnerie"
 STATE_DECROCHE = "decroche"
 STATE_NUMEROTATION = "numerotation"
 STATE_LECTURE_MESSAGE = "lecture_message"
+STATE_APPEL_REPONDU = "appel_repondu"
 STATE_ENREGISTREMENT = "enregistrement"
 
 MAIN_LOOP_POLL_SEC = 0.05
@@ -49,23 +56,117 @@ def timestamped_recording_path(now: datetime.datetime = None) -> Path:
     return path
 
 
+def available_random_messages() -> List[Path]:
+    """Tous les messages des mariés pouvant être tirés au hasard (§1.2) : message_N.wav + message_generique.wav."""
+    candidates = [config.message_wav(d) for d in range(10) if config.message_wav(d).exists()]
+    if config.MESSAGE_GENERIQUE_WAV.exists():
+        candidates.append(config.MESSAGE_GENERIQUE_WAV)
+    return candidates
+
+
+def consume_ring_trigger() -> bool:
+    """Consomme le fichier drapeau ring_trigger s'il existe (déclenchement à distance, §5.1, §8).
+
+    Traitement atomique : tester l'existence puis supprimer, en tolérant une
+    suppression concurrente (ex. par un autre processus) sans lever d'erreur.
+    """
+    if not config.RING_TRIGGER_FILE.exists():
+        return False
+    try:
+        config.RING_TRIGGER_FILE.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 class GuestBookStateMachine:
-    """Boucle des états du parcours invité nominal (§1.2, §5.1)."""
+    """Boucle des états du parcours invité, nominal et « appel entrant » (§1.2, §5.1)."""
 
     def __init__(self, inputs: gpio_io.PhoneInputs) -> None:
         self.inputs = inputs
         self.state = STATE_ATTENTE
+        self._ring_active = False
+        self._last_ring_end_ts: Optional[float] = None
+        self._last_ring_start_ts = time.monotonic()
+        self._last_random_message: Optional[Path] = None
 
     def run_forever(self) -> None:
         logger.info("Machine à états démarrée, état initial : %s", self.state)
         while True:
             self._run_attente()
 
+    def _is_recent_ring(self) -> bool:
+        """Drapeau « sonnerie récente » (§5.1) : actif pendant la sonnerie et RING_ANSWER_GRACE_SEC après."""
+        if self._ring_active:
+            return True
+        if self._last_ring_end_ts is None:
+            return False
+        return (time.monotonic() - self._last_ring_end_ts) <= config.RING_ANSWER_GRACE_SEC
+
     def _run_attente(self) -> None:
         self.state = STATE_ATTENTE
-        while not self.inputs.is_hook_up():
+        self._last_ring_start_ts = time.monotonic()
+        while True:
+            if self.inputs.is_hook_up():
+                if self._is_recent_ring():
+                    self._run_appel_repondu()
+                else:
+                    self._run_decroche()
+                return
+            if consume_ring_trigger():
+                logger.info("Sonnerie déclenchée à distance (ring_trigger)")
+                self._run_sonnerie()
+                continue
+            if (time.monotonic() - self._last_ring_start_ts) >= config.RING_INTERVAL_SEC:
+                self._run_sonnerie()
+                continue
             time.sleep(MAIN_LOOP_POLL_SEC)
-        self._run_decroche()
+
+    def _run_sonnerie(self) -> None:
+        self.state = STATE_SONNERIE
+        logger.info("Sonnerie")
+        self._ring_active = True
+        try:
+            audio_io.play(config.RING_OUT_WAV, should_continue=lambda: not self.inputs.is_hook_up())
+        finally:
+            self._ring_active = False
+            self._last_ring_end_ts = time.monotonic()
+            self._last_ring_start_ts = time.monotonic()
+
+    def _pick_random_message(self) -> Path:
+        """Tire un message au hasard parmi tous ceux disponibles, sans répéter le précédent (§1.2)."""
+        candidates = available_random_messages()
+        if not candidates:
+            return config.MESSAGE_GENERIQUE_WAV
+        choices = [c for c in candidates if c != self._last_random_message] or candidates
+        chosen = random.choice(choices)
+        self._last_random_message = chosen
+        return chosen
+
+    def _hook_up_ignoring_dial(self) -> bool:
+        """should_continue pour l'état appel_repondu : le cadran est ignoré, juste logué en debug (§5.1)."""
+        digit = self.inputs.pop_digit()
+        if digit is not None:
+            logger.debug("Impulsion(s) ignorée(s) en appel_repondu (chiffre calculé %d, sans effet).", digit)
+        return self.inputs.is_hook_up()
+
+    def _run_appel_repondu(self) -> None:
+        self.state = STATE_APPEL_REPONDU
+        logger.info("Appel répondu (sonnerie récente) : message aléatoire, sans tonalité ni cadran")
+        self.inputs.reset_dial()
+        message_path = self._pick_random_message()
+        logger.info("Message tiré au hasard : %s", message_path.name)
+        audio_io.play(message_path, should_continue=self._hook_up_ignoring_dial)
+        if not self.inputs.is_hook_up():
+            logger.info("Raccroché pendant le message (appel répondu), retour en attente.")
+            return
+
+        audio_io.play(config.BIP_WAV, should_continue=self._hook_up_ignoring_dial)
+        if not self.inputs.is_hook_up():
+            logger.info("Raccroché pendant le bip (appel répondu), retour en attente.")
+            return
+
+        self._run_enregistrement(should_continue=self._hook_up_ignoring_dial)
 
     def _run_decroche(self) -> None:
         self.state = STATE_DECROCHE
@@ -112,13 +213,13 @@ class GuestBookStateMachine:
 
         self._run_enregistrement()
 
-    def _run_enregistrement(self) -> None:
+    def _run_enregistrement(self, should_continue: Callable[[], bool] = None) -> None:
         self.state = STATE_ENREGISTREMENT
         path = timestamped_recording_path()
         logger.info("Début de l'enregistrement : %s", path.name)
         result = audio_io.record(
             path, max_duration_sec=config.MAX_RECORD_SEC,
-            should_continue=self.inputs.is_hook_up,
+            should_continue=should_continue or self.inputs.is_hook_up,
         )
         logger.info("Fin de l'enregistrement (%s) : %s", result, path.name)
         # Retour à l'attente : la boucle run_forever() relance _run_attente().
