@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connexion — Livre d'or téléphonique</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body class="login-body">
+  <main class="login-main">
+    <form method="post" class="login-card">
+      <h1>💍 Livre d'or</h1>
+      <p class="muted">Mot de passe requis pour accéder au dashboard.</p>
+      {% if error %}<p class="error">{{ error }}</p>{% endif %}
+      <input type="hidden" name="next" value="{{ next }}">
+      <input type="password" name="password" placeholder="Mot de passe" autofocus required>
+      <label class="remember"><input type="checkbox" name="remember"> Se souvenir de moi</label>
+      <button type="submit">Se connecter</button>
+    </form>
+  </main>
+</body>
+</html>

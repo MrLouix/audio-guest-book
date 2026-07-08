@@ -1,22 +1,25 @@
-"""Dashboard web de supervision (§5.2) — Sprint 5 : lecture seule, sans authentification.
+"""Dashboard web de supervision (§5.2, §6).
 
 Expose l'état courant (status.json), les derniers logs, le nombre de
 messages enregistrés, le mode réseau + IP, et un bouton pour déclencher la
 sonnerie à distance. Toutes les lectures tolèrent l'absence de fichier
 (§7.4) : jamais de 500 pour une simple donnée manquante.
 
-⚠️ Ce dashboard n'est pas encore protégé par mot de passe (Sprint 6) : ne
-pas l'exposer sur un réseau non maîtrisé avant l'implémentation de
-l'authentification.
+Toutes les routes (HTML et /api/*) sont protégées par une session Flask
+authentifiée par mot de passe unique (§6) : avant chaque requête, seules
+/login et les fichiers statiques sont accessibles sans session valide.
 """
 
+import datetime
 import logging
+import time
 from pathlib import Path
 from typing import List
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.serving import make_server
 
+import auth
 import config
 import network_info
 import status_io
@@ -30,8 +33,66 @@ app = Flask(
     template_folder=str(config.BASE_DIR / "templates"),
     static_folder=str(config.BASE_DIR / "static"),
 )
+app.secret_key = auth.get_or_create_secret_key()
+app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(hours=config.SESSION_LIFETIME_HOURS)
 
 LOG_TAIL_LINES = 150
+
+# Seules ces routes sont accessibles sans session authentifiée (§6).
+PUBLIC_PATHS = {"/login"}
+PUBLIC_PATH_PREFIXES = ("/static/",)
+
+
+def _is_safe_redirect_target(target: str) -> bool:
+    """N'autorise qu'une redirection interne relative (protection open-redirect)."""
+    return bool(target) and target.startswith("/") and not target.startswith("//")
+
+
+@app.before_request
+def require_login():
+    if request.path in PUBLIC_PATHS or request.path.startswith(PUBLIC_PATH_PREFIXES):
+        return None
+    if session.get("authenticated"):
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"erreur": "authentification requise"}), 401
+    next_target = request.path
+    if request.query_string:
+        next_target += "?" + request.query_string.decode("utf-8", errors="ignore")
+    return redirect(url_for("login", next=next_target))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    next_target = request.values.get("next", "")
+    if request.method == "POST":
+        client_id = request.remote_addr or "inconnu"
+        delay = auth.throttle_delay(client_id)
+        if delay > 0:
+            logger.warning("Connexion dashboard temporisée (%.1fs) pour %s", delay, client_id)
+            time.sleep(delay)
+
+        password = request.form.get("password", "")
+        if auth.verify_password(password):
+            auth.register_success(client_id)
+            session.clear()
+            session["authenticated"] = True
+            session.permanent = request.form.get("remember") == "on"
+            logger.info("Connexion dashboard réussie depuis %s", client_id)
+            target = next_target if _is_safe_redirect_target(next_target) else url_for("index")
+            return redirect(target)
+
+        count = auth.register_failed_attempt(client_id)
+        logger.warning("Échec de connexion dashboard depuis %s (%d échec(s) consécutif(s))", client_id, count)
+        return render_template("login.html", error="Mot de passe incorrect.", next=next_target), 401
+
+    return render_template("login.html", error=None, next=next_target)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 def _tail_lines(path: Path, n: int) -> List[str]:
@@ -100,6 +161,7 @@ def run_server() -> None:
     basculer silencieusement sur un autre port.
     """
     config.ensure_directories()
+    auth.ensure_password_configured()
     port = config.WEB_PORT
     try:
         server = make_server("0.0.0.0", port, app)

@@ -136,3 +136,65 @@ button:disabled {
 .badge-enregistrement { background: #b23b3b; }
 .badge-erreur { background: #b23b3b; }
 .badge-inconnu { background: #7a7168; }
+
+.logout-link {
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.logout-link:hover {
+  text-decoration: underline;
+}
+
+.login-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.login-main {
+  width: 100%;
+  max-width: 320px;
+  padding: 1rem;
+}
+
+.login-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.login-card h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  text-align: center;
+}
+
+.login-card input[type="password"] {
+  font-size: 1rem;
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.login-card .remember {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.login-card .error {
+  color: #b23b3b;
+  font-size: 0.85rem;
+  margin: 0;
+}

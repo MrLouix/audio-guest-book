@@ -71,10 +71,22 @@ En attente, `livre_dor.py` sonne (`audio/ring_out.wav`) toutes les `RING_INTERVA
 python3 src/dashboard_app.py   # démarre le serveur sur http://0.0.0.0:5000/
 ```
 
-⚠️ Lecture seule et **sans authentification** à ce stade (Sprint 6) : ne pas exposer ce dashboard sur un réseau non maîtrisé avant l'implémentation du mot de passe.
-
 Page `/` : état en direct avec code couleur, nombre de messages, mode réseau + IP (détection best-effort via `network_info.py`, en attendant `wifi_or_ap.sh` au Sprint 8), derniers logs (auto-rafraîchi : statut ~4 s, logs ~8 s, scroll préservé), et un bouton « Sonner maintenant ». API : `/api/status` (état + réseau + nb messages), `/api/logs` (150 dernières lignes), `/api/messages/count`, `/api/ring` (POST, crée `ring_trigger`). Toutes les lectures tolèrent l'absence de fichier (`status.json`, logs) sans jamais renvoyer d'erreur 500. Le port est fixe (`WEB_PORT=5000`) : s'il est déjà occupé, le service s'arrête avec un message explicite plutôt que de basculer sur un autre port ; le port réellement utilisé est écrit dans `active_port.txt`.
+
+## Authentification du dashboard (Sprint 6)
+
+Toutes les routes (HTML et `/api/*`) exigent désormais une session authentifiée, sauf `/login` et les fichiers statiques.
+
+```bash
+python3 src/set_password.py   # définit/change le mot de passe du dashboard (saisie masquée)
+```
+
+Au premier démarrage sans mot de passe configuré, `dashboard_app.py` utilise le mot de passe par défaut **`livredor`** (documenté, à changer immédiatement via `set_password.py`) — un avertissement est loggé à chaque démarrage tant qu'il n'a pas été changé. Le mot de passe est stocké haché (PBKDF2 via `werkzeug.security`) dans `dashboard_config.json`, jamais en clair. La clé de session Flask (`secret_key.txt`, permissions 600) est générée une fois puis persistée, pour que les sessions ouvertes survivent aux redémarrages du service.
+
+`/login` (formulaire à un seul champ + case « se souvenir de moi » facultative) redirige vers la page initialement demandée après succès (paramètre `next`, protégé contre l'open-redirect) ; `/logout` invalide la session. Anti-brute-force léger : après 3 échecs consécutifs, chaque nouvelle tentative est temporisée (délai progressif, plafonné), journalisée. Session valable `SESSION_LIFETIME_HOURS` (défaut 12 h, couvre la soirée).
+
+⚠️ Le serveur reste en HTTP local (pas de TLS) — ce mot de passe protège contre la curiosité des invités du même réseau, pas contre un attaquant motivé ; c'est le niveau de sécurité voulu (§6).
 
 ## Statut
 
-Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité) et 5 (dashboard web, lecture seule) réalisés.
+Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web) et 6 (authentification) réalisés.

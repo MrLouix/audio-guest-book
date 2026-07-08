@@ -108,6 +108,13 @@ USE_MDNS = _env("USE_MDNS", "True") == "True"
 MDNS_HOSTNAME = _env("MDNS_HOSTNAME", "livredor")
 QR_LABEL_SIZE_MM = _env_int("QR_LABEL_SIZE_MM", 45)
 
+# --- Authentification dashboard (§6) ---------------------------------------
+
+SESSION_LIFETIME_HOURS = _env_int("SESSION_LIFETIME_HOURS", 12)
+LOGIN_FAILED_ATTEMPTS_THRESHOLD = _env_int("LOGIN_FAILED_ATTEMPTS_THRESHOLD", 3)
+LOGIN_FAILED_DELAY_SEC = _env_float("LOGIN_FAILED_DELAY_SEC", 1.0)
+LOGIN_FAILED_DELAY_MAX_SEC = _env_float("LOGIN_FAILED_DELAY_MAX_SEC", 10.0)
+
 # --- Réseau WiFi/AP (§5.3, §9) ---------------------------------------------
 
 AP_CONNECTION_NAME = _env("AP_CONNECTION_NAME", "GuestbookAP")
