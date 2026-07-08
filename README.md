@@ -124,6 +124,20 @@ Comme pour le GPIO (Sprint 2), la logique de décision a été vérifiée sans m
 
 Les unités systemd (`systemd/wifi-or-ap.service` + `.timer`) sont fournies mais pas encore installées automatiquement — l'activation de l'ensemble des services sera finalisée au Sprint 10.
 
+## Synchronisation Google Drive (Sprint 9)
+
+`src/rclone_sync.py` exécute `rclone copy` (**jamais `sync`** : n'ajoute que les fichiers nouveaux/modifiés, ne supprime jamais rien ni en local ni sur le Drive) vers le remote/dossier configurés dans `rclone_config.json` (contrat §8 : `remote`, `dossier`, `intervalle_min`, `actif`). Un échec (pas d'internet, remote indisponible...) est toléré : journalisé dans `logs/rclone.log`, sans jamais planter — le prochain cycle du timer retentera.
+
+```bash
+rclone config                       # configuration initiale du remote (une fois, avant l'événement)
+python3 src/rclone_sync.py --run    # exécute un cycle de synchronisation immédiatement
+sudo ./scripts/setup_rclone_systemd.sh   # installation unique : symlinks systemd + règle sudoers ciblée
+```
+
+Page **`/rclone`** (protégée) : statut (dernière synchronisation réussie, fichiers en attente — calculés via `rclone copy --dry-run`, sans rien modifier —, erreurs récentes lues dans `logs/rclone.log`), bouton « Synchroniser maintenant » (`/api/rclone/sync-now`, exécuté en tâche de fond grâce à `threaded=True` sur le serveur pour ne pas geler le reste du dashboard), et formulaire de configuration. **Changer l'intervalle régénère** `systemd/rclone-sync.timer` puis recharge le service (`systemctl daemon-reload && restart`) automatiquement, sans intervention shell.
+
+`scripts/setup_rclone_systemd.sh` symlinke les unités depuis le dépôt (le dashboard peut donc réécrire `systemd/rclone-sync.timer` directement, sans privilège particulier) et installe une **règle sudoers strictement ciblée** — NOPASSWD limité à `systemctl daemon-reload`, `restart rclone-sync.timer` et `start rclone-sync.timer`, jamais un accès plus large (point de sécurité identifié par la spec, §5.4).
+
 ## Statut
 
-Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web), 6 (authentification), 7 (QR codes, provisioning WiFi) et 8 (bascule WiFi/AP) réalisés.
+Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web), 6 (authentification), 7 (QR codes, provisioning WiFi), 8 (bascule WiFi/AP) et 9 (synchronisation Google Drive) réalisés.

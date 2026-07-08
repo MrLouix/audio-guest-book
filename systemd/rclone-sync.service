@@ -1,0 +1,10 @@
+[Unit]
+Description=Livre d'or telephonique - synchronisation Google Drive (Sprint 9, spec §5.4)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/pi/livre_dor
+ExecStart=/home/pi/livre_dor/.venv/bin/python3 /home/pi/livre_dor/src/rclone_sync.py --run
+TimeoutStartSec=180

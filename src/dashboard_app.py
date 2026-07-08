@@ -24,6 +24,7 @@ import auth
 import config
 import network_info
 import qr_utils
+import rclone_sync
 import status_io
 
 logger = logging.getLogger(__name__)
@@ -234,6 +235,34 @@ def api_wifi_add():
     return jsonify({"ok": True, "ssid": ssid})
 
 
+@app.route("/rclone", methods=["GET", "POST"])
+def rclone_page():
+    """Configuration de la synchronisation Google Drive (§5.4)."""
+    error = None
+    if request.method == "POST":
+        remote = request.form.get("remote", "").strip() or config.RCLONE_REMOTE
+        dossier = request.form.get("dossier", "").strip() or config.RCLONE_FOLDER
+        try:
+            intervalle_min = int(request.form.get("intervalle_min", config.RCLONE_INTERVAL_MIN))
+        except ValueError:
+            intervalle_min = config.RCLONE_INTERVAL_MIN
+        intervalle_min = max(1, intervalle_min)
+        actif = request.form.get("actif") == "on"
+
+        result = rclone_sync.update_config(remote, dossier, intervalle_min, actif)
+        if not result["ok"]:
+            error = result["erreur"]
+
+    return render_template("rclone.html", status=rclone_sync.get_status(), error=error)
+
+
+@app.route("/api/rclone/sync-now", methods=["POST"])
+def api_rclone_sync_now():
+    """Lance rclone copy immédiatement et retourne le résultat (§5.2)."""
+    result = rclone_sync.run_sync()
+    return jsonify(result), (200 if result.get("ok") else 502)
+
+
 def run_server() -> None:
     """Démarre le serveur sur WEB_PORT ; pas de repli de port (WEB_PORT_MAX_ATTEMPTS=1, §5.2).
 
@@ -245,7 +274,10 @@ def run_server() -> None:
     auth.ensure_password_configured()
     port = config.WEB_PORT
     try:
-        server = make_server("0.0.0.0", port, app)
+        # threaded=True : une synchronisation rclone en cours (/api/rclone/sync-now,
+        # potentiellement longue) ne doit pas bloquer les autres requêtes
+        # (statut, logs...) qui continuent de s'auto-rafraîchir en parallèle.
+        server = make_server("0.0.0.0", port, app, threaded=True)
     except (OSError, SystemExit) as exc:
         # make_server()/Werkzeug intercepte déjà EADDRINUSE et lève un
         # SystemExit(1) en interne (selon la version, un OSError brut est

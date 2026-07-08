@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Synchronisation Google Drive — Livre d'or téléphonique</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header>
+    <h1>☁️ Synchronisation Google Drive</h1>
+    <a class="nav-link" href="{{ url_for('index') }}">← Dashboard</a>
+  </header>
+
+  <main>
+    {% if error %}
+    <p class="warning">⚠️ {{ error }}</p>
+    {% endif %}
+
+    <section class="card">
+      <h2>Statut</h2>
+      <p>Dernière synchronisation réussie : <strong>{{ status.derniere_sync_reussie or "jamais" }}</strong></p>
+      <p>Fichiers en attente : <strong>{{ status.fichiers_en_attente if status.fichiers_en_attente is not none else "inconnu" }}</strong></p>
+      {% if status.erreurs_recentes %}
+      <p class="muted">Erreurs récentes :</p>
+      <pre id="logs-content">{{ status.erreurs_recentes | join('\n') }}</pre>
+      {% endif %}
+      <button id="sync-now-button">🔄 Synchroniser maintenant</button>
+      <p class="muted" id="sync-feedback"></p>
+    </section>
+
+    <section class="card">
+      <h2>Configuration</h2>
+      <form method="post">
+        <label>
+          Remote rclone
+          <input type="text" name="remote" value="{{ status.remote }}" required>
+        </label>
+        <label>
+          Dossier Drive
+          <input type="text" name="dossier" value="{{ status.dossier }}" required>
+        </label>
+        <label>
+          Intervalle (minutes)
+          <input type="number" name="intervalle_min" value="{{ status.intervalle_min }}" min="1" required>
+        </label>
+        <label class="remember">
+          <input type="checkbox" name="actif" {% if status.actif %}checked{% endif %}>
+          Synchronisation active
+        </label>
+        <button type="submit">Enregistrer</button>
+      </form>
+      <p class="muted">
+        Changer l'intervalle régénère et recharge automatiquement le timer systemd
+        (<code>systemctl daemon-reload</code> puis <code>restart</code>, via une règle sudoers ciblée).
+      </p>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='rclone.js') }}"></script>
+</body>
+</html>

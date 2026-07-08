@@ -1,0 +1,11 @@
+[Unit]
+Description=Execute rclone-sync.service toutes les 5 minute(s) (spec §5.4)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=rclone-sync.service
+
+[Install]
+WantedBy=timers.target

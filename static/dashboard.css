@@ -178,12 +178,24 @@ button:disabled {
   max-width: 320px;
 }
 
-.card input[type="text"], .card input[type="password"] {
+.card input[type="text"], .card input[type="password"], .card input[type="number"] {
   font-size: 1rem;
   padding: 0.5rem;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--bg);
+  color: var(--fg);
+}
+
+.card form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.card form label input {
   color: var(--fg);
 }
 

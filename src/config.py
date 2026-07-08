@@ -135,6 +135,15 @@ WIFI_BLACKLIST_MIN = _env_int("WIFI_BLACKLIST_MIN", 10)
 RCLONE_REMOTE = _env("RCLONE_REMOTE", "gdrive")
 RCLONE_FOLDER = _env("RCLONE_FOLDER", "MariageGuestBook")
 RCLONE_INTERVAL_MIN = _env_int("RCLONE_INTERVAL_MIN", 5)
+RCLONE_TIMEOUT_SEC = _env_int("RCLONE_TIMEOUT_SEC", 120)
+RCLONE_DRYRUN_TIMEOUT_SEC = _env_int("RCLONE_DRYRUN_TIMEOUT_SEC", 20)
+
+# Unité systemd régénérée par le dashboard quand l'intervalle change (§5.4) ;
+# symlinkée depuis /etc/systemd/system par scripts/setup_rclone_systemd.sh,
+# de sorte que le réécrire ne demande aucun privilège particulier.
+SYSTEMD_DIR = BASE_DIR / "systemd"
+SYSTEMD_RCLONE_TIMER_FILE = SYSTEMD_DIR / "rclone-sync.timer"
+RCLONE_SYSTEMD_UNIT = "rclone-sync.timer"
 
 # --- Stockage (§7.3, §9) ---------------------------------------------------
 
