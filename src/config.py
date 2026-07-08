@@ -156,6 +156,13 @@ DISK_CRITICAL_MB = _env_int("DISK_CRITICAL_MB", 100)
 # watchdog considère livre-dor.service gelé et le redémarre.
 WATCHDOG_STALE_AFTER_SEC = _env_int("WATCHDOG_STALE_AFTER_SEC", 300)
 
+# --- Transcription batch (§5.5) — optionnelle, hors événement -------------
+
+WHISPER_BINARY = _env("WHISPER_BINARY", "whisper-cli")
+WHISPER_MODEL_PATH = _env("WHISPER_MODEL_PATH", str(BASE_DIR / "whisper.cpp" / "models" / "ggml-tiny-q5_0.bin"))
+WHISPER_LANGUAGE = _env("WHISPER_LANGUAGE", "fr")
+WHISPER_TIMEOUT_SEC = _env_int("WHISPER_TIMEOUT_SEC", 600)
+
 
 def ensure_directories() -> None:
     """Crée les dossiers de l'arborescence s'ils n'existent pas encore."""

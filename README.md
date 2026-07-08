@@ -154,6 +154,20 @@ sudo ./scripts/setup_rclone_systemd.sh   # (Sprint 9) synchronisation Google Dri
 
 Vérifié (sans systemd réel dans ce sandbox) : syntaxe de toutes les unités validée avec `systemd-analyze verify`, et logique du watchdog testée avec `systemctl` simulé (service en échec, `status.json` frais/périmé/absent, plusieurs services en échec simultanément, absence de double redémarrage redondant).
 
+## Transcription batch (Sprint 11, optionnelle, hors événement)
+
+```bash
+./scripts/install_whisper.sh                 # une fois : compile whisper.cpp + télécharge le modèle tiny q5_0
+python3 src/transcribe_batch.py --dry-run    # liste les messages pas encore transcrits
+python3 src/transcribe_batch.py              # transcrit (refuse si livre-dor.service est actif)
+```
+
+⚠️ **Ne jamais lancer pendant l'événement** : whisper.cpp est trop lent sur un Pi Zero 2 W pour tourner en même temps que l'enregistrement en direct (§5.5). `run_batch()` **refuse de démarrer si `livre-dor.service` est actif** (`--force` pour outrepasser, déconseillé) — à réserver à un usage nocturne sur le Pi, ou après transfert des WAV vers une machine plus puissante.
+
+`src/transcribe_batch.py` ne traite que les `messages/*.wav` sans `.txt` associé (incrémental, idempotent) : reformatage en 16 kHz mono via `ffmpeg` (déjà une dépendance du projet) dans un fichier temporaire, transcription par `whisper-cli`, écriture du `.txt` à côté du WAV — **le fichier audio source n'est jamais lu en écriture, modifié ni supprimé**. Un échec sur un fichier (modèle corrompu, audio illisible...) est journalisé et n'interrompt jamais le reste du lot.
+
+Vérifié par un harnais dédié (15 contrôles) : détection incrémentale, refus si le service est actif (et `--force` qui l'outrepasse sans même consulter `systemctl`), échecs propres si le binaire ou le modèle whisper sont absents, transcription réussie avec non-modification vérifiée du WAV (contenu **et** date de modification identiques avant/après), idempotence au second passage, et isolation d'un échec ponctuel sans effet sur les autres fichiers du lot.
+
 ## Statut
 
-Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web), 6 (authentification), 7 (QR codes, provisioning WiFi), 8 (bascule WiFi/AP), 9 (synchronisation Google Drive) et 10 (services systemd, watchdog) réalisés.
+Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web), 6 (authentification), 7 (QR codes, provisioning WiFi), 8 (bascule WiFi/AP), 9 (synchronisation Google Drive), 10 (services systemd, watchdog) et 11 (transcription batch) réalisés. Reste : Sprint 12 (recette finale, checklist de mise en service).
