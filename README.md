@@ -87,6 +87,14 @@ Au premier démarrage sans mot de passe configuré, `dashboard_app.py` utilise l
 
 ⚠️ Le serveur reste en HTTP local (pas de TLS) — ce mot de passe protège contre la curiosité des invités du même réseau, pas contre un attaquant motivé ; c'est le niveau de sécurité voulu (§6).
 
+**Mot de passe admin (parallèle)** : un second mot de passe, indépendant du mot de passe standard, donne aussi accès à la session.
+
+```bash
+python3 src/set_admin_password.py   # définit/change le mot de passe admin (saisie masquée)
+```
+
+Contrairement au mot de passe standard, il n'a **aucune valeur par défaut** : tant que ce script n'a pas été exécuté, seul le mot de passe standard fonctionne. Les deux mots de passe sont indépendants (changer l'un n'affecte pas l'autre) et stockés séparément, chacun haché, dans `dashboard_config.json`. Pour l'instant, aucune fonctionnalité admin n'est conditionnée dessus — `session["is_admin"]` reflète simplement lequel des deux a été utilisé, en vue d'un usage futur.
+
 ## Statut
 
 Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web) et 6 (authentification) réalisés.

@@ -5,6 +5,13 @@ werkzeug.security (PBKDF2) et stocké dans dashboard_config.json — jamais en
 clair dans le code. La clé de session Flask est générée aléatoirement au
 premier démarrage et persistée dans secret_key.txt (permissions 600), pour
 que les sessions ouvertes survivent à un redémarrage du service.
+
+Un second mot de passe, dit « admin », fonctionne en parallèle du mot de
+passe standard : les deux donnent accès à la même session (aucune
+fonctionnalité admin n'est encore conditionnée dessus). Contrairement au
+mot de passe standard, il n'a aucune valeur par défaut — tant que
+`set_admin_password.py` n'a pas été exécuté, seul le mot de passe standard
+fonctionne.
 """
 
 import json
@@ -57,6 +64,20 @@ def set_password(new_password: str) -> None:
 
 def verify_password(password: str) -> bool:
     password_hash = _read_config().get("password_hash")
+    if not password_hash:
+        return False
+    return check_password_hash(password_hash, password)
+
+
+def set_admin_password(new_password: str) -> None:
+    data = _read_config()
+    data["admin_password_hash"] = generate_password_hash(new_password)
+    _write_config(data)
+
+
+def verify_admin_password(password: str) -> bool:
+    """Non configuré par défaut : renvoie False tant que set_admin_password.py n'a pas été exécuté."""
+    password_hash = _read_config().get("admin_password_hash")
     if not password_hash:
         return False
     return check_password_hash(password_hash, password)

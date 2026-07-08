@@ -74,11 +74,19 @@ def login():
 
         password = request.form.get("password", "")
         if auth.verify_password(password):
+            matched_as = "user"
+        elif auth.verify_admin_password(password):
+            matched_as = "admin"
+        else:
+            matched_as = None
+
+        if matched_as:
             auth.register_success(client_id)
             session.clear()
             session["authenticated"] = True
+            session["is_admin"] = matched_as == "admin"
             session.permanent = request.form.get("remember") == "on"
-            logger.info("Connexion dashboard réussie depuis %s", client_id)
+            logger.info("Connexion dashboard réussie depuis %s (%s)", client_id, matched_as)
             target = next_target if _is_safe_redirect_target(next_target) else url_for("index")
             return redirect(target)
 
