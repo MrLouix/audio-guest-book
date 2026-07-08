@@ -53,6 +53,16 @@ attente → décroché (tonalité 440+480 Hz) → dès la première impulsion, l
 
 En attente, `livre_dor.py` sonne (`audio/ring_out.wav`) toutes les `RING_INTERVAL_SEC` (défaut 90 s), et immédiatement si le dashboard crée le fichier `ring_trigger` (consommé puis supprimé). Un décroché pendant la sonnerie ou dans les `RING_ANSWER_GRACE_SEC` (défaut 5 s) qui suivent sa fin simule un vrai appel entrant : la sonnerie est coupée immédiatement, **aucune tonalité n'est jouée et le cadran est ignoré** (impulsions journalisées en debug, sans effet), un message est tiré au hasard parmi tous les `message_N.wav` + `message_generique.wav` disponibles (jamais deux fois de suite le même), puis bip → enregistrement, comme dans le flux nominal. Un décroché hors de cette fenêtre suit le flux nominal habituel (tonalité + cadran).
 
+## Surcouches de fiabilité (Sprint 4)
+
+- **status.json** (`status_io.py`) : écrit de façon atomique (fichier temporaire + `os.replace()`) à chaque transition d'état, contrat `{ "etat", "derniere_maj", "detail" }` (§8) ; rafraîchi périodiquement en attente (`STATUS_HEARTBEAT_SEC`) pour ne jamais paraître périmé.
+- **Démarrage robuste** : attente active de la carte son configurée (`SOUND_CARD`, boucle qui ne renonce jamais, état `erreur` affiché en attendant) ; refus de démarrer si `bip.wav` ou `message_generique.wav` sont absents (message explicite + `status.json` en erreur).
+- **Espace disque** (`disk_space_state`) : sous `DISK_WARNING_MB` (500 Mo), l'enregistrement est tenté quand même (statut `erreur` signalé) ; sous `DISK_CRITICAL_MB` (100 Mo), l'enregistrement est refusé.
+- **Micro-coupures du crochet pendant l'enregistrement** : `HangupConfirmer` exige que le raccroché reste stable au moins `RECORDING_HANGUP_CONFIRM_SEC` avant d'arrêter l'enregistrement, pour ne pas tronquer un message sur un faux contact.
+- **Enregistrements très courts** (< `SHORT_RECORDING_THRESHOLD_SEC`) conservés, jamais supprimés, seulement journalisés.
+- **Logs** : rotation automatique (`RotatingFileHandler`, 5 × 1 Mo) sur `logs/livre_dor.log`, en plus de la console.
+- **Exception globale** : toute exception non prévue dans la machine à états est journalisée (traceback complet), `status.json` bascule en `erreur`, puis l'exception se propage pour que systemd relance le service (Sprint 10) — `GPIO.cleanup()` reste garanti par le bloc `finally`.
+
 ## Statut
 
-Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal) et 3 (sonnerie, appel entrant) réalisés.
+Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant) et 4 (fiabilité) réalisés.

@@ -60,6 +60,22 @@ def message_wav(digit: int) -> Path:
 
 SOUND_CARD = _env("SOUND_CARD", "plughw:1,0")
 
+# Filet de sécurité contre un sous-processus aplay bloqué (§7.2).
+AUDIO_PLAY_TIMEOUT_SEC = _env_int("AUDIO_PLAY_TIMEOUT_SEC", 180)
+
+# Intervalle de rafraîchissement de status.json en état attente, pour que le
+# futur watchdog (Sprint 10) ne le voie jamais périmé lors des longues idles.
+STATUS_HEARTBEAT_SEC = _env_int("STATUS_HEARTBEAT_SEC", 30)
+
+# Durée en-dessous de laquelle un enregistrement est jugé "très court" :
+# conservé (jamais supprimé) mais marqué/logué (§7.2).
+SHORT_RECORDING_THRESHOLD_SEC = _env_float("SHORT_RECORDING_THRESHOLD_SEC", 2.0)
+
+# Anti-rebond spécifique au raccroché pendant un enregistrement en cours,
+# pour ignorer une micro-coupure du crochet (faux contact) sans tronquer le
+# message (§7.2).
+RECORDING_HANGUP_CONFIRM_SEC = _env_float("RECORDING_HANGUP_CONFIRM_SEC", 0.1)
+
 # --- GPIO (§3, §9) -------------------------------------------------------
 
 HOOK_PIN = _env_int("HOOK_PIN", 17)
