@@ -12,6 +12,7 @@ authentifiée par mot de passe unique (§6) : avant chaque requête, seules
 
 import datetime
 import logging
+import subprocess
 import time
 from pathlib import Path
 from typing import List
@@ -22,6 +23,7 @@ from werkzeug.serving import make_server
 import auth
 import config
 import network_info
+import qr_utils
 import status_io
 
 logger = logging.getLogger(__name__)
@@ -159,6 +161,77 @@ def api_ring():
         logger.exception("Impossible de créer le fichier ring_trigger")
         return jsonify({"erreur": f"Impossible de créer le fichier ring_trigger : {exc}"}), 500
     return jsonify({"ok": True})
+
+
+@app.route("/qr")
+def qr():
+    """Deux QR codes (§5.2) : URL stable du dashboard, et WiFi de l'AP si actif."""
+    net = network_info.get_network_info()
+    wifi_qr_data_uri = None
+    if net["mode"] == "ap":
+        wifi_qr_data_uri = qr_utils.qr_data_uri(qr_utils.wifi_qr_payload(config.AP_SSID, config.AP_PASSWORD))
+    return render_template(
+        "qr.html",
+        dashboard_url=qr_utils.dashboard_url(),
+        dashboard_qr_data_uri=qr_utils.qr_data_uri(qr_utils.dashboard_url()),
+        wifi_qr_data_uri=wifi_qr_data_uri,
+        ap_ssid=config.AP_SSID,
+    )
+
+
+@app.route("/qr/label")
+def qr_label():
+    """Étiquette imprimable de l'URL du dashboard, dimensionnée en mm (§5.2)."""
+    size_mm = request.args.get("taille", default=config.QR_LABEL_SIZE_MM, type=int)
+    size_mm = max(10, min(size_mm, 200))
+    return render_template(
+        "qr_label.html",
+        size_mm=size_mm,
+        qr_data_uri=qr_utils.qr_data_uri(qr_utils.dashboard_url()),
+    )
+
+
+@app.route("/wifi")
+def wifi_page():
+    """Page de provisioning WiFi par photo de QR code, décodée 100% côté client (§5.2)."""
+    net = network_info.get_network_info()
+    return render_template(
+        "wifi.html",
+        network_mode=net["mode"],
+        mdns_hostname=config.MDNS_HOSTNAME,
+        web_port=config.WEB_PORT,
+    )
+
+
+@app.route("/api/wifi/add", methods=["POST"])
+def api_wifi_add():
+    """Crée le profil WiFi via nmcli et tente la connexion (§5.2)."""
+    data = request.get_json(silent=True) or request.form
+    ssid = (data.get("ssid") or "").strip()
+    password = data.get("password") or ""
+    if not ssid:
+        return jsonify({"erreur": "SSID manquant"}), 400
+
+    cmd = ["nmcli", "device", "wifi", "connect", ssid]
+    if password:
+        cmd += ["password", password]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=config.CONNECT_TIMEOUT_SEC)
+    except FileNotFoundError:
+        logger.error("nmcli introuvable sur ce système")
+        return jsonify({"erreur": "nmcli introuvable sur ce système"}), 500
+    except subprocess.TimeoutExpired:
+        logger.error("Timeout nmcli lors de la connexion au réseau %s", ssid)
+        return jsonify({"erreur": f"Délai dépassé lors de la connexion à {ssid}"}), 504
+
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "échec inconnu"
+        logger.error("Échec de connexion WiFi à %s : %s", ssid, detail)
+        return jsonify({"erreur": detail}), 502
+
+    logger.info("Connexion WiFi réussie à %s", ssid)
+    return jsonify({"ok": True, "ssid": ssid})
 
 
 def run_server() -> None:

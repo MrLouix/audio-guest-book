@@ -137,14 +137,60 @@ button:disabled {
 .badge-erreur { background: #b23b3b; }
 .badge-inconnu { background: #7a7168; }
 
-.logout-link {
+.logout-link, .nav-link {
   color: var(--muted);
   font-size: 0.85rem;
   text-decoration: none;
 }
 
-.logout-link:hover {
+.logout-link:hover, .nav-link:hover {
   text-decoration: underline;
+}
+
+.qr-image {
+  width: 220px;
+  height: 220px;
+  image-rendering: pixelated;
+  background: white;
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+.camera-preview {
+  width: 100%;
+  max-width: 480px;
+  border-radius: 8px;
+  background: black;
+}
+
+.warning {
+  background: #d18b2c22;
+  border: 1px solid #d18b2c;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  font-size: 0.9rem;
+}
+
+.card form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 320px;
+}
+
+.card input[type="text"], .card input[type="password"] {
+  font-size: 1rem;
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
 }
 
 .login-body {

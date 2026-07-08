@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ajouter un réseau WiFi — Livre d'or téléphonique</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header>
+    <h1>📶 Ajouter un réseau WiFi</h1>
+    <a class="nav-link" href="{{ url_for('index') }}">← Dashboard</a>
+  </header>
+
+  <main>
+    {% if network_mode == 'ap' %}
+    <p class="warning">
+      ⚠️ Le Pi est actuellement en mode point d'accès. Si vous confirmez la connexion, votre appareil
+      perdra sa connexion au réseau du Pi en cours de requête (une seule antenne WiFi côté Pi,
+      impossible de tenir les deux réseaux). Reconnectez-vous ensuite au nouveau réseau puis rouvrez
+      <code>http://{{ mdns_hostname }}.local:{{ web_port }}/</code>.
+    </p>
+    {% endif %}
+
+    <section class="card">
+      <h2>1. Photographiez le QR code WiFi du lieu</h2>
+      <video id="camera" playsinline autoplay muted class="camera-preview"></video>
+      <canvas id="canvas" hidden></canvas>
+      <p class="muted" id="scan-status">Autorisez la caméra pour scanner un QR code WiFi.</p>
+    </section>
+
+    <section class="card" id="confirm-section" hidden>
+      <h2>2. Confirmez le réseau détecté</h2>
+      <p>SSID détecté : <strong id="detected-ssid"></strong></p>
+      <button id="confirm-button">Connecter le Pi à ce réseau</button>
+      <button id="cancel-button" class="secondary">Annuler, rescanner</button>
+      <p class="muted" id="wifi-feedback"></p>
+    </section>
+
+    <section class="card">
+      <h2>Ou saisissez manuellement</h2>
+      <form id="manual-form">
+        <input type="text" id="manual-ssid" placeholder="Nom du réseau (SSID)" required>
+        <input type="password" id="manual-password" placeholder="Mot de passe (laisser vide si ouvert)">
+        <button type="submit">Connecter</button>
+      </form>
+      <p class="muted" id="manual-feedback"></p>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='jsQR.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='wifi.js') }}"></script>
+</body>
+</html>

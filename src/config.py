@@ -120,6 +120,11 @@ LOGIN_FAILED_DELAY_MAX_SEC = _env_float("LOGIN_FAILED_DELAY_MAX_SEC", 10.0)
 AP_CONNECTION_NAME = _env("AP_CONNECTION_NAME", "GuestbookAP")
 AP_SSID = _env("AP_SSID", "Livre-dor-Mariage")
 AP_IP = _env("AP_IP", "192.168.4.1")
+# Mot de passe WPA2 du point d'accès de secours (créé par wifi_or_ap.sh, Sprint 8).
+# Non spécifié dans le §9 : un AP ouvert exposerait le dashboard (déjà protégé
+# par mot de passe, §6) à quiconque à portée, donc un WPA2 documenté par défaut
+# est préférable — à changer à l'installation comme le mot de passe dashboard.
+AP_PASSWORD = _env("AP_PASSWORD", "livredormariage")
 CONNECT_TIMEOUT_SEC = _env_int("CONNECT_TIMEOUT_SEC", 15)
 WIFI_SIGNAL_MIN = _env_int("WIFI_SIGNAL_MIN", 25)
 WIFI_FAIL_THRESHOLD = _env_int("WIFI_FAIL_THRESHOLD", 3)

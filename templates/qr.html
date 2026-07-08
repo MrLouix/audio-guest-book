@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QR codes — Livre d'or téléphonique</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header>
+    <h1>🔗 QR codes</h1>
+    <a class="nav-link" href="{{ url_for('index') }}">← Dashboard</a>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Accès au dashboard</h2>
+      <img src="{{ dashboard_qr_data_uri }}" alt="QR code du dashboard" class="qr-image">
+      <p class="muted">{{ dashboard_url }}</p>
+      <p><a href="{{ url_for('qr_label') }}">Étiquette imprimable →</a></p>
+    </section>
+
+    {% if wifi_qr_data_uri %}
+    <section class="card">
+      <h2>WiFi du point d'accès (mode AP actif)</h2>
+      <img src="{{ wifi_qr_data_uri }}" alt="QR code WiFi du point d'accès" class="qr-image">
+      <p class="muted">SSID : {{ ap_ssid }}</p>
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>

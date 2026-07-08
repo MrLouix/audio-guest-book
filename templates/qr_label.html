@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Étiquette QR — Livre d'or téléphonique</title>
+  <style>
+    @media print {
+      @page { margin: 0; }
+    }
+    html, body {
+      margin: 0;
+      background: white;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .label {
+      width: {{ size_mm }}mm;
+      height: {{ size_mm }}mm;
+    }
+    .label img {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div class="label">
+    <img src="{{ qr_data_uri }}" alt="QR code du dashboard">
+  </div>
+</body>
+</html>

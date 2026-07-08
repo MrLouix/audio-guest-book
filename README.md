@@ -95,6 +95,15 @@ python3 src/set_admin_password.py   # définit/change le mot de passe admin (sai
 
 Contrairement au mot de passe standard, il n'a **aucune valeur par défaut** : tant que ce script n'a pas été exécuté, seul le mot de passe standard fonctionne. Les deux mots de passe sont indépendants (changer l'un n'affecte pas l'autre) et stockés séparément, chacun haché, dans `dashboard_config.json`. Pour l'instant, aucune fonctionnalité admin n'est conditionnée dessus — `session["is_admin"]` reflète simplement lequel des deux a été utilisé, en vue d'un usage futur.
 
+## QR codes & provisioning WiFi (Sprint 7)
+
+- **`/qr`** : QR code de l'URL stable du dashboard (`http://livredor.local:5000/`, jamais une IP brute tant que `USE_MDNS=True`), plus un QR WiFi de secours du point d'accès — affiché uniquement quand le Pi est actuellement en mode AP.
+- **`/qr/label`** : étiquette imprimable du QR du dashboard, dimensionnée en millimètres (`?taille=NN`, défaut `QR_LABEL_SIZE_MM`, bornée à [10, 200] mm) — page volontairement indépendante du thème du dashboard (fond blanc fixe, pensée pour l'impression).
+- **`/wifi`** : photographie un QR WiFi du lieu de réception pour connecter le Pi au réseau, décodé **100 % côté client** avec `jsQR` vendorisé (`static/jsQR.min.js`, via npm + minifié avec `terser`, aucune requête réseau) ; confirmation du SSID détecté avant envoi, avec repli sur une saisie manuelle si la caméra est indisponible. Avertissement affiché si le Pi est en mode AP (une seule antenne : la confirmation coupe la connexion en cours).
+- **`/api/wifi/add`** (POST) : crée le profil et connecte via `nmcli device wifi connect` ; erreurs `nmcli` (échec, timeout, absence de l'utilitaire) renvoyées proprement en JSON, jamais de crash.
+
+Toutes ces routes sont protégées par l'authentification du Sprint 6 (aucune n'a été ajoutée à la liste blanche).
+
 ## Statut
 
-Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web) et 6 (authentification) réalisés.
+Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web), 6 (authentification) et 7 (QR codes, provisioning WiFi) réalisés.
