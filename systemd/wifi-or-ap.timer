@@ -1,0 +1,11 @@
+[Unit]
+Description=Execute wifi-or-ap.service toutes les 30s (spec §5.3)
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=wifi-or-ap.service
+
+[Install]
+WantedBy=timers.target

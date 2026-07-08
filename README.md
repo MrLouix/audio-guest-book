@@ -104,6 +104,26 @@ Contrairement au mot de passe standard, il n'a **aucune valeur par défaut** : t
 
 Toutes ces routes sont protégées par l'authentification du Sprint 6 (aucune n'a été ajoutée à la liste blanche).
 
+## Bascule WiFi/AP (Sprint 8)
+
+`scripts/wifi_or_ap.sh` (exécuté toutes les ~30s par `systemd/wifi-or-ap.timer`) :
+
+- **Déjà connecté à un vrai wifi** (≠ profil AP) : contrôle de qualité (signal courant + ping de la passerelle). Sain → ne rien faire. En échec, un compteur persiste (`WIFI_HEALTH_FILE`, `/run/livre_dor/wifi_health` par défaut) ; après `WIFI_FAIL_THRESHOLD` échecs consécutifs (défaut 3), le SSID est **blacklisté temporairement** (`WIFI_BLACKLIST_MIN`, défaut 10 min, `WIFI_BLACKLIST_FILE`), la connexion coupée, et la recherche d'un candidat reprend **aussitôt** (sans attendre le prochain cycle) — c'est ce qui évite le ping-pong wifi ↔ AP.
+- **Sinon** : parmi les profils connus (nommés d'après leur SSID, tels que créés par `nmcli device wifi connect` / `/api/wifi/add`) dont le réseau est visible, non blacklisté et au-dessus de `WIFI_SIGNAL_MIN` (défaut 25 %), tentés par signal décroissant (timeout `CONNECT_TIMEOUT_SEC` chacun). Le point d'accès n'est coupé qu'au moment où une tentative réelle commence — jamais avant, pour ne pas laisser le Pi injoignable entre les deux.
+- **Si aucun ne fonctionne** : repli sur le point d'accès `AP_CONNECTION_NAME` (créé s'il n'existe pas encore), SSID `AP_SSID`, IP fixe `AP_IP`.
+- Journalisation de chaque décision dans `logs/reseau.log` (rotation manuelle 5×1 Mo, ce log n'étant pas géré par le `RotatingFileHandler` Python).
+
+```bash
+# Test manuel (nécessite nmcli/NetworkManager sur le Pi)
+./scripts/wifi_or_ap.sh
+```
+
+Comme pour le GPIO (Sprint 2), la logique de décision a été vérifiée sans matériel réseau réel en remplaçant `nmcli`/`ping`/`ip` par des scripts factices pilotés par un petit état simulé — voir le detail dans l'historique git.
+
+⚠️ Ce script touche à la connectivité réseau du Pi lui-même : à tester en priorité avec un accès physique/console de secours (checklist §7.6, points 7 et 7bis).
+
+Les unités systemd (`systemd/wifi-or-ap.service` + `.timer`) sont fournies mais pas encore installées automatiquement — l'activation de l'ensemble des services sera finalisée au Sprint 10.
+
 ## Statut
 
-Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web), 6 (authentification) et 7 (QR codes, provisioning WiFi) réalisés.
+Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web), 6 (authentification), 7 (QR codes, provisioning WiFi) et 8 (bascule WiFi/AP) réalisés.

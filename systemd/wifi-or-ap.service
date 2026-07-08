@@ -1,0 +1,10 @@
+[Unit]
+Description=Livre d'or telephonique - bascule WiFi/AP (Sprint 8, spec §5.3)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/livre_dor/scripts/wifi_or_ap.sh
+RuntimeDirectory=livre_dor
+TimeoutStartSec=60
