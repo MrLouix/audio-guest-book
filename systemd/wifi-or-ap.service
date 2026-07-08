@@ -2,6 +2,10 @@
 Description=Livre d'or telephonique - bascule WiFi/AP (Sprint 8, spec §5.3)
 After=NetworkManager.service
 Wants=NetworkManager.service
+# Garde-fou anti-boucle-de-crash (spec §7.1) : au-dela de ce seuil, le
+# watchdog applicatif (livre-dor-watchdog.timer) fait reset-failed+restart.
+StartLimitIntervalSec=120
+StartLimitBurst=6
 
 [Service]
 Type=oneshot

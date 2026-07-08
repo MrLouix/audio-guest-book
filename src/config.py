@@ -150,6 +150,12 @@ RCLONE_SYSTEMD_UNIT = "rclone-sync.timer"
 DISK_WARNING_MB = _env_int("DISK_WARNING_MB", 500)
 DISK_CRITICAL_MB = _env_int("DISK_CRITICAL_MB", 100)
 
+# --- Supervision systemd / watchdog (§7.1) ---------------------------------
+
+# Au-delà de cet âge (secondes) sans mise à jour de status.json, le
+# watchdog considère livre-dor.service gelé et le redémarre.
+WATCHDOG_STALE_AFTER_SEC = _env_int("WATCHDOG_STALE_AFTER_SEC", 300)
+
 
 def ensure_directories() -> None:
     """Crée les dossiers de l'arborescence s'ils n'existent pas encore."""

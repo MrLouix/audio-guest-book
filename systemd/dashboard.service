@@ -1,0 +1,16 @@
+[Unit]
+Description=Livre d'or telephonique - dashboard web (spec §5.2, §7.1)
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=6
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/livre_dor
+ExecStart=/home/pi/livre_dor/.venv/bin/python3 /home/pi/livre_dor/src/dashboard_app.py
+Restart=always
+RestartSec=5
+User=pi
+
+[Install]
+WantedBy=multi-user.target

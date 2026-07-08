@@ -1,0 +1,8 @@
+[Unit]
+Description=Livre d'or telephonique - watchdog applicatif (spec §7.1)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/pi/livre_dor
+ExecStart=/home/pi/livre_dor/.venv/bin/python3 /home/pi/livre_dor/src/watchdog.py
+TimeoutStartSec=30

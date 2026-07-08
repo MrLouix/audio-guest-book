@@ -1,0 +1,11 @@
+[Unit]
+Description=Execute livre-dor-watchdog.service periodiquement (spec §7.1)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=10s
+Unit=livre-dor-watchdog.service
+
+[Install]
+WantedBy=timers.target

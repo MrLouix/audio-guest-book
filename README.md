@@ -138,6 +138,22 @@ Page **`/rclone`** (protégée) : statut (dernière synchronisation réussie, fi
 
 `scripts/setup_rclone_systemd.sh` symlinke les unités depuis le dépôt (le dashboard peut donc réécrire `systemd/rclone-sync.timer` directement, sans privilège particulier) et installe une **règle sudoers strictement ciblée** — NOPASSWD limité à `systemctl daemon-reload`, `restart rclone-sync.timer` et `start rclone-sync.timer`, jamais un accès plus large (point de sécurité identifié par la spec, §5.4).
 
+## Services systemd & watchdog (Sprint 10)
+
+```bash
+sudo ./scripts/setup_systemd.sh          # symlinke + active livre-dor, dashboard, watchdog, wifi-or-ap
+sudo ./scripts/setup_rclone_systemd.sh   # (Sprint 9) synchronisation Google Drive, séparé car règle sudoers dédiée
+```
+
+- **`livre-dor.service`** et **`dashboard.service`** : `Restart=always`, `RestartSec=5`, avec `StartLimitIntervalSec=120`/`StartLimitBurst=6` pour absorber une rafale de crashs sans saturer le CPU. `livre-dor.service` n'a **aucune dépendance réseau** (`After=sound.target` uniquement) : il doit continuer à enregistrer même sans aucun réseau (§7.1).
+- **`src/watchdog.py`** (exécuté toutes les 2 min par `livre-dor-watchdog.timer`) : jamais d'abandon définitif —
+  1. si un service (`livre-dor`, `dashboard`, `wifi-or-ap`, `rclone-sync`) est en état `failed` (`StartLimitBurst` épuisé), `systemctl reset-failed` puis `restart` sont retentés à chaque passage (intervalle plus long que `RestartSec`, pour laisser une panne transitoire se résorber) ;
+  2. si `status.json` n'a pas été mis à jour depuis `WATCHDOG_STALE_AFTER_SEC` (défaut 300 s), `livre-dor.service` est redémarré même s'il n'est pas techniquement `failed` (processus gelé plutôt que planté).
+- `wifi-or-ap.service` et `rclone-sync.service` (Sprints 8-9) reçoivent les mêmes garde-fous `StartLimit*`, désormais couverts par le même watchdog.
+- Logs consultables via `journalctl -u <unité> -f` en complément des fichiers dans `logs/`.
+
+Vérifié (sans systemd réel dans ce sandbox) : syntaxe de toutes les unités validée avec `systemd-analyze verify`, et logique du watchdog testée avec `systemctl` simulé (service en échec, `status.json` frais/périmé/absent, plusieurs services en échec simultanément, absence de double redémarrage redondant).
+
 ## Statut
 
-Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web), 6 (authentification), 7 (QR codes, provisioning WiFi), 8 (bascule WiFi/AP) et 9 (synchronisation Google Drive) réalisés.
+Projet en cours de développement — voir le plan de développement pour l'avancement par sprint. Sprints 0 (environnement), 1 (pipeline audio), 2 (machine à états, scénario nominal), 3 (sonnerie, appel entrant), 4 (fiabilité), 5 (dashboard web), 6 (authentification), 7 (QR codes, provisioning WiFi), 8 (bascule WiFi/AP), 9 (synchronisation Google Drive) et 10 (services systemd, watchdog) réalisés.

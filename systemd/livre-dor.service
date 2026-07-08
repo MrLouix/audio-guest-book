@@ -1,0 +1,20 @@
+[Unit]
+Description=Livre d'or telephonique - machine a etats principale (spec §5.1, §7.1)
+After=sound.target
+# Volontairement PAS de dependance reseau (Wants=/After=network*) : le
+# script principal doit continuer a fonctionner et enregistrer meme sans
+# aucun reseau disponible (spec §7.1).
+StartLimitIntervalSec=120
+StartLimitBurst=6
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/livre_dor
+ExecStart=/home/pi/livre_dor/.venv/bin/python3 /home/pi/livre_dor/src/livre_dor.py
+Restart=always
+RestartSec=5
+User=pi
+SupplementaryGroups=gpio audio
+
+[Install]
+WantedBy=multi-user.target

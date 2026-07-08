@@ -2,6 +2,10 @@
 Description=Livre d'or telephonique - synchronisation Google Drive (Sprint 9, spec §5.4)
 After=network-online.target
 Wants=network-online.target
+# Garde-fou anti-boucle-de-crash (spec §7.1) : au-dela de ce seuil, le
+# watchdog applicatif (livre-dor-watchdog.timer) fait reset-failed+restart.
+StartLimitIntervalSec=120
+StartLimitBurst=6
 
 [Service]
 Type=oneshot
