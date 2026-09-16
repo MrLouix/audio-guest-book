@@ -4,12 +4,26 @@ Toutes les valeurs par défaut correspondent au tableau récapitulatif
 (§9 de docs/specification_livre_dor_telephonique.md). Elles peuvent être
 surchargées par des variables d'environnement du même nom pour l'installation
 sur le Raspberry Pi final, sans toucher au code.
+
+Ordre de précédence d'un paramètre, du plus fort au plus faible :
+
+1. la variable d'environnement du même nom (systemd `Environment=`) — le
+   réglage figé de l'installation ;
+2. custom_config.json, écrit par la page /settings du dashboard, pour les
+   paramètres déclarés dans MODIFIABLE_PARAMS ;
+3. la valeur par défaut inscrite ici.
+
+Tout est résolu une fois pour toutes à l'import de ce module, et livre_dor.py
+tourne dans un autre processus que le dashboard : une modification faite
+depuis /settings ne prend donc effet qu'au redémarrage du service (cf.
+RESTART_REQUIRED_PARAMS). Seul le mode mariage/restitution bascule à chaud,
+via mode_config.json et non par ce mécanisme (§5.7).
 """
 
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 # config.py vit dans src/ ; l'arborescence de données (audio/, messages/,
 # logs/, static/, templates/...) reste à la racine du projet (§8).
@@ -19,16 +33,48 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CUSTOM_CONFIG_FILE = BASE_DIR / "custom_config.json"
 
 
+def _read_custom_config() -> Dict[str, Any]:
+    """Valeurs enregistrées depuis la page /settings ; {} si absent ou illisible (§7.4)."""
+    try:
+        data = json.loads(CUSTOM_CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+# Lu une seule fois, à l'import : ce module fournit des constantes.
+_CUSTOM_VALUES = _read_custom_config()
+
+
+def _param(name: str, default: Any, convert: Callable[[Any], Any]) -> Any:
+    """Résout un paramètre selon l'ordre de précédence documenté en tête de module.
+
+    La variable d'environnement est analysée strictement : une valeur invalide
+    doit faire échouer le démarrage plutôt que passer inaperçue. Une valeur
+    venue de custom_config.json est au contraire tolérante — le fichier est
+    écrit par le dashboard et peut avoir été édité à la main, il ne doit jamais
+    empêcher le service de démarrer (§7.4) ; on retombe alors sur le défaut.
+    """
+    if name in os.environ:
+        return convert(os.environ[name])
+    if name in _CUSTOM_VALUES:
+        try:
+            return convert(_CUSTOM_VALUES[name])
+        except (TypeError, ValueError):
+            pass
+    return convert(default)
+
+
 def _env(name: str, default: str) -> str:
-    return os.environ.get(name, default)
+    return _param(name, default, str)
 
 
 def _env_int(name: str, default: int) -> int:
-    return int(os.environ.get(name, default))
+    return _param(name, default, int)
 
 
 def _env_float(name: str, default: float) -> float:
-    return float(os.environ.get(name, default))
+    return _param(name, default, float)
 
 
 # --- Arborescence (§8) -------------------------------------------------
@@ -213,10 +259,21 @@ MODIFIABLE_PARAMS = {
     "OFFNORMAL_ACTIF_LEVEL": {"type": "str", "default": "LOW", "label": "Niveau actif cadran (LOW/HIGH)"},
     "HOOK_DEBOUNCE_SEC": {"type": "float", "default": 0.075, "label": "Anti-rebond crochet (secondes)"},
     "DIAL_DEBOUNCE_SEC": {"type": "float", "default": 0.02, "label": "Anti-rebond cadran (secondes)"},
+    # Mode restitution (§5.7). MODE_RESTITUTION n'est pas listé : la bascule a
+    # sa propre page /mode et passe par mode_config.json, à chaud.
+    # RESTITUTION_SOUND_CARD non plus : c'est un routage ALSA avancé, et son
+    # défaut suit SOUND_CARD, ce qu'une valeur figée ici casserait.
+    "RESTITUTION_DIGITS_MAX": {"type": "int", "default": 4, "label": "Mode restitution : nombre max de chiffres du numéro"},
+    "RESTITUTION_INTERDIGIT_SEC": {"type": "float", "default": 3.0, "label": "Mode restitution : silence du cadran validant le numéro (secondes)"},
 }
 
-# Paramètres nécessitant un redémarrage après modification
-RESTART_REQUIRED_PARAMS = {"SOUND_CARD"}
+# Paramètres nécessitant un redémarrage du service après modification.
+# C'est le cas de tous : ils sont résolus à l'import de ce module, et
+# livre_dor.py tourne dans un autre processus que le dashboard — rien ne
+# relit custom_config.json en cours de route. Le champ existait mais ne
+# listait que SOUND_CARD, ce qui laissait croire que les autres prenaient
+# effet immédiatement.
+RESTART_REQUIRED_PARAMS = set(MODIFIABLE_PARAMS)
 
 
 def _get_current_value(name: str) -> Any:

@@ -110,6 +110,14 @@ python3 src/restitution_test.py
 
 Tous les paramètres ci-dessous sont centralisés dans `src/config.py` et surchargeables par variable d'environnement du même nom (utile pour un service systemd : `Environment=NOM=valeur` dans le fichier `.service`, sans jamais modifier le code).
 
+Une partie d'entre eux est également réglable depuis la page **Paramètres** du dashboard (`/settings`, réservée au mot de passe administrateur) : ceux déclarés dans `MODIFIABLE_PARAMS`. Ordre de précédence, du plus fort au plus faible :
+
+1. la **variable d'environnement** du même nom — le réglage figé de l'installation ;
+2. **`custom_config.json`**, écrit par la page Paramètres ;
+3. la **valeur par défaut** du code.
+
+Un paramètre fixé par variable d'environnement n'est donc pas modifiable depuis le dashboard. Et comme tout est résolu au démarrage du processus, et que `livre_dor.py` tourne dans un autre service que le dashboard, **une modification faite depuis `/settings` ne prend effet qu'après `sudo systemctl restart livre-dor`** — la page le signale à l'enregistrement. Seule exception : le mode mariage/restitution, qui bascule à chaud par `mode_config.json` et sa propre page `/mode` (§5.7).
+
 ### À vérifier obligatoirement pour le matériel réel
 
 | Paramètre | Défaut | Action requise |
@@ -137,8 +145,8 @@ Tous les paramètres ci-dessous sont centralisés dans `src/config.py` et surcha
 | Paramètre | Défaut | Description |
 |---|---|---|
 | `MODE_RESTITUTION` | `False` | Mode au **premier démarrage** seulement : ensuite `mode_config.json` fait foi (bascule via la page `/mode`) |
-| `RESTITUTION_DIGITS_MAX` | 4 | Nombre max de chiffres du numéro de message ; au dernier chiffre la saisie se ferme aussitôt |
-| `RESTITUTION_INTERDIGIT_SEC` | 3.0 | Silence du cadran validant un numéro plus court (« 1 » puis attente) |
+| `RESTITUTION_DIGITS_MAX` | 4 | Nombre max de chiffres du numéro de message ; au dernier chiffre la saisie se ferme aussitôt. Réglable depuis `/settings` |
+| `RESTITUTION_INTERDIGIT_SEC` | 3.0 | Silence du cadran validant un numéro plus court (« 1 » puis attente). Réglable depuis `/settings` |
 | `RESTITUTION_SOUND_CARD` | = `SOUND_CARD` | Périphérique ALSA de lecture des messages des invités. Ces enregistrements sont **mono** : joués via `plughw`, ils sortent aussi par le haut-parleur externe. Pour les limiter à l'écouteur, définir un périphérique ALSA `route` et le pointer ici |
 
 ### Dashboard & authentification

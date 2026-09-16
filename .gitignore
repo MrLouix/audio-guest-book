@@ -18,6 +18,7 @@ ring_trigger
 active_port.txt
 rclone_config.json
 mode_config.json
+custom_config.json
 dashboard_config.json
 secret_key.txt
 
