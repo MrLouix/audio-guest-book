@@ -30,6 +30,7 @@ import logging.handlers
 import random
 import re
 import shutil
+import threading
 import time
 import wave
 from pathlib import Path
@@ -208,6 +209,17 @@ class GuestBookStateMachine:
         self._last_ring_end_ts: Optional[float] = None
         self._last_ring_start_ts = time.monotonic()
         self._last_random_message: Optional[Path] = None
+        self._stop = threading.Event()
+
+    def request_stop(self) -> None:
+        """Demande l'arrêt de la boucle au prochain tour d'attente.
+
+        Le service est normalement arrêté par systemd, mais un arrêt coopératif
+        évite de laisser des machines à états vivantes dans les harnais de test
+        (restitution_test.py, load_test.py), où elles continueraient d'écrire
+        status.json et de jouer des sonneries après la fin d'un scénario.
+        """
+        self._stop.set()
 
     def _set_state(self, state: str, detail: Optional[str] = None) -> None:
         self.state = state
@@ -215,7 +227,7 @@ class GuestBookStateMachine:
 
     def run_forever(self) -> None:
         logger.info("Machine à états démarrée, état initial : %s", self.state)
-        while True:
+        while not self._stop.is_set():
             self._run_attente()
 
     def _is_recent_ring(self) -> bool:
@@ -234,7 +246,7 @@ class GuestBookStateMachine:
         self._set_state(STATE_ATTENTE, detail=self._attente_detail())
         self._last_ring_start_ts = time.monotonic()
         last_heartbeat = time.monotonic()
-        while True:
+        while not self._stop.is_set():
             # Mode relu à chaque tour : une bascule depuis le dashboard est
             # prise en compte en moins d'une seconde, et jamais au milieu
             # d'une communication déjà engagée (§5.7).
@@ -487,9 +499,21 @@ class GuestBookStateMachine:
         Après un message, il faut raccrocher puis redécrocher pour en écouter un
         autre. Les chiffres composés entre-temps sont purgés par
         _hook_up_ignoring_dial() et restent sans effet.
+
+        Cette attente est sans limite de durée — un combiné simplement posé à
+        côté du téléphone y reste indéfiniment. Le heartbeat de status.json doit
+        donc continuer ici, sinon le watchdog (§7.1) verrait le fichier périmé
+        au bout de WATCHDOG_STALE_AFTER_SEC et redémarrerait le service en
+        boucle. C'est le seul état du parcours dont la durée n'est pas bornée
+        par ailleurs.
         """
         self._set_state(STATE_RESTITUTION_LECTURE, detail="attente du raccroché")
+        last_heartbeat = time.monotonic()
         while self._hook_up_ignoring_dial():
+            if (time.monotonic() - last_heartbeat) >= config.STATUS_HEARTBEAT_SEC:
+                status_io.write_status(STATE_RESTITUTION_LECTURE,
+                                       detail="attente du raccroché")
+                last_heartbeat = time.monotonic()
             time.sleep(MAIN_LOOP_POLL_SEC)
 
     def _run_enregistrement(self, should_continue: Callable[[], bool] = None) -> None:
@@ -497,7 +521,10 @@ class GuestBookStateMachine:
         # n'arrive ici, mais une bascule pendant une communication déjà engagée
         # en mode mariage le pourrait. « Aucun enregistrement possible » est un
         # invariant du mode, il est donc vérifié ici aussi.
-        if mode_io.is_restitution():
+        # force=True : cet invariant doit être évalué sur l'état réel du
+        # fichier, pas sur une valeur vieille d'au plus une seconde. L'appel est
+        # unique par enregistrement, son coût est donc sans importance.
+        if mode_io.is_restitution(force=True):
             logger.error("Enregistrement demandé en mode restitution : refusé (§5.7).")
             self._set_state(STATE_ENREGISTREMENT,
                             detail="enregistrement refusé (mode restitution)")
