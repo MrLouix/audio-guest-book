@@ -11,9 +11,21 @@
   var messagesCount = document.getElementById("messages-count");
   var reseauMode = document.getElementById("reseau-mode");
   var reseauIp = document.getElementById("reseau-ip");
+  var modeActuel = document.getElementById("mode-actuel");
   var logsContent = document.getElementById("logs-content");
   var ringButton = document.getElementById("ring-button");
   var ringFeedback = document.getElementById("ring-feedback");
+
+  // Sonnerie neutralisée en mode restitution (§5.7) : le bouton reste désactivé
+  // tant que le mode est actif, y compris après un clic (voir le .finally ci-dessous).
+  var modeRestitution = false;
+
+  function applyRingAvailability() {
+    ringButton.disabled = modeRestitution;
+    if (modeRestitution) {
+      ringFeedback.textContent = "Sonnerie désactivée en mode restitution.";
+    }
+  }
 
   function refreshStatus() {
     fetch("/api/status")
@@ -25,6 +37,9 @@
         etatDetail.textContent = data.detail || "—";
         etatMaj.textContent = "dernière mise à jour : " + (data.derniere_maj || "inconnue");
         messagesCount.textContent = data.messages_count != null ? data.messages_count : "—";
+        modeRestitution = data.mode_restitution === true;
+        modeActuel.textContent = modeRestitution ? "restitution" : "mariage";
+        applyRingAvailability();
         if (data.reseau) {
           reseauMode.textContent = "mode : " + (data.reseau.mode || "inconnu");
           reseauIp.textContent = "IP : " + (data.reseau.ip || "inconnue");
@@ -69,7 +84,7 @@
         ringFeedback.textContent = "Échec de la requête.";
       })
       .finally(function () {
-        ringButton.disabled = false;
+        applyRingAvailability();
       });
   });
 

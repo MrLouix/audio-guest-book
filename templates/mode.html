@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mode de fonctionnement — Livre d'or téléphonique</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header>
+    <h1>🎚️ Mode de fonctionnement</h1>
+    <a class="nav-link" href="{{ url_for('index') }}">← Dashboard</a>
+  </header>
+
+  <main>
+    {% if error %}
+    <p class="warning">⚠️ {{ error }}</p>
+    {% endif %}
+
+    <section class="card">
+      <h2>Mode actuel</h2>
+      <p class="big">{{ "Restitution" if restitution else "Mariage" }}</p>
+      <p>Messages enregistrés : <strong>{{ messages_count }}</strong></p>
+      <p class="muted">
+        La bascule est prise en compte en moins d'une seconde, sans redémarrer le
+        service : elle s'applique au retour en état d'attente, jamais au milieu
+        d'une communication en cours.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Basculer</h2>
+      <form method="post">
+        <label class="remember">
+          <input type="checkbox" name="restitution" {% if restitution %}checked{% endif %}>
+          Mode restitution (après le mariage)
+        </label>
+        <button type="submit">Enregistrer</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Ce que change le mode restitution</h2>
+      <ul>
+        <li>Décrocher donne la tonalité, puis on compose au cadran le numéro d'un
+            message&nbsp;: <strong>{{ digits_max }} chiffres au maximum</strong>.</li>
+        <li>Les messages sont numérotés <strong>1 à {{ messages_count }}</strong> dans
+            l'ordre chronologique d'enregistrement.</li>
+        <li>Composer «&nbsp;1&nbsp;» puis attendre {{ "%.0f"|format(interdigit_sec) }}&nbsp;s
+            lit le premier message. Au {{ digits_max }}<sup>e</sup> chiffre, la saisie se
+            ferme aussitôt&nbsp;: la lecture démarre sans attendre.</li>
+        <li>Un numéro supérieur au nombre de messages lit <strong>le dernier</strong>.</li>
+        <li><strong>Aucun enregistrement n'est possible</strong>&nbsp;: ni message des
+            mariés, ni bip, ni micro. Le dossier des messages est en lecture seule.</li>
+        <li>La <strong>sonnerie périodique est désactivée</strong>, ainsi que le bouton
+            «&nbsp;Sonner maintenant&nbsp;» du dashboard.</li>
+        <li>Après un message, il faut raccrocher puis redécrocher pour en écouter un autre.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
