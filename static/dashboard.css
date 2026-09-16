@@ -256,3 +256,120 @@ button.secondary {
   font-size: 0.85rem;
   margin: 0;
 }
+
+/* Menu burger pour petits écrans */
+.burger-button {
+  display: none;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--fg);
+  padding: 0.5rem;
+}
+
+.nav-menu {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+@media (max-width: 768px) {
+  .burger-button {
+    display: block;
+    order: -1;
+  }
+  
+  header {
+    position: relative;
+  }
+  
+  header h1 {
+    flex: 0 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .nav-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    flex-direction: column;
+    padding: 1rem;
+    gap: 0.75rem;
+    display: none;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  .nav-menu.active {
+    display: flex;
+  }
+  
+  .nav-menu .nav-link,
+  .nav-menu .logout-link {
+    display: block;
+    padding: 0.5rem 1rem;
+    width: 100%;
+    text-align: left;
+  }
+  
+  .nav-menu .nav-link:hover,
+  .nav-menu .logout-link:hover {
+    background: var(--border);
+    border-radius: 4px;
+  }
+  
+  .logout-link {
+    order: 10;
+  }
+  
+  .badge {
+    display: none;
+  }
+}
+
+/* Styles pour la page settings */
+.status-section {
+  margin-bottom: 1rem;
+}
+
+.status-section h3 {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin: 0 0 0.5rem 0;
+}
+
+.gpio-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.gpio-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gpio-item span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.gpio-item strong {
+  font-size: 0.85rem;
+}
+
+.card input[type="text"],
+.card input[type="number"] {
+  max-width: 200px;
+}
+
+.card form {
+  max-width: 400px;
+}

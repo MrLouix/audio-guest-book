@@ -8,13 +8,18 @@
 </head>
 <body>
   <header>
+    <button class="burger-button" id="burger-button" aria-label="Menu">☰</button>
     <h1>💍 Livre d'or téléphonique</h1>
     <span id="etat-badge" class="badge badge-inconnu">inconnu</span>
-    <a class="nav-link" href="{{ url_for('qr') }}">QR codes</a>
-    <a class="nav-link" href="{{ url_for('wifi_page') }}">WiFi</a>
-    <a class="nav-link" href="{{ url_for('rclone_page') }}">Google Drive</a>
-    <a class="nav-link" href="{{ url_for('mode_page') }}">Mode</a>
-    <a class="logout-link" href="{{ url_for('logout') }}">Déconnexion</a>
+    <nav class="nav-menu" id="nav-menu">
+      <a class="nav-link" href="{{ url_for('index') }}">Dashboard</a>
+      <a class="nav-link" href="{{ url_for('settings_page') }}">Paramètres</a>
+      <a class="nav-link" href="{{ url_for('mode_page') }}">Mode</a>
+      <a class="nav-link" href="{{ url_for('qr') }}">QR codes</a>
+      <a class="nav-link" href="{{ url_for('wifi_page') }}">WiFi</a>
+      <a class="nav-link" href="{{ url_for('rclone_page') }}">Google Drive</a>
+      <a class="logout-link" href="{{ url_for('logout') }}">Déconnexion</a>
+    </nav>
   </header>
 
   <main>
@@ -51,6 +56,7 @@
     </section>
   </main>
 
+  <script src="{{ url_for('static', filename='burger-menu.js') }}"></script>
   <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
 </body>
 </html>

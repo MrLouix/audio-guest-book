@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paramètres — Livre d'or téléphonique</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header>
+    <button class="burger-button" id="burger-button" aria-label="Menu">☰</button>
+    <h1>⚙️ Paramètres</h1>
+    <nav class="nav-menu" id="nav-menu">
+      <a class="nav-link" href="{{ url_for('index') }}">Dashboard</a>
+      <a class="nav-link" href="{{ url_for('mode_page') }}">Mode</a>
+      <a class="nav-link" href="{{ url_for('qr') }}">QR codes</a>
+      <a class="nav-link" href="{{ url_for('wifi_page') }}">WiFi</a>
+      <a class="nav-link" href="{{ url_for('rclone_page') }}">Google Drive</a>
+      <a class="logout-link" href="{{ url_for('logout') }}">Déconnexion</a>
+    </nav>
+  </header>
+
+  <main>
+    {% if error %}
+    <p class="warning">⚠️ {{ error }}</p>
+    {% endif %}
+
+    <section class="card">
+      <h2>Statut matériel</h2>
+      
+      <div class="status-section">
+        <h3>Carte son</h3>
+        <p>
+          Nom : <strong>{{ sound_card }}</strong>
+          {% if sound_card_available %}
+          <span class="badge badge-decroche">connectée</span>
+          {% else %}
+          <span class="badge badge-erreur">déconnectée</span>
+          {% endif %}
+        </p>
+      </div>
+
+      {% if gpio_available and gpio_status %}
+      <div class="status-section">
+        <h3>GPIO</h3>
+        <div class="gpio-status">
+          <div class="gpio-item">
+            <span>Crochet : </span>
+            <strong id="gpio-hook">{{ gpio_status.hook or "inconnu" }}</strong>
+          </div>
+          <div class="gpio-item">
+            <span>Cadran (off-normal) : </span>
+            <strong id="gpio-dial-offnormal">{{ gpio_status.dial_offnormal or "inconnu" }}</strong>
+          </div>
+          <div class="gpio-item">
+            <span>Cadran (pulse) : </span>
+            <strong id="gpio-dial-pulse">{{ gpio_status.dial_pulse or "inconnu" }}</strong>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div class="status-section">
+        <h3>GPIO</h3>
+        <p class="muted">GPIO non disponible (mode démo)</p>
+        <div class="gpio-status" id="gpio-demo-status">
+          <div class="gpio-item">
+            <span>Crochet : </span>
+            <strong>inconnu</strong>
+          </div>
+          <div class="gpio-item">
+            <span>Cadran (off-normal) : </span>
+            <strong>inconnu</strong>
+          </div>
+          <div class="gpio-item">
+            <span>Cadran (pulse) : </span>
+            <strong>inconnu</strong>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Paramètres de fonctionnement</h2>
+      
+      {% if message %}
+      <p class="warning" id="save-message">{{ message }}</p>
+      {% endif %}
+      
+      <form id="settings-form" method="post">
+        {% for param_name, param_info in modifiable_params.items() %}
+        <label>
+          {{ param_info.label }}
+          {% if param_info.type == "int" %}
+          <input 
+            type="number" 
+            name="{{ param_name }}" 
+            value="{{ config[param_name] | int }}" 
+            {% if param_name in ["RING_INTERVAL_SEC", "MAX_RECORD_SEC", "AUDIO_PLAY_TIMEOUT_SEC"] %}
+            min="1"
+            {% endif %}
+            step="1"
+          >
+          {% elif param_info.type == "float" %}
+          <input 
+            type="number" 
+            name="{{ param_name }}" 
+            value="{{ config[param_name] | float }}" 
+            min="0"
+            step="0.001"
+          >
+          {% elif param_info.type == "str" %}
+          <input 
+            type="text" 
+            name="{{ param_name }}" 
+            value="{{ config[param_name] | string }}"
+            {% if param_name == "HOOK_ACTIVE_STATE" or param_name == "OFFNORMAL_ACTIF_LEVEL" %}
+            placeholder="LOW ou HIGH"
+            {% endif %}
+          >
+          {% endif %}
+        </label>
+        {% endfor %}
+        
+        <button type="submit">💾 Enregistrer</button>
+        <p class="muted">Seul un administrateur peut modifier ces paramètres.</p>
+        {% if redemarrage_necessaire %}
+        <p class="warning">⚠️ Certains paramètres nécessitent un redémarrage du service.</p>
+        {% endif %}
+      </form>
+      
+      <p class="muted" id="settings-feedback"></p>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='burger-menu.js') }}"></script>
+  <script src="{{ url_for('static', filename='settings.js') }}"></script>
+</body>
+</html>
