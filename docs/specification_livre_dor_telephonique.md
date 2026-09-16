@@ -131,6 +131,7 @@ Un script de préparation (équivalent de `prepare_audio.py`, à recoder) transf
 | Message(s) des mariés (un par chiffre + un générique) | **Gauche** | −6 à −12 dB | Écouteur |
 | Tonalité (440 + 480 Hz, générée par synthèse) | **Gauche** | −12 dB | Écouteur |
 | Bip avant enregistrement | **Gauche** | −6 dB | Écouteur |
+| Annonce « aucun message disponible » (`aucun_message.*`, **optionnelle**, §5.7) | **Gauche** | −9 dB | Écouteur |
 
 L'équilibre final des volumes se règle par le couple **gain logiciel** (pré-traitement) + **potentiomètre physique** du PAM8403.
 
@@ -185,6 +186,9 @@ Serveur Flask écoutant sur `0.0.0.0:5000`, accessible via `http://livredor.loca
 | `/wifi` | GET | Page permettant de photographier le QR code WiFi d'un lieu ; décodage **100 % côté client** avec `jsQR.min.js` **servi localement** (vendorisé via npm, fichier statique Flask — aucune connexion internet requise) ; confirmation du SSID détecté par l'utilisateur |
 | `/api/wifi/add` | POST | Crée le profil WiFi via `nmcli` et tente la connexion. **Avertissement affiché dans l'UI** : si le Pi est en mode AP au moment de la confirmation, le téléphone de l'utilisateur perd sa connexion en cours de requête (une seule antenne, impossible de tenir les deux réseaux) ; se reconnecter ensuite au nouveau WiFi et rouvrir `livredor.local` |
 | `/rclone` | GET/POST | Configuration de la synchronisation Google Drive (voir §5.4) |
+| `/mode` | GET/POST | Bascule mode mariage / mode restitution (voir §5.7). Écrit `mode_config.json`, relu à chaud par `livre_dor.py` — aucun redémarrage de service |
+
+Le bouton « Sonner maintenant » de l'accueil est **désactivé en mode restitution**, où la sonnerie n'a plus de sens (§5.7) ; `/api/status` expose `mode_restitution` pour que l'UI le sache.
 
 **QR / adressage stable :** `USE_MDNS = True`, `MDNS_HOSTNAME = "livredor"` → tous les QR codes encodent `http://livredor.local:5000/` (jamais une IP brute), ce qui survit aux bascules wifi/AP. Prérequis sur le Pi : `hostnamectl set-hostname livredor` + redémarrage d'`avahi-daemon`.
 
@@ -235,6 +239,80 @@ Exécuté toutes les ~30 s par un couple `.service`/`.timer` systemd.
 
 - **Kit mains libres Bluetooth** : jugé faisable plus tard (BlueZ + profils HFP/HSP, purement logiciel, matériel inchangé) mais **explicitement mis de côté** — ne pas l'implémenter.
 - Génération de la sonnerie sur la cloche d'origine (tension AC élevée) : abandonnée au profit du haut-parleur externe.
+
+### 5.7 Mode restitution (après l'événement)
+
+Après le mariage, le parcours de collecte n'a plus d'objet : on veut **réécouter**
+depuis le téléphone lui-même les messages laissés par les invités. Le mode
+restitution transforme le Socotel en lecteur de messages numérotés. Il est
+**exclusif** du mode mariage et s'active depuis le dashboard (`/mode`).
+
+**Parcours :**
+
+1. Décroché → **tonalité** (identique au mode mariage), coupée dès la première
+   impulsion du cadran.
+2. L'utilisateur compose au cadran un numéro de **`RESTITUTION_DIGITS_MAX`
+   chiffres au maximum** (défaut 4). Le numéro est validé :
+   - **immédiatement au dernier chiffre autorisé** — aucun chiffre
+     supplémentaire n'est alors accepté : composer `3695` lance la lecture sans
+     attendre ;
+   - ou après **`RESTITUTION_INTERDIGIT_SEC`** de silence du cadran (défaut 3 s)
+     pour un numéro plus court : composer `1` puis attendre lit le premier
+     message. Aucun délai n'est appliqué au **premier** chiffre : on attend
+     indéfiniment tant que le combiné est décroché.
+3. **Lecture du message n° *numéro***, les enregistrements étant numérotés
+   **1..N dans l'ordre chronologique** (voir « numérotation » ci-dessous).
+4. Le message terminé, **silence jusqu'au raccroché** : le cadran est ignoré. Il
+   faut raccrocher puis redécrocher pour écouter un autre message.
+
+**Bornage du numéro :** le numéro est ramené à l'intervalle `[1, N]`.
+Au-delà du nombre total de messages, **le dernier est lu** (règle demandée). Un
+numéro nul — le cadran rend `0` pour dix impulsions — est ramené au **premier**,
+par symétrie, plutôt que de créer un parcours d'erreur.
+
+**Numérotation chronologique :** l'ordre de référence est l'**horodatage inscrit
+dans le nom du fichier** par le nommage du §4.3, car il voyage avec le fichier —
+contrairement à la date de modification, qu'une copie `rclone` ou une
+restauration de sauvegarde peut écraser. Le suffixe de collision `_k` désigne un
+enregistrement postérieur dans la même seconde et se compare comme un entier
+(`_2` avant `_10`). Un fichier au nom non conforme (ajouté à la main dans
+`messages/`) est trié par sa date de modification. La liste est relue **une fois
+par communication**, pour que la numérotation reste stable du décroché au
+raccroché.
+
+**Invariants du mode :**
+
+- **Aucun enregistrement, aucune parole possible** : ni message des mariés, ni
+  bip, ni `arecord`. Le mode est en **lecture seule** sur `messages/` — il ne
+  crée, ne modifie et ne supprime jamais rien (cf. §7.3). Outre le fait
+  qu'aucun parcours du mode n'y mène, l'état `enregistrement` refuse
+  explicitement de démarrer quand le mode est actif, ce qui couvre une bascule
+  survenant pendant une communication déjà engagée en mode mariage.
+- **Sonnerie neutralisée** : plus de sonnerie périodique, et plus de branche
+  « appel entrant » (§1.2). Un `ring_trigger` déposé par le dashboard est
+  **consommé sans sonner** — laissé en place, il déclencherait une sonnerie
+  surprise au retour en mode mariage. L'intervalle de sonnerie est réarmé en
+  continu, pour ne pas sonner immédiatement au moment de la bascule inverse.
+- **Aucun message disponible** : si `messages/` est vide, l'annonce
+  `aucun_message.wav` est jouée (§4.2) ; si elle n'a pas été fournie, le bip
+  sert de repli. Le service ne refuse jamais de démarrer faute de cette annonce.
+
+**Bascule à chaud :** la source de vérité est `mode_config.json` (§8), relu à
+chaque tour de la boucle d'attente. Une bascule est donc prise en compte en
+moins d'une seconde, sans redémarrage du service, et **jamais au milieu d'une
+communication** : elle s'applique au retour en état `attente`.
+`MODE_RESTITUTION` (§9) ne fixe que la valeur du fichier à sa création.
+
+**Audio — point de vigilance :** les enregistrements des invités sont **mono**
+(§4.3), alors que les fichiers préparés sont stéréo panés (§4.2, gauche =
+écouteur, droite = haut-parleur externe). Joué via `plughw`, un fichier mono est
+dupliqué sur les deux canaux : les messages sortent donc **aussi par le
+haut-parleur externe**. À constater au casque avant la recette. Si l'écoute doit
+se limiter à l'écouteur, définir un périphérique ALSA `route` et le pointer via
+`RESTITUTION_SOUND_CARD` (§9) — aucune modification de code n'est nécessaire. La
+conversion des WAV à la volée est **écartée** : elle ajouterait ffmpeg/pydub au
+chemin critique d'exécution, que les primitives audio gardent volontairement
+libre de toute bibliothèque.
 
 ---
 
@@ -338,6 +416,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 │   ├── bip.wav               # pané gauche
 │   ├── ring_out.wav          # sonnerie, panée droite
 │   ├── message_generique.wav # pané gauche (fallback)
+│   ├── aucun_message.wav     # optionnel, pané gauche (annonce du mode restitution, §5.7)
 │   └── message_N.wav         # un par chiffre attribué (N = 0..9), pané gauche
 ├── messages/                 # enregistrements des invités (WAV horodatés)
 ├── logs/
@@ -347,15 +426,17 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 ├── status.json               # état courant écrit par livre_dor.py (atomique)
 ├── ring_trigger              # fichier drapeau (créé par dashboard, consommé par livre_dor.py)
 ├── rclone_config.json        # paramètres de sync éditables via dashboard
+├── mode_config.json          # mode mariage / restitution, éditable via dashboard (§5.7)
 ├── dashboard_config.json     # hash du mot de passe dashboard + options
 ├── secret_key.txt            # clé de session Flask (chmod 600)
 └── active_port.txt           # port réellement utilisé par Flask
 ```
 
 **Interfaces inter-processus (contrats) :**
-- `status.json` : `{ "etat": "attente|sonnerie|decroche|numerotation|lecture|appel_repondu|enregistrement|erreur", "derniere_maj": "ISO-8601", "detail": "texte optionnel" }`
+- `status.json` : `{ "etat": "attente|sonnerie|decroche|numerotation|lecture|appel_repondu|enregistrement|restitution_numerotation|restitution_lecture|erreur", "derniere_maj": "ISO-8601", "detail": "texte optionnel" }`
 - `ring_trigger` : simple existence du fichier = demande de sonnerie ; supprimé par le script principal après exécution.
 - `rclone_config.json` : `{ "remote": "gdrive", "dossier": "MariageGuestBook", "intervalle_min": 5, "actif": true }`
+- `mode_config.json` : `{ "restitution": false }` — écrit par le dashboard, relu à chaud par le script principal (§5.7). Absent ou illisible → mode mariage (valeur de `MODE_RESTITUTION`).
 
 ---
 
@@ -372,6 +453,10 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 | `RING_INTERVAL_SEC` | 90 | Intervalle sonnerie en attente |
 | `RING_ANSWER_GRACE_SEC` | 5 | Fenêtre après la fin de la sonnerie pendant laquelle un décroché est traité comme un « appel entrant » (message aléatoire, sans cadran) |
 | `MAX_RECORD_SEC` | 120 | Durée max d'un message invité |
+| `MODE_RESTITUTION` | False | Mode au premier démarrage ; ensuite `mode_config.json` fait foi (bascule via `/mode`, §5.7) |
+| `RESTITUTION_DIGITS_MAX` | 4 | Nombre max de chiffres du numéro de message ; au dernier chiffre la saisie se ferme aussitôt |
+| `RESTITUTION_INTERDIGIT_SEC` | 3.0 | Silence du cadran validant un numéro plus court (« 1 » puis attente) |
+| `RESTITUTION_SOUND_CARD` | = `SOUND_CARD` | Périphérique ALSA de lecture des messages invités (échappatoire mono → écouteur seul, §5.7) |
 | `WEB_PORT` | 5000 | Port dashboard, **fixe** |
 | `WEB_PORT_MAX_ATTEMPTS` | 1 | Pas de repli de port |
 | `USE_MDNS` / `MDNS_HOSTNAME` | True / `livredor` | URL stable `http://livredor.local:5000/` |

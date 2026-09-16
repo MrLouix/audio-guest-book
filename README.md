@@ -182,6 +182,31 @@ Vérifié par un harnais dédié (15 contrôles) : détection incrémentale, ref
 
 La plupart des points de la checklist (câblage réel, sens logique des contacts, redémarrage à froid du Pi, bascule WiFi/AP physique...) exigent le matériel assemblé et ne peuvent pas être vérifiés dans cet environnement de développement. Ce qui a pu être vérifié ici : la logique du test de charge elle-même (comptage de fichiers, détection d'orphelins, avec audio simulé — 5 contrôles), et la résilience des écritures atomiques de `status.json` (Sprint 4) face à une coupure brutale : 60 simulations de `SIGKILL` en pleine écriture, jamais de fichier corrompu.
 
+## Mode restitution (Sprint 13, après l'événement)
+
+Le mariage passé, le téléphone devient un **lecteur des messages laissés par les invités** : décrocher, composer au cadran le numéro d'un message, l'écouter. Voir le [§5.7 de la spécification](docs/specification_livre_dor_telephonique.md).
+
+- Numéro de **4 chiffres au maximum** (`RESTITUTION_DIGITS_MAX`). Composer `1` puis attendre 3 s (`RESTITUTION_INTERDIGIT_SEC`) lit le premier message ; composer `3695` ferme la saisie au 4ᵉ chiffre et lance la lecture aussitôt, sans qu'un 5ᵉ chiffre soit possible.
+- Messages numérotés **1..N dans l'ordre chronologique** d'enregistrement (horodatage du nom de fichier, repli sur la date de modification pour un nom non conforme).
+- Numéro au-delà du nombre de messages → **le dernier** est lu. Numéro nul (dix impulsions) → le premier.
+- **Aucune parole, aucun enregistrement** : ni message des mariés, ni bip, ni micro. Le mode est en lecture seule sur `messages/`, et l'état `enregistrement` refuse explicitement de démarrer quand il est actif.
+- **Sonnerie neutralisée**, branche « appel entrant » comprise ; un `ring_trigger` déposé par le dashboard est consommé sans sonner.
+- Après un message, **silence jusqu'au raccroché** : raccrocher puis redécrocher pour en écouter un autre.
+
+**Bascule** depuis le dashboard, page **Mode** (`/mode`) : elle écrit `mode_config.json`, relu à chaud par la machine à états à chaque tour de la boucle d'attente. Prise en compte en moins d'une seconde, sans redémarrage du service, et jamais au milieu d'une communication. `MODE_RESTITUTION` ne fixe que la valeur du fichier à sa création.
+
+**Annonce optionnelle** : déposer `audio_src/aucun_message.*` puis relancer `python3 src/prepare_audio.py` pour annoncer qu'aucun message n'est disponible ; sans elle, le bip sert de repli.
+
+- **`src/restitution_test.py`** : valide les règles du mode sans Raspberry Pi ni carte son — `PhoneInputs` piloté à la main (séquence réelle du cadran), `audio_io.play`/`record` remplacés par des doublures, dossier de messages temporaire (jamais `messages/`).
+
+  ```bash
+  python3 src/restitution_test.py
+  ```
+
+  11 scénarios, 20 contrôles : « 1 » + attente, 4 chiffres avec 5ᵉ ignoré, numéro dans les bornes, numéro nul, `messages/` vide, raccroché pendant la saisie puis pendant la lecture, chiffre composé pendant la lecture, absence de sonnerie et d'enregistrement sur une attente prolongée, refus d'enregistrer après bascule en pleine communication, et tri chronologique (collisions `_k`, nom non conforme, exclusion des `.txt` de transcription et des sous-dossiers).
+
+**Point de vigilance matériel** : les enregistrements des invités sont mono, alors que les fichiers préparés sont stéréo panés (gauche = écouteur). Joué via `plughw`, un fichier mono est dupliqué sur les deux canaux : les messages sortent donc aussi par le haut-parleur externe. À constater au casque ; pour limiter l'écoute à l'écouteur, définir un périphérique ALSA `route` et le pointer via `RESTITUTION_SOUND_CARD`, sans modification de code.
+
 ## Statut
 
-Développement terminé — les 12 sprints du plan de développement sont réalisés. La checklist de mise en service reste à dérouler sur le matériel physique assemblé avant l'événement (voir [`docs/checklist_mise_en_service.md`](docs/checklist_mise_en_service.md)).
+Développement terminé — les 12 sprints du plan de développement sont réalisés, plus le Sprint 13 (mode restitution, à activer après l'événement). La checklist de mise en service reste à dérouler sur le matériel physique assemblé avant l'événement, et sa section 9bis après (voir [`docs/checklist_mise_en_service.md`](docs/checklist_mise_en_service.md)).
