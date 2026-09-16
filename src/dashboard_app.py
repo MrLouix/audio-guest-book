@@ -13,6 +13,7 @@ authentifiée par mot de passe unique (§6) : avant chaque requête, seules
 import datetime
 import json
 import logging
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -44,6 +45,11 @@ app.secret_key = auth.get_or_create_secret_key()
 app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(hours=config.SESSION_LIFETIME_HOURS)
 
 LOG_TAIL_LINES = 150
+
+# Taille de la fenêtre lue en fin de fichier pour extraire LOG_TAIL_LINES.
+# 150 lignes de log applicatif pèsent ~15 Ko ; 64 Ko laissent une marge
+# confortable même pour des lignes longues (traces d'exception).
+LOG_TAIL_BYTES = 64 * 1024
 
 # Seules ces routes sont accessibles sans session authentifiée (§6).
 PUBLIC_PATHS = {"/login"}
@@ -111,13 +117,27 @@ def logout():
 
 
 def _tail_lines(path: Path, n: int) -> List[str]:
-    """Les n dernières lignes d'un fichier texte ; liste vide si absent ou illisible (§7.4)."""
+    """Les n dernières lignes d'un fichier texte ; liste vide si absent ou illisible (§7.4).
+
+    Seule la fin du fichier est lue (LOG_TAIL_BYTES), jamais le fichier entier :
+    le dashboard interroge /api/logs toutes les 8 secondes et livre_dor.log monte
+    jusqu'à 1 Mo avant rotation, ce qui représentait autant de travail inutile à
+    chaque rafraîchissement sur un Pi Zero.
+    """
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
+        with path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            start = max(0, f.tell() - LOG_TAIL_BYTES)
+            f.seek(start)
+            raw = f.read()
     except OSError:
         return []
-    return [line.rstrip("\n") for line in lines[-n:]]
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    # Lecture démarrée en plein fichier : la première ligne est presque
+    # toujours coupée en son milieu, on l'écarte.
+    if start > 0 and lines:
+        lines = lines[1:]
+    return lines[-n:]
 
 
 def _messages_count() -> int:
