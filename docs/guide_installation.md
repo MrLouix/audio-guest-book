@@ -138,7 +138,7 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 | `AUDIO_PLAY_TIMEOUT_SEC` | 180 | Filet de sécurité contre un `aplay` bloqué |
 | `SHORT_RECORDING_THRESHOLD_SEC` | 2.0 | Seuil « enregistrement très court » (conservé, jamais supprimé) |
 | `RECORDING_HANGUP_CONFIRM_SEC` | 0.1 | Tolérance aux micro-coupures du crochet pendant l'enregistrement |
-| `STATUS_HEARTBEAT_SEC` | 30 | Rafraîchissement de `status.json` en attente |
+| `STATUS_HEARTBEAT_SEC` | 120 | Rafraîchissement de `status.json` en attente. Chaque écriture coûte un bloc neuf sur la carte SD : ~9 Mo/jour à 120 s, contre ~36 Mo/jour à 30 s. Ne pas approcher `WATCHDOG_STALE_AFTER_SEC` (300 s) |
 
 ### Mode restitution (§5.7)
 
@@ -147,6 +147,7 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 | `MODE_RESTITUTION` | `False` | Mode au **premier démarrage** seulement : ensuite `mode_config.json` fait foi (bascule via la page `/mode`) |
 | `RESTITUTION_DIGITS_MAX` | 4 | Nombre max de chiffres du numéro de message ; au dernier chiffre la saisie se ferme aussitôt. Réglable depuis `/settings` |
 | `RESTITUTION_INTERDIGIT_SEC` | 3.0 | Silence du cadran validant un numéro plus court (« 1 » puis attente). Réglable depuis `/settings` |
+| `MODE_RELOAD_SEC` | 1.0 | Durée de validité du mode en mémoire avant relecture de `mode_config.json`. Plus haut = moins d'appels système, bascule un peu moins réactive |
 | `RESTITUTION_SOUND_CARD` | = `SOUND_CARD` | Périphérique ALSA de lecture des messages des invités. Ces enregistrements sont **mono** : joués via `plughw`, ils sortent aussi par le haut-parleur externe. Pour les limiter à l'écouteur, définir un périphérique ALSA `route` et le pointer ici |
 
 ### Dashboard & authentification

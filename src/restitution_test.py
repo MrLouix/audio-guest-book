@@ -36,6 +36,7 @@ import config
 import gpio_io
 import livre_dor
 import mode_io
+import status_io
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +82,14 @@ class FakeAudio:
 class Scenario:
     """Contexte d'un scénario : dossier de messages temporaire + machine à états sur un thread."""
 
-    def __init__(self, message_count: int, restitution: bool = True) -> None:
+    def __init__(self, message_count: int, restitution: bool = True,
+                 ring_interval: int = 10 ** 9, heartbeat_sec: float = None) -> None:
         self.message_count = message_count
         self.restitution = restitution
+        # Sonnerie neutralisée par défaut : un scénario qui n'étudie pas la
+        # sonnerie n'a pas à en déclencher une au bout de RING_INTERVAL_SEC.
+        self.ring_interval = ring_interval
+        self.heartbeat_sec = heartbeat_sec
         self.audio = FakeAudio()
         self.inputs = gpio_io.PhoneInputs()
         self.expected_names: List[str] = []
@@ -94,14 +100,23 @@ class Scenario:
         self._saved = {
             "MESSAGES_DIR": config.MESSAGES_DIR,
             "MODE_CONFIG_FILE": config.MODE_CONFIG_FILE,
+            "STATUS_FILE": config.STATUS_FILE,
             "RESTITUTION_INTERDIGIT_SEC": config.RESTITUTION_INTERDIGIT_SEC,
+            "RING_INTERVAL_SEC": config.RING_INTERVAL_SEC,
+            "STATUS_HEARTBEAT_SEC": config.STATUS_HEARTBEAT_SEC,
             "play": audio_io.play,
             "record": audio_io.record,
         }
         config.MESSAGES_DIR = tmp / "messages"
         config.MESSAGES_DIR.mkdir()
         config.MODE_CONFIG_FILE = tmp / "mode_config.json"
+        # status.json est écrit en continu par la machine à états : le rediriger
+        # évite de polluer celui du dépôt pendant les tests.
+        config.STATUS_FILE = tmp / "status.json"
         config.RESTITUTION_INTERDIGIT_SEC = TEST_INTERDIGIT_SEC
+        config.RING_INTERVAL_SEC = self.ring_interval
+        if self.heartbeat_sec is not None:
+            config.STATUS_HEARTBEAT_SEC = self.heartbeat_sec
         audio_io.play = self.audio.play
         audio_io.record = self.audio.record
         mode_io.write_mode(self.restitution)
@@ -124,11 +139,19 @@ class Scenario:
     def __exit__(self, *exc_info) -> None:
         self.inputs.set_hook(False)
         time.sleep(SETTLE_SEC)
+        # Arrêter la machine avant de rendre le dossier temporaire, sinon elle
+        # continuerait d'écrire status.json dans un chemin supprimé.
+        self.machine.request_stop()
+        self._thread.join(timeout=5.0)
         config.MESSAGES_DIR = self._saved["MESSAGES_DIR"]
         config.MODE_CONFIG_FILE = self._saved["MODE_CONFIG_FILE"]
+        config.STATUS_FILE = self._saved["STATUS_FILE"]
         config.RESTITUTION_INTERDIGIT_SEC = self._saved["RESTITUTION_INTERDIGIT_SEC"]
+        config.RING_INTERVAL_SEC = self._saved["RING_INTERVAL_SEC"]
+        config.STATUS_HEARTBEAT_SEC = self._saved["STATUS_HEARTBEAT_SEC"]
         audio_io.play = self._saved["play"]
         audio_io.record = self._saved["record"]
+        mode_io.invalidate_cache()
         self._tmpdir.cleanup()
 
     # --- Pilotage du téléphone simulé ---------------------------------
@@ -277,17 +300,13 @@ def scenario_chiffre_pendant_lecture() -> None:
 
 def scenario_jamais_de_sonnerie_ni_enregistrement() -> None:
     print("9. mode restitution prolongé -> ni sonnerie ni enregistrement")
-    saved_interval = config.RING_INTERVAL_SEC
-    config.RING_INTERVAL_SEC = 1          # sonnerait immédiatement en mode mariage
-    try:
-        with Scenario(message_count=3) as sc:
-            time.sleep(1.5)               # attente prolongée, combiné raccroché
-            played = sc.audio.names_played()
-            check("la sonnerie n'est jamais jouée", "ring_out.wav" not in played,
-                  f"joué : {played}")
-            check("aucun enregistrement", sc.audio.recorded == [])
-    finally:
-        config.RING_INTERVAL_SEC = saved_interval
+    # ring_interval=1 : en mode mariage la sonnerie partirait immédiatement.
+    with Scenario(message_count=3, ring_interval=1) as sc:
+        time.sleep(1.5)                   # attente prolongée, combiné raccroché
+        played = sc.audio.names_played()
+        check("la sonnerie n'est jamais jouée", "ring_out.wav" not in played,
+              f"joué : {played}")
+        check("aucun enregistrement", sc.audio.recorded == [])
 
 
 def scenario_garde_fou_enregistrement() -> None:
@@ -347,6 +366,70 @@ def scenario_ordre_chronologique() -> None:
             config.MESSAGES_DIR = saved
 
 
+def scenario_cache_du_mode() -> None:
+    print("12. relecture du mode : cache de MODE_RELOAD_SEC, invalidé à l'écriture")
+    tmpdir = tempfile.TemporaryDirectory(prefix="restitution_cache_")
+    saved_file, saved_ttl = config.MODE_CONFIG_FILE, config.MODE_RELOAD_SEC
+    saved_read = mode_io._read_file
+    lectures = []
+    try:
+        config.MODE_CONFIG_FILE = Path(tmpdir.name) / "mode_config.json"
+        config.MODE_RELOAD_SEC = 0.5
+        mode_io._read_file = lambda: (lectures.append(1), saved_read())[1]
+        mode_io.write_mode(False)
+
+        lectures.clear()
+        for _ in range(40):                       # deux secondes de boucle à 20 Hz
+            mode_io.is_restitution()
+        check("40 appels rapprochés ne relisent le fichier qu'une fois",
+              len(lectures) == 1, f"{len(lectures)} lecture(s)")
+
+        lectures.clear()
+        mode_io.is_restitution(force=True)
+        check("force=True court-circuite le cache", len(lectures) == 1,
+              f"{len(lectures)} lecture(s)")
+
+        # Bascule par le dashboard : visible tout de suite, sans attendre le TTL.
+        mode_io.write_mode(True)
+        check("une bascule locale est vue immédiatement", mode_io.is_restitution() is True)
+
+        # Bascule écrite par un autre processus : vue après expiration du TTL.
+        config.MODE_CONFIG_FILE.write_text('{"restitution": false}', encoding="utf-8")
+        check("valeur encore en cache juste après", mode_io.is_restitution() is True)
+        time.sleep(config.MODE_RELOAD_SEC + 0.15)
+        check("relue après expiration du cache", mode_io.is_restitution() is False)
+    finally:
+        mode_io._read_file = saved_read
+        config.MODE_CONFIG_FILE, config.MODE_RELOAD_SEC = saved_file, saved_ttl
+        mode_io.invalidate_cache()
+        tmpdir.cleanup()
+
+
+def scenario_heartbeat_combine_decroche() -> None:
+    print("13. combiné laissé décroché -> status.json continue d'être rafraîchi")
+    # Sans heartbeat dans _wait_for_hangup, le watchdog (§7.1) verrait
+    # status.json périmé et redémarrerait le service en boucle.
+    ecritures = []
+    saved_write = status_io.write_status
+    status_io.write_status = lambda etat, detail=None: (
+        ecritures.append((etat, detail)), saved_write(etat, detail))[1]
+    try:
+        with Scenario(message_count=5, heartbeat_sec=0.3) as sc:
+            sc.lift()
+            sc.dial(2)
+            sc.wait_interdigit()
+            time.sleep(PLAY_DURATION_SEC + SETTLE_SEC)
+            ecritures.clear()
+            time.sleep(1.2)                       # combiné toujours décroché
+            battements = [e for e in ecritures
+                          if e == (livre_dor.STATE_RESTITUTION_LECTURE, "attente du raccroché")]
+            check("status.json rafraîchi pendant l'attente du raccroché",
+                  len(battements) >= 2, f"{len(battements)} battement(s) en 1,2s")
+            check("aucun enregistrement", sc.audio.recorded == [])
+    finally:
+        status_io.write_status = saved_write
+
+
 SCENARIOS = [
     scenario_un_chiffre_puis_attente,
     scenario_quatre_chiffres,
@@ -359,6 +442,8 @@ SCENARIOS = [
     scenario_jamais_de_sonnerie_ni_enregistrement,
     scenario_garde_fou_enregistrement,
     scenario_ordre_chronologique,
+    scenario_cache_du_mode,
+    scenario_heartbeat_combine_decroche,
 ]
 
 

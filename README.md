@@ -205,6 +205,8 @@ Le mariage passé, le téléphone devient un **lecteur des messages laissés par
 
   11 scénarios, 20 contrôles : « 1 » + attente, 4 chiffres avec 5ᵉ ignoré, numéro dans les bornes, numéro nul, `messages/` vide, raccroché pendant la saisie puis pendant la lecture, chiffre composé pendant la lecture, absence de sonnerie et d'enregistrement sur une attente prolongée, refus d'enregistrer après bascule en pleine communication, et tri chronologique (collisions `_k`, nom non conforme, exclusion des `.txt` de transcription et des sous-dossiers).
 
+**Empreinte sur le Raspberry Pi** (mesurée) : le mode est en **lecture seule** sur `messages/` — parcourir les messages n'écrit rien. En attente il n'écrit **aucun octet** sur la carte SD, et `mode_config.json` est servi par le page cache (`read_bytes = 0`). RSS stable à 15,7 Mo sur 150 appels enchaînés, sans fuite de descripteur ni de thread. Un appel complet coûte 28 Ko (7 écritures de `status.json`). À comparer aux ~10 Mo écrits par message de 2 min en mode mariage.
+
 **Point de vigilance matériel** : les enregistrements des invités sont mono, alors que les fichiers préparés sont stéréo panés (gauche = écouteur). Joué via `plughw`, un fichier mono est dupliqué sur les deux canaux : les messages sortent donc aussi par le haut-parleur externe. À constater au casque ; pour limiter l'écoute à l'écouteur, définir un périphérique ALSA `route` et le pointer via `RESTITUTION_SOUND_CARD`, sans modification de code.
 
 ## Statut
