@@ -297,11 +297,21 @@ raccroché.
   `aucun_message.wav` est jouée (§4.2) ; si elle n'a pas été fournie, le bip
   sert de repli. Le service ne refuse jamais de démarrer faute de cette annonce.
 
-**Bascule à chaud :** la source de vérité est `mode_config.json` (§8), relu à
-chaque tour de la boucle d'attente. Une bascule est donc prise en compte en
-moins d'une seconde, sans redémarrage du service, et **jamais au milieu d'une
-communication** : elle s'applique au retour en état `attente`.
-`MODE_RESTITUTION` (§9) ne fixe que la valeur du fichier à sa création.
+**Bascule à chaud :** la source de vérité est `mode_config.json` (§8). La
+machine à états interroge le mode à chaque tour de sa boucle d'attente, mais la
+valeur est gardée en mémoire pendant `MODE_RELOAD_SEC` (1 s) : relire le
+fichier 20 fois par seconde serait inutile pour une valeur qui change deux fois
+dans la vie de l'appareil. Une bascule est donc prise en compte en **moins
+d'une seconde**, sans redémarrage du service, et **jamais au milieu d'une
+communication** — elle s'applique au retour en état `attente`. Le dashboard
+invalide son propre cache en écrivant, donc l'interface reflète la bascule
+immédiatement. `MODE_RESTITUTION` (§9) ne fixe que la valeur du fichier à sa
+création.
+
+L'état `restitution_lecture` est le seul du parcours dont la durée n'est **pas
+bornée** : un combiné posé à côté du téléphone y reste indéfiniment. Le
+heartbeat de `status.json` y est donc maintenu, sans quoi le watchdog (§7.1)
+verrait le fichier périmé et redémarrerait le service en boucle.
 
 **Audio — point de vigilance :** les enregistrements des invités sont **mono**
 (§4.3), alors que les fichiers préparés sont stéréo panés (§4.2, gauche =
@@ -457,6 +467,8 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 | `RESTITUTION_DIGITS_MAX` | 4 | Nombre max de chiffres du numéro de message ; au dernier chiffre la saisie se ferme aussitôt |
 | `RESTITUTION_INTERDIGIT_SEC` | 3.0 | Silence du cadran validant un numéro plus court (« 1 » puis attente) |
 | `RESTITUTION_SOUND_CARD` | = `SOUND_CARD` | Périphérique ALSA de lecture des messages invités (échappatoire mono → écouteur seul, §5.7) |
+| `MODE_RELOAD_SEC` | 1.0 | Durée de validité du mode en mémoire avant relecture de `mode_config.json` |
+| `STATUS_HEARTBEAT_SEC` | 120 | Rafraîchissement de `status.json` en attente. Chaque écriture atomique coûte un bloc neuf sur la carte SD (~13 Ko réels pour 88 octets de contenu) ; 120 s laisse 2,5 battements de marge sous `WATCHDOG_STALE_AFTER_SEC` |
 | `WEB_PORT` | 5000 | Port dashboard, **fixe** |
 | `WEB_PORT_MAX_ATTEMPTS` | 1 | Pas de repli de port |
 | `USE_MDNS` / `MDNS_HOSTNAME` | True / `livredor` | URL stable `http://livredor.local:5000/` |
