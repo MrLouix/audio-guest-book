@@ -11,6 +11,7 @@ authentifiée par mot de passe unique (§6) : avant chaque requête, seules
 """
 
 import datetime
+import json
 import logging
 import subprocess
 import time
@@ -24,7 +25,7 @@ import audio_io
 import auth
 import config
 import gpio_io
-import json
+import mode_io
 import network_info
 import qr_utils
 import rclone_sync
@@ -134,6 +135,7 @@ def _status_payload() -> dict:
         "detail": status.get("detail", ""),
         "reseau": network_info.get_network_info(),
         "messages_count": _messages_count(),
+        "mode_restitution": mode_io.is_restitution(),
     }
 
 
@@ -257,6 +259,33 @@ def rclone_page():
             error = result["erreur"]
 
     return render_template("rclone.html", status=rclone_sync.get_status(), error=error)
+
+
+@app.route("/mode", methods=["GET", "POST"])
+def mode_page():
+    """Bascule entre mode mariage et mode restitution (§5.7).
+
+    La bascule est prise en compte à chaud par livre_dor.py, au retour en état
+    attente : jamais au milieu d'une communication en cours.
+    """
+    error = None
+    if request.method == "POST":
+        restitution = request.form.get("restitution") == "on"
+        try:
+            mode_io.write_mode(restitution)
+        except OSError as exc:
+            logger.exception("Impossible d'écrire %s", config.MODE_CONFIG_FILE)
+            error = f"Impossible d'enregistrer le mode : {exc}"
+        else:
+            logger.info("Mode %s activé depuis le dashboard",
+                        "restitution" if restitution else "mariage")
+
+    return render_template("mode.html",
+                           restitution=mode_io.is_restitution(),
+                           messages_count=_messages_count(),
+                           digits_max=config.RESTITUTION_DIGITS_MAX,
+                           interdigit_sec=config.RESTITUTION_INTERDIGIT_SEC,
+                           error=error)
 
 
 @app.route("/api/rclone/sync-now", methods=["POST"])

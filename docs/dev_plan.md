@@ -332,6 +332,30 @@ Chaque sprint liste : objectifs, tâches, fichiers concernés, critères d'accep
 
 ---
 
+## Sprint 13 — Mode restitution (après l'événement)
+
+**Objectif :** après le mariage, permettre de réécouter depuis le téléphone les messages laissés par les invités, sans jamais pouvoir en enregistrer de nouveaux (§5.7).
+
+**Tâches :**
+- Mode de fonctionnement persisté dans `mode_config.json` (contrat du §8), relu à chaud par la machine à états, éditable depuis le dashboard (page `/mode`) : aucune bascule par SSH ni redémarrage de service.
+- Saisie multi-chiffres au cadran : `RESTITUTION_DIGITS_MAX` chiffres au maximum, validation immédiate au dernier chiffre autorisé ou après `RESTITUTION_INTERDIGIT_SEC` de silence du cadran, inter-chiffre suspendu pendant le mouvement du cadran.
+- Numérotation 1..N des enregistrements dans l'ordre chronologique, fondée sur l'horodatage du nom de fichier (repli sur la mtime), numéro borné à `[1, N]`.
+- Neutralisation de la sonnerie périodique et de la branche « appel entrant » ; consommation silencieuse de `ring_trigger`.
+- Annonce optionnelle « aucun message disponible » (`audio_src/aucun_message.*`), avec repli sur le bip.
+- Harnais de test logique sans matériel (`restitution_test.py`).
+
+**Fichiers concernés :** `mode_io.py` (nouveau), `livre_dor.py`, `config.py`, `gpio_io.py` (+1 accesseur), `audio_io.py` (+1 paramètre), `prepare_audio.py`, `dashboard_app.py`, `templates/mode.html` (nouveau), `templates/index.html`, `static/dashboard.js`, `restitution_test.py` (nouveau).
+
+**Critères d'acceptation :**
+- « 1 » puis attente lit le premier message ; quatre chiffres lancent la lecture sans attendre et un cinquième reste sans effet ; un numéro supérieur au total lit le dernier.
+- Aucun `arecord` n'est lancé et aucun fichier de `messages/` n'est créé, modifié ou supprimé pendant une session de restitution — y compris si le mode est activé pendant une communication déjà engagée en mode mariage.
+- Aucune sonnerie ne se déclenche tant que le mode est actif.
+- Le parcours mariage reste intact après retour au mode d'origine.
+
+**Risques :** les enregistrements des invités étant mono et les fichiers préparés stéréo panés, la lecture sort aussi par le haut-parleur externe — à constater au casque, `RESTITUTION_SOUND_CARD` permet de la router autrement sans toucher au code.
+
+---
+
 ## Notes transverses valables sur tous les sprints
 
 - **Aucune suppression automatique** de données à aucune étape (messages, logs de sync) — respecter cette règle même dans le code de test.

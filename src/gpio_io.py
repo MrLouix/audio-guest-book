@@ -84,6 +84,18 @@ class PhoneInputs:
         with self._lock:
             return self._pulse_count > 0
 
+    def is_dial_active(self) -> bool:
+        """Cadran hors de sa position de repos : un chiffre est en cours de composition.
+
+        Complète has_pulses(), qui n'est vrai qu'entre la première impulsion et
+        le retour au repos : is_dial_active() couvre tout le mouvement du
+        cadran, y compris l'instant qui précède la première impulsion. Le mode
+        restitution s'en sert pour ne jamais valider un numéro incomplet alors
+        que l'utilisateur est en train de composer le chiffre suivant (§5.7).
+        """
+        with self._lock:
+            return self._dial_active
+
     def pop_digit(self) -> Optional[int]:
         with self._lock:
             return self._digit_queue.popleft() if self._digit_queue else None
@@ -158,7 +170,11 @@ def get_current_status() -> Optional[Dict[str, Any]]:
     # Si PhoneInputs est disponible et a été initialisé
     if _phone_inputs is not None:
         hook_active = _phone_inputs.is_hook_up()
-        dial_active = _phone_inputs._dial_active if hasattr(_phone_inputs, '_dial_active') else False
+        # Accesseur public plutôt que l'attribut privé : is_dial_active() prend
+        # le verrou de PhoneInputs, ce qui importe ici car cette fonction est
+        # appelée depuis le thread Flask alors que _dial_active est muté par les
+        # callbacks GPIO.
+        dial_active = _phone_inputs.is_dial_active()
         
         # Déterminer les états
         hook_state = "DECROCHE" if hook_active else "raccroché"

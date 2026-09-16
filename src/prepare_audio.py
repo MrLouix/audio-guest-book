@@ -8,7 +8,10 @@ Transforme les fichiers sources bruts de audio_src/ en fichiers stéréo panés
   des fichiers correspondants placés dans audio_src/ (sonnerie.*,
   message_generique.*, message_0.* ... message_9.*) ; un chiffre sans fichier
   source est simplement ignoré (message générique utilisé en fallback par
-  livre_dor.py).
+  livre_dor.py) ;
+- aucun_message.wav est optionnel : dérivé de audio_src/aucun_message.* s'il
+  existe, il annonce en mode restitution (§5.7) qu'aucun message d'invité n'est
+  disponible. Sans source, livre_dor.py se replie simplement sur le bip.
 
 Usage :
     python3 prepare_audio.py             # génère tous les fichiers dans audio/
@@ -83,6 +86,8 @@ def prepare_all() -> None:
 
     _process_source("sonnerie", config.RING_OUT_WAV, "right", 0)
     _process_source("message_generique", config.MESSAGE_GENERIQUE_WAV, "left", MESSAGE_GAIN_DB)
+    # Optionnelle (§5.7) : annonce « aucun message disponible » du mode restitution.
+    _process_source("aucun_message", config.AUCUN_MESSAGE_WAV, "left", MESSAGE_GAIN_DB)
     for digit in range(10):
         _process_source(f"message_{digit}", config.message_wav(digit), "left", MESSAGE_GAIN_DB)
 

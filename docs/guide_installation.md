@@ -62,7 +62,8 @@ cd /home/pi/livre_dor
 ./scripts/install.sh
 
 # 2. Fichiers audio : déposer les enregistrements des mariés dans audio_src/
-#    (sonnerie.*, message_generique.*, message_0.* ... message_9.*), puis :
+#    (sonnerie.*, message_generique.*, message_0.* ... message_9.*, et
+#    éventuellement aucun_message.* pour le mode restitution, §5.7), puis :
 python3 src/prepare_audio.py
 python3 src/prepare_audio.py --play-all   # vérification manuelle du panning au casque
 
@@ -81,6 +82,20 @@ sudo ./scripts/setup_rclone_systemd.sh
 sudo ./scripts/setup_systemd.sh
 ```
 
+### Après l'événement : mode restitution (§5.7)
+
+Le téléphone peut devenir un lecteur des messages laissés par les invités :
+décrocher, composer au cadran le numéro d'un message (4 chiffres au maximum),
+l'écouter. Ni sonnerie, ni enregistrement possible dans ce mode.
+
+La bascule se fait depuis le dashboard, page **Mode** (`http://livredor.local:5000/mode`) :
+elle est prise en compte en moins d'une seconde, sans redémarrer le service. Aucun
+accès SSH n'est nécessaire. Vérification préalable de la logique, sans matériel :
+
+```bash
+python3 src/restitution_test.py
+```
+
 ### Dépendances logicielles (§10)
 
 - OS : Raspberry Pi OS Lite (Bookworm), NetworkManager (`nmcli`), `avahi-daemon` (mDNS), systemd.
@@ -94,6 +109,14 @@ sudo ./scripts/setup_systemd.sh
 ## 4. Configuration (§9)
 
 Tous les paramètres ci-dessous sont centralisés dans `src/config.py` et surchargeables par variable d'environnement du même nom (utile pour un service systemd : `Environment=NOM=valeur` dans le fichier `.service`, sans jamais modifier le code).
+
+Une partie d'entre eux est également réglable depuis la page **Paramètres** du dashboard (`/settings`, réservée au mot de passe administrateur) : ceux déclarés dans `MODIFIABLE_PARAMS`. Ordre de précédence, du plus fort au plus faible :
+
+1. la **variable d'environnement** du même nom — le réglage figé de l'installation ;
+2. **`custom_config.json`**, écrit par la page Paramètres ;
+3. la **valeur par défaut** du code.
+
+Un paramètre fixé par variable d'environnement n'est donc pas modifiable depuis le dashboard. Et comme tout est résolu au démarrage du processus, et que `livre_dor.py` tourne dans un autre service que le dashboard, **une modification faite depuis `/settings` ne prend effet qu'après `sudo systemctl restart livre-dor`** — la page le signale à l'enregistrement. Seule exception : le mode mariage/restitution, qui bascule à chaud par `mode_config.json` et sa propre page `/mode` (§5.7).
 
 ### À vérifier obligatoirement pour le matériel réel
 
@@ -116,6 +139,15 @@ Tous les paramètres ci-dessous sont centralisés dans `src/config.py` et surcha
 | `SHORT_RECORDING_THRESHOLD_SEC` | 2.0 | Seuil « enregistrement très court » (conservé, jamais supprimé) |
 | `RECORDING_HANGUP_CONFIRM_SEC` | 0.1 | Tolérance aux micro-coupures du crochet pendant l'enregistrement |
 | `STATUS_HEARTBEAT_SEC` | 30 | Rafraîchissement de `status.json` en attente |
+
+### Mode restitution (§5.7)
+
+| Paramètre | Défaut | Description |
+|---|---|---|
+| `MODE_RESTITUTION` | `False` | Mode au **premier démarrage** seulement : ensuite `mode_config.json` fait foi (bascule via la page `/mode`) |
+| `RESTITUTION_DIGITS_MAX` | 4 | Nombre max de chiffres du numéro de message ; au dernier chiffre la saisie se ferme aussitôt. Réglable depuis `/settings` |
+| `RESTITUTION_INTERDIGIT_SEC` | 3.0 | Silence du cadran validant un numéro plus court (« 1 » puis attente). Réglable depuis `/settings` |
+| `RESTITUTION_SOUND_CARD` | = `SOUND_CARD` | Périphérique ALSA de lecture des messages des invités. Ces enregistrements sont **mono** : joués via `plughw`, ils sortent aussi par le haut-parleur externe. Pour les limiter à l'écouteur, définir un périphérique ALSA `route` et le pointer ici |
 
 ### Dashboard & authentification
 

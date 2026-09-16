@@ -73,6 +73,31 @@ python3 src/load_test.py --cycles 20
 - [ ] Exécuté sur le matériel final ; aucune fuite de sous-processus (`aplay`/`arecord` orphelins) signalée.
 - [ ] Nombre de fichiers créés dans `messages/` conforme au nombre de cycles (aucun fichier écrasé ni manquant).
 
+## 9bis. Mode restitution (§5.7) — **après l'événement**
+
+```bash
+python3 src/restitution_test.py    # (auto : logique validée sans matériel)
+```
+
+Puis, sur le matériel, avec quelques messages déjà présents dans `messages/` :
+
+- [ ] Mode activé depuis le dashboard (page **Mode**) ; l'accueil affiche « restitution »
+      et le bouton « Sonner maintenant » est désactivé.
+- [ ] Décroché : tonalité présente, coupée dès la première impulsion du cadran.
+- [ ] `1` puis attente (~3 s) → le **premier** message enregistré est lu.
+- [ ] Quatre chiffres (ex. `9999`) → la lecture démarre **sans attendre**, et un
+      cinquième chiffre composé reste sans effet.
+- [ ] Numéro supérieur au nombre de messages → **le dernier** message est lu.
+- [ ] Raccroché en pleine lecture → arrêt immédiat, aucun `aplay` orphelin (`pgrep aplay`).
+- [ ] Combiné laissé décroché plusieurs minutes : **aucune sonnerie** ne se déclenche.
+- [ ] Après une session de restitution complète, `messages/` **ne contient aucun
+      fichier nouveau ni modifié** (`ls -l messages/`) — le mode est en lecture seule.
+- [ ] Écoute au casque : niveau correct dans l'écouteur ; comportement du
+      haut-parleur externe constaté (les enregistrements sont mono, cf. §5.7) et
+      jugé acceptable, ou `RESTITUTION_SOUND_CARD` ajusté.
+- [ ] Retour en mode mariage depuis le dashboard : le parcours d'origine
+      (message des mariés, bip, enregistrement) fonctionne de nouveau.
+
 ## 10. Espace disque et stockage
 
 - [ ] Espace disque disponible vérifié (`df -h`), largement au-dessus du seuil d'alerte (500 Mo).

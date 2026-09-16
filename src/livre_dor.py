@@ -14,6 +14,13 @@ les fichiers audio requis, écriture atomique et continue de status.json,
 contrôle d'espace disque avant enregistrement, tolérance aux micro-coupures
 du crochet pendant l'enregistrement, conservation des enregistrements très
 courts, et rotation des logs applicatifs.
+
+Sprint 13 : mode restitution (§5.7) — après l'événement, le téléphone devient
+un lecteur des messages laissés par les invités. Décroché → tonalité →
+numéro de RESTITUTION_DIGITS_MAX chiffres au plus composé au cadran → lecture
+du message correspondant, les enregistrements étant numérotés 1..N dans
+l'ordre chronologique. Ni sonnerie, ni message des mariés, ni bip, ni
+enregistrement : le mode est en lecture seule sur messages/.
 """
 
 import argparse
@@ -21,6 +28,7 @@ import datetime
 import logging
 import logging.handlers
 import random
+import re
 import shutil
 import time
 import wave
@@ -30,6 +38,7 @@ from typing import Callable, List, Optional
 import audio_io
 import config
 import gpio_io
+import mode_io
 import status_io
 
 logger = logging.getLogger(__name__)
@@ -41,6 +50,8 @@ STATE_NUMEROTATION = "numerotation"
 STATE_LECTURE_MESSAGE = "lecture_message"
 STATE_APPEL_REPONDU = "appel_repondu"
 STATE_ENREGISTREMENT = "enregistrement"
+STATE_RESTITUTION_NUMEROTATION = "restitution_numerotation"
+STATE_RESTITUTION_LECTURE = "restitution_lecture"
 STATE_ERREUR = "erreur"
 
 MAIN_LOOP_POLL_SEC = 0.05
@@ -65,6 +76,57 @@ def timestamped_recording_path(now: datetime.datetime = None) -> Path:
         path = config.MESSAGES_DIR / f"{base}_{suffix}.wav"
         suffix += 1
     return path
+
+
+RECORDING_NAME_RE = re.compile(r"^message_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:_(\d+))?$")
+
+
+def _recording_sort_key(path: Path) -> tuple:
+    """Clé de tri chronologique d'un enregistrement d'invité (§5.7).
+
+    L'horodatage inscrit dans le nom du fichier par timestamped_recording_path()
+    est la chronologie de référence : il voyage avec le fichier, contrairement à
+    la date de modification, qu'une copie rclone ou une restauration de
+    sauvegarde peut écraser. Le suffixe de collision _k désigne un
+    enregistrement postérieur dans la même seconde, et se compare comme un
+    entier (_2 avant _10). Repli sur la mtime pour un fichier au nom non
+    conforme, ajouté à la main dans messages/.
+    """
+    match = RECORDING_NAME_RE.match(path.stem)
+    if match:
+        try:
+            stamp = datetime.datetime.strptime(match.group(1), "%Y-%m-%d_%H-%M-%S")
+        except ValueError:
+            stamp = None
+        if stamp is not None:
+            return (stamp.timestamp(), int(match.group(2) or 0), path.name)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return (mtime, 0, path.name)
+
+
+def recorded_messages() -> List[Path]:
+    """Messages des invités, numérotés 1..N dans l'ordre chronologique (§5.7).
+
+    Lecture seule : ce mode ne crée, ne modifie et ne supprime jamais rien
+    dans messages/.
+    """
+    try:
+        entries = list(config.MESSAGES_DIR.iterdir())
+    except OSError:
+        # Dossier absent ou illisible : aucun message, jamais d'exception (§7.4).
+        return []
+    wavs = [p for p in entries if p.is_file() and p.suffix.lower() == ".wav"]
+    return sorted(wavs, key=_recording_sort_key)
+
+
+def restitution_absence_wav() -> Path:
+    """Annonce « aucun message disponible » ; repli sur le bip si elle n'a pas été fournie (§5.7)."""
+    if config.AUCUN_MESSAGE_WAV.exists():
+        return config.AUCUN_MESSAGE_WAV
+    return config.BIP_WAV
 
 
 def available_random_messages() -> List[Path]:
@@ -164,26 +226,46 @@ class GuestBookStateMachine:
             return False
         return (time.monotonic() - self._last_ring_end_ts) <= config.RING_ANSWER_GRACE_SEC
 
+    def _attente_detail(self) -> Optional[str]:
+        """Détail écrit dans status.json en attente : rend le mode courant visible (§5.2)."""
+        return "mode restitution" if mode_io.is_restitution() else None
+
     def _run_attente(self) -> None:
-        self._set_state(STATE_ATTENTE)
+        self._set_state(STATE_ATTENTE, detail=self._attente_detail())
         self._last_ring_start_ts = time.monotonic()
         last_heartbeat = time.monotonic()
         while True:
+            # Mode relu à chaque tour : une bascule depuis le dashboard est
+            # prise en compte en moins d'une seconde, et jamais au milieu
+            # d'une communication déjà engagée (§5.7).
+            restitution = mode_io.is_restitution()
             if self.inputs.is_hook_up():
-                if self._is_recent_ring():
+                if restitution:
+                    self._run_restitution_decroche()
+                elif self._is_recent_ring():
                     self._run_appel_repondu()
                 else:
                     self._run_decroche()
                 return
-            if consume_ring_trigger():
-                logger.info("Sonnerie déclenchée à distance (ring_trigger)")
-                self._run_sonnerie()
-                continue
-            if (time.monotonic() - self._last_ring_start_ts) >= config.RING_INTERVAL_SEC:
-                self._run_sonnerie()
-                continue
+            if restitution:
+                # Sonnerie neutralisée en restitution (§5.7). Le drapeau
+                # ring_trigger est quand même consommé : laissé en place, il
+                # déclencherait une sonnerie surprise au retour en mode
+                # mariage. L'intervalle de sonnerie est réarmé en continu, pour
+                # ne pas sonner immédiatement au moment de la bascule inverse.
+                if consume_ring_trigger():
+                    logger.info("Sonnerie demandée à distance, ignorée (mode restitution).")
+                self._last_ring_start_ts = time.monotonic()
+            else:
+                if consume_ring_trigger():
+                    logger.info("Sonnerie déclenchée à distance (ring_trigger)")
+                    self._run_sonnerie()
+                    continue
+                if (time.monotonic() - self._last_ring_start_ts) >= config.RING_INTERVAL_SEC:
+                    self._run_sonnerie()
+                    continue
             if (time.monotonic() - last_heartbeat) >= config.STATUS_HEARTBEAT_SEC:
-                status_io.write_status(STATE_ATTENTE)
+                status_io.write_status(STATE_ATTENTE, detail=self._attente_detail())
                 last_heartbeat = time.monotonic()
             time.sleep(MAIN_LOOP_POLL_SEC)
 
@@ -288,7 +370,139 @@ class GuestBookStateMachine:
 
         self._run_enregistrement()
 
+    # --- Mode restitution (§5.7) -----------------------------------------
+
+    def _run_restitution_decroche(self) -> None:
+        """Décroché en mode restitution : tonalité puis saisie du numéro de message (§5.7).
+
+        Ni message des mariés, ni bip, ni enregistrement : aucun des trois
+        parcours de ce mode n'appelle _run_enregistrement().
+        """
+        self._set_state(STATE_DECROCHE, detail="mode restitution")
+        self.inputs.reset_dial()
+
+        # Un seul scan par communication : la numérotation 1..N reste stable
+        # du début à la fin de l'appel.
+        messages = recorded_messages()
+        if not messages:
+            logger.warning("Mode restitution : aucun message dans %s.", config.MESSAGES_DIR)
+            self._set_state(STATE_RESTITUTION_LECTURE, detail="aucun message disponible")
+            audio_io.play(restitution_absence_wav(),
+                          should_continue=self._hook_up_ignoring_dial,
+                          timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC)
+            self._wait_for_hangup()
+            return
+
+        logger.info("Décroché (mode restitution) : tonalité, %d message(s) disponible(s)",
+                    len(messages))
+        audio_io.play(
+            config.TONALITE_WAV,
+            should_continue=lambda: self.inputs.is_hook_up() and not self.inputs.has_pulses(),
+            timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+        )
+        if not self.inputs.is_hook_up():
+            logger.info("Raccroché pendant la tonalité (mode restitution), retour en attente.")
+            return
+        # La tonalité s'est arrêtée dès la première impulsion détectée (§1.2).
+        self._run_restitution_numerotation(messages)
+
+    def _run_restitution_numerotation(self, messages: List[Path]) -> None:
+        """Saisie du numéro : RESTITUTION_DIGITS_MAX chiffres au plus (§5.7).
+
+        Le numéro est validé de deux façons : dès le dernier chiffre autorisé —
+        aucun chiffre supplémentaire n'est alors accepté — ou après
+        RESTITUTION_INTERDIGIT_SEC de silence du cadran (« 1 » puis attente).
+        Aucun délai sur le premier chiffre : on attend indéfiniment tant que le
+        combiné reste décroché.
+        """
+        self._set_state(STATE_RESTITUTION_NUMEROTATION)
+        logger.info("Numérotation en cours (mode restitution)")
+        digits: List[int] = []
+        last_digit_ts: Optional[float] = None
+
+        while self.inputs.is_hook_up():
+            digit = self.inputs.pop_digit()
+            if digit is not None:
+                digits.append(digit)
+                last_digit_ts = time.monotonic()
+                numero_partiel = "".join(str(d) for d in digits)
+                logger.info("Mode restitution, chiffre %d/%d composé : numéro %s",
+                            len(digits), config.RESTITUTION_DIGITS_MAX, numero_partiel)
+                self._set_state(STATE_RESTITUTION_NUMEROTATION, detail=numero_partiel)
+                if len(digits) >= config.RESTITUTION_DIGITS_MAX:
+                    logger.info("Numéro de %d chiffres atteint : saisie close.",
+                                config.RESTITUTION_DIGITS_MAX)
+                    break
+            elif (last_digit_ts is not None
+                    # is_dial_active() suspend l'inter-chiffre pendant tout le
+                    # mouvement du cadran : sans ce garde, un numéro serait
+                    # validé alors que le chiffre suivant est en cours de
+                    # composition (le cadran met ~1 s à revenir au repos).
+                    and not self.inputs.is_dial_active()
+                    and (time.monotonic() - last_digit_ts) >= config.RESTITUTION_INTERDIGIT_SEC):
+                logger.info("Cadran silencieux depuis %.1fs : numéro validé.",
+                            config.RESTITUTION_INTERDIGIT_SEC)
+                break
+            time.sleep(MAIN_LOOP_POLL_SEC)
+
+        if not self.inputs.is_hook_up():
+            logger.info("Raccroché pendant la numérotation (mode restitution), retour en attente.")
+            return
+        if not digits:
+            logger.info("Aucun chiffre composé (mode restitution), retour en attente.")
+            return
+
+        # int() absorbe naturellement les zéros de tête (0 puis 1 -> 1).
+        self._run_restitution_lecture(int("".join(str(d) for d in digits)), messages)
+
+    def _run_restitution_lecture(self, numero: int, messages: List[Path]) -> None:
+        """Lit le message n° numero, borné à [1, N] (§5.7).
+
+        Au-delà du nombre total de messages, le dernier est lu. Un numéro nul —
+        le cadran rend 0 pour dix impulsions — est ramené au premier : un
+        bornage symétrique est plus prévisible qu'un parcours d'erreur, et la
+        règle demandée ne porte que sur la borne haute.
+        """
+        total = len(messages)
+        index = min(max(numero, 1), total)
+        if index != numero:
+            logger.info("Numéro %d hors bornes (1-%d) : lecture du message n°%d.",
+                        numero, total, index)
+        message_path = messages[index - 1]
+        self._set_state(STATE_RESTITUTION_LECTURE,
+                        detail=f"{index}/{total} — {message_path.name}")
+        logger.info("Mode restitution, lecture du message n°%d/%d : %s",
+                    index, total, message_path.name)
+        audio_io.play(message_path, should_continue=self._hook_up_ignoring_dial,
+                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+                      device=config.RESTITUTION_SOUND_CARD)
+        if not self.inputs.is_hook_up():
+            logger.info("Raccroché pendant la lecture (mode restitution), retour en attente.")
+            return
+        self._wait_for_hangup()
+
+    def _wait_for_hangup(self) -> None:
+        """Silence jusqu'au raccroché : cadran ignoré, aucun enregistrement (§5.7).
+
+        Après un message, il faut raccrocher puis redécrocher pour en écouter un
+        autre. Les chiffres composés entre-temps sont purgés par
+        _hook_up_ignoring_dial() et restent sans effet.
+        """
+        self._set_state(STATE_RESTITUTION_LECTURE, detail="attente du raccroché")
+        while self._hook_up_ignoring_dial():
+            time.sleep(MAIN_LOOP_POLL_SEC)
+
     def _run_enregistrement(self, should_continue: Callable[[], bool] = None) -> None:
+        # Garde-fou du mode restitution (§5.7) : aucun des parcours de ce mode
+        # n'arrive ici, mais une bascule pendant une communication déjà engagée
+        # en mode mariage le pourrait. « Aucun enregistrement possible » est un
+        # invariant du mode, il est donc vérifié ici aussi.
+        if mode_io.is_restitution():
+            logger.error("Enregistrement demandé en mode restitution : refusé (§5.7).")
+            self._set_state(STATE_ENREGISTREMENT,
+                            detail="enregistrement refusé (mode restitution)")
+            return
+
         disk_state = disk_space_state(config.MESSAGES_DIR)
         if disk_state != "ok":
             logger.warning("Espace disque %s (seuils : alerte < %d Mo, critique < %d Mo).",
@@ -414,6 +628,8 @@ def main() -> None:
         return
 
     setup_logging()
+    mode_io.ensure_config_exists()
+    logger.info("Mode de fonctionnement : %s", mode_io.mode_label())
     _wait_for_sound_card()
     _check_required_audio_files()
 

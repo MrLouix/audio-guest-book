@@ -4,12 +4,26 @@ Toutes les valeurs par défaut correspondent au tableau récapitulatif
 (§9 de docs/specification_livre_dor_telephonique.md). Elles peuvent être
 surchargées par des variables d'environnement du même nom pour l'installation
 sur le Raspberry Pi final, sans toucher au code.
+
+Ordre de précédence d'un paramètre, du plus fort au plus faible :
+
+1. la variable d'environnement du même nom (systemd `Environment=`) — le
+   réglage figé de l'installation ;
+2. custom_config.json, écrit par la page /settings du dashboard, pour les
+   paramètres déclarés dans MODIFIABLE_PARAMS ;
+3. la valeur par défaut inscrite ici.
+
+Tout est résolu une fois pour toutes à l'import de ce module, et livre_dor.py
+tourne dans un autre processus que le dashboard : une modification faite
+depuis /settings ne prend donc effet qu'au redémarrage du service (cf.
+RESTART_REQUIRED_PARAMS). Seul le mode mariage/restitution bascule à chaud,
+via mode_config.json et non par ce mécanisme (§5.7).
 """
 
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 # config.py vit dans src/ ; l'arborescence de données (audio/, messages/,
 # logs/, static/, templates/...) reste à la racine du projet (§8).
@@ -19,16 +33,48 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CUSTOM_CONFIG_FILE = BASE_DIR / "custom_config.json"
 
 
+def _read_custom_config() -> Dict[str, Any]:
+    """Valeurs enregistrées depuis la page /settings ; {} si absent ou illisible (§7.4)."""
+    try:
+        data = json.loads(CUSTOM_CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+# Lu une seule fois, à l'import : ce module fournit des constantes.
+_CUSTOM_VALUES = _read_custom_config()
+
+
+def _param(name: str, default: Any, convert: Callable[[Any], Any]) -> Any:
+    """Résout un paramètre selon l'ordre de précédence documenté en tête de module.
+
+    La variable d'environnement est analysée strictement : une valeur invalide
+    doit faire échouer le démarrage plutôt que passer inaperçue. Une valeur
+    venue de custom_config.json est au contraire tolérante — le fichier est
+    écrit par le dashboard et peut avoir été édité à la main, il ne doit jamais
+    empêcher le service de démarrer (§7.4) ; on retombe alors sur le défaut.
+    """
+    if name in os.environ:
+        return convert(os.environ[name])
+    if name in _CUSTOM_VALUES:
+        try:
+            return convert(_CUSTOM_VALUES[name])
+        except (TypeError, ValueError):
+            pass
+    return convert(default)
+
+
 def _env(name: str, default: str) -> str:
-    return os.environ.get(name, default)
+    return _param(name, default, str)
 
 
 def _env_int(name: str, default: int) -> int:
-    return int(os.environ.get(name, default))
+    return _param(name, default, int)
 
 
 def _env_float(name: str, default: float) -> float:
-    return float(os.environ.get(name, default))
+    return _param(name, default, float)
 
 
 # --- Arborescence (§8) -------------------------------------------------
@@ -42,6 +88,7 @@ STATIC_DIR = BASE_DIR / "static"
 STATUS_FILE = BASE_DIR / "status.json"
 RING_TRIGGER_FILE = BASE_DIR / "ring_trigger"
 RCLONE_CONFIG_FILE = BASE_DIR / "rclone_config.json"
+MODE_CONFIG_FILE = BASE_DIR / "mode_config.json"
 DASHBOARD_CONFIG_FILE = BASE_DIR / "dashboard_config.json"
 SECRET_KEY_FILE = BASE_DIR / "secret_key.txt"
 ACTIVE_PORT_FILE = BASE_DIR / "active_port.txt"
@@ -56,6 +103,7 @@ TONALITE_WAV = AUDIO_DIR / "tonalite.wav"
 BIP_WAV = AUDIO_DIR / "bip.wav"
 RING_OUT_WAV = AUDIO_DIR / "ring_out.wav"
 MESSAGE_GENERIQUE_WAV = AUDIO_DIR / "message_generique.wav"
+AUCUN_MESSAGE_WAV = AUDIO_DIR / "aucun_message.wav"
 
 
 def message_wav(digit: int) -> Path:
@@ -104,6 +152,27 @@ DIAL_DEBOUNCE_SEC = _env_float("DIAL_DEBOUNCE_SEC", 0.02)
 RING_INTERVAL_SEC = _env_int("RING_INTERVAL_SEC", 90)
 RING_ANSWER_GRACE_SEC = _env_int("RING_ANSWER_GRACE_SEC", 5)
 MAX_RECORD_SEC = _env_int("MAX_RECORD_SEC", 120)
+
+# --- Mode restitution (§5.7) ----------------------------------------------
+
+# Valeur par défaut au premier démarrage uniquement : la source de vérité à
+# l'exécution est mode_config.json, éditable à chaud depuis le dashboard (§5.2).
+# Motif booléen identique à USE_MDNS, seul motif bool du projet.
+MODE_RESTITUTION = _env("MODE_RESTITUTION", "False") == "True"
+
+# Nombre maximal de chiffres du numéro de message : au-delà, la saisie se
+# ferme immédiatement sans attendre l'inter-chiffre (§5.7).
+RESTITUTION_DIGITS_MAX = _env_int("RESTITUTION_DIGITS_MAX", 4)
+
+# Délai de silence du cadran validant un numéro incomplet (« 1 » puis attente).
+# Suspendu pendant que le cadran est en mouvement, pour ne jamais valider un
+# numéro au milieu d'un chiffre en cours de composition (§5.7).
+RESTITUTION_INTERDIGIT_SEC = _env_float("RESTITUTION_INTERDIGIT_SEC", 3.0)
+
+# Périphérique ALSA de lecture des messages des invités. Par défaut identique à
+# SOUND_CARD ; échappatoire si la lecture des enregistrements mono doit être
+# routée uniquement vers l'écouteur du combiné (voir §5.7).
+RESTITUTION_SOUND_CARD = _env("RESTITUTION_SOUND_CARD", SOUND_CARD)
 
 # --- Dashboard web (§5.2, §9) ---------------------------------------------
 
@@ -190,10 +259,21 @@ MODIFIABLE_PARAMS = {
     "OFFNORMAL_ACTIF_LEVEL": {"type": "str", "default": "LOW", "label": "Niveau actif cadran (LOW/HIGH)"},
     "HOOK_DEBOUNCE_SEC": {"type": "float", "default": 0.075, "label": "Anti-rebond crochet (secondes)"},
     "DIAL_DEBOUNCE_SEC": {"type": "float", "default": 0.02, "label": "Anti-rebond cadran (secondes)"},
+    # Mode restitution (§5.7). MODE_RESTITUTION n'est pas listé : la bascule a
+    # sa propre page /mode et passe par mode_config.json, à chaud.
+    # RESTITUTION_SOUND_CARD non plus : c'est un routage ALSA avancé, et son
+    # défaut suit SOUND_CARD, ce qu'une valeur figée ici casserait.
+    "RESTITUTION_DIGITS_MAX": {"type": "int", "default": 4, "label": "Mode restitution : nombre max de chiffres du numéro"},
+    "RESTITUTION_INTERDIGIT_SEC": {"type": "float", "default": 3.0, "label": "Mode restitution : silence du cadran validant le numéro (secondes)"},
 }
 
-# Paramètres nécessitant un redémarrage après modification
-RESTART_REQUIRED_PARAMS = {"SOUND_CARD"}
+# Paramètres nécessitant un redémarrage du service après modification.
+# C'est le cas de tous : ils sont résolus à l'import de ce module, et
+# livre_dor.py tourne dans un autre processus que le dashboard — rien ne
+# relit custom_config.json en cours de route. Le champ existait mais ne
+# listait que SOUND_CARD, ce qui laissait croire que les autres prenaient
+# effet immédiatement.
+RESTART_REQUIRED_PARAMS = set(MODIFIABLE_PARAMS)
 
 
 def _get_current_value(name: str) -> Any:

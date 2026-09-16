@@ -14,6 +14,7 @@
     <nav class="nav-menu" id="nav-menu">
       <a class="nav-link" href="{{ url_for('index') }}">Dashboard</a>
       <a class="nav-link" href="{{ url_for('settings_page') }}">Paramètres</a>
+      <a class="nav-link" href="{{ url_for('mode_page') }}">Mode</a>
       <a class="nav-link" href="{{ url_for('qr') }}">QR codes</a>
       <a class="nav-link" href="{{ url_for('wifi_page') }}">WiFi</a>
       <a class="nav-link" href="{{ url_for('rclone_page') }}">Google Drive</a>
@@ -31,6 +32,11 @@
       <div class="card">
         <h2>Messages enregistrés</h2>
         <p class="big" id="messages-count">—</p>
+      </div>
+      <div class="card">
+        <h2>Mode</h2>
+        <p class="big" id="mode-actuel">—</p>
+        <p class="muted"><a href="{{ url_for('mode_page') }}">Basculer mariage / restitution</a></p>
       </div>
       <div class="card">
         <h2>Réseau</h2>
