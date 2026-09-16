@@ -266,7 +266,6 @@ button.secondary {
   cursor: pointer;
   color: var(--fg);
   padding: 0.5rem;
-  margin-right: 0.5rem;
 }
 
 .nav-menu {
@@ -278,6 +277,18 @@ button.secondary {
 @media (max-width: 768px) {
   .burger-button {
     display: block;
+    order: -1;
+  }
+  
+  header {
+    position: relative;
+  }
+  
+  header h1 {
+    flex: 0 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   
   .nav-menu {
@@ -311,6 +322,14 @@ button.secondary {
   .nav-menu .logout-link:hover {
     background: var(--border);
     border-radius: 4px;
+  }
+  
+  .logout-link {
+    order: 10;
+  }
+  
+  .badge {
+    display: none;
   }
 }
 
