@@ -35,18 +35,23 @@ def _terminate(proc: subprocess.Popen, grace_sec: float = TERMINATE_GRACE_SEC) -
 
 def play(path: Path, should_continue: Callable[[], bool],
          poll_interval: float = POLL_INTERVAL_SEC,
-         timeout_sec: Optional[float] = None) -> str:
+         timeout_sec: Optional[float] = None,
+         device: Optional[str] = None) -> str:
     """Joue un fichier WAV sur la carte son configurée.
 
     should_continue() est interrogé toutes les poll_interval secondes ; dès
     qu'il renvoie False (ex. raccroché détecté), la lecture est interrompue
     immédiatement. Retourne "completed", "interrupted" ou "error".
+
+    device permet de surcharger le périphérique ALSA (défaut : SOUND_CARD),
+    utilisé par le mode restitution pour router éventuellement les
+    enregistrements mono des invités vers le seul écouteur (§5.7).
     """
     if not path.exists():
         logger.error("Fichier audio introuvable : %s", path)
         return "error"
 
-    cmd = ["aplay", "-D", config.SOUND_CARD, str(path)]
+    cmd = ["aplay", "-D", device or config.SOUND_CARD, str(path)]
     logger.debug("Lecture : %s", " ".join(cmd))
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

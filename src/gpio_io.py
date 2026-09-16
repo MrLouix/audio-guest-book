@@ -84,6 +84,18 @@ class PhoneInputs:
         with self._lock:
             return self._pulse_count > 0
 
+    def is_dial_active(self) -> bool:
+        """Cadran hors de sa position de repos : un chiffre est en cours de composition.
+
+        Complète has_pulses(), qui n'est vrai qu'entre la première impulsion et
+        le retour au repos : is_dial_active() couvre tout le mouvement du
+        cadran, y compris l'instant qui précède la première impulsion. Le mode
+        restitution s'en sert pour ne jamais valider un numéro incomplet alors
+        que l'utilisateur est en train de composer le chiffre suivant (§5.7).
+        """
+        with self._lock:
+            return self._dial_active
+
     def pop_digit(self) -> Optional[int]:
         with self._lock:
             return self._digit_queue.popleft() if self._digit_queue else None

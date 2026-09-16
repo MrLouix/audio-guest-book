@@ -37,6 +37,7 @@ STATIC_DIR = BASE_DIR / "static"
 STATUS_FILE = BASE_DIR / "status.json"
 RING_TRIGGER_FILE = BASE_DIR / "ring_trigger"
 RCLONE_CONFIG_FILE = BASE_DIR / "rclone_config.json"
+MODE_CONFIG_FILE = BASE_DIR / "mode_config.json"
 DASHBOARD_CONFIG_FILE = BASE_DIR / "dashboard_config.json"
 SECRET_KEY_FILE = BASE_DIR / "secret_key.txt"
 ACTIVE_PORT_FILE = BASE_DIR / "active_port.txt"
@@ -51,6 +52,7 @@ TONALITE_WAV = AUDIO_DIR / "tonalite.wav"
 BIP_WAV = AUDIO_DIR / "bip.wav"
 RING_OUT_WAV = AUDIO_DIR / "ring_out.wav"
 MESSAGE_GENERIQUE_WAV = AUDIO_DIR / "message_generique.wav"
+AUCUN_MESSAGE_WAV = AUDIO_DIR / "aucun_message.wav"
 
 
 def message_wav(digit: int) -> Path:
@@ -99,6 +101,27 @@ DIAL_DEBOUNCE_SEC = _env_float("DIAL_DEBOUNCE_SEC", 0.02)
 RING_INTERVAL_SEC = _env_int("RING_INTERVAL_SEC", 90)
 RING_ANSWER_GRACE_SEC = _env_int("RING_ANSWER_GRACE_SEC", 5)
 MAX_RECORD_SEC = _env_int("MAX_RECORD_SEC", 120)
+
+# --- Mode restitution (§5.7) ----------------------------------------------
+
+# Valeur par défaut au premier démarrage uniquement : la source de vérité à
+# l'exécution est mode_config.json, éditable à chaud depuis le dashboard (§5.2).
+# Motif booléen identique à USE_MDNS, seul motif bool du projet.
+MODE_RESTITUTION = _env("MODE_RESTITUTION", "False") == "True"
+
+# Nombre maximal de chiffres du numéro de message : au-delà, la saisie se
+# ferme immédiatement sans attendre l'inter-chiffre (§5.7).
+RESTITUTION_DIGITS_MAX = _env_int("RESTITUTION_DIGITS_MAX", 4)
+
+# Délai de silence du cadran validant un numéro incomplet (« 1 » puis attente).
+# Suspendu pendant que le cadran est en mouvement, pour ne jamais valider un
+# numéro au milieu d'un chiffre en cours de composition (§5.7).
+RESTITUTION_INTERDIGIT_SEC = _env_float("RESTITUTION_INTERDIGIT_SEC", 3.0)
+
+# Périphérique ALSA de lecture des messages des invités. Par défaut identique à
+# SOUND_CARD ; échappatoire si la lecture des enregistrements mono doit être
+# routée uniquement vers l'écouteur du combiné (voir §5.7).
+RESTITUTION_SOUND_CARD = _env("RESTITUTION_SOUND_CARD", SOUND_CARD)
 
 # --- Dashboard web (§5.2, §9) ---------------------------------------------
 
