@@ -119,8 +119,14 @@ SOUND_CARD = _env("SOUND_CARD", "plughw:1,0")
 AUDIO_PLAY_TIMEOUT_SEC = _env_int("AUDIO_PLAY_TIMEOUT_SEC", 180)
 
 # Intervalle de rafraîchissement de status.json en état attente, pour que le
-# futur watchdog (Sprint 10) ne le voie jamais périmé lors des longues idles.
-STATUS_HEARTBEAT_SEC = _env_int("STATUS_HEARTBEAT_SEC", 30)
+# watchdog (§7.1) ne le voie jamais périmé lors des longues idles.
+#
+# Chaque écriture est atomique (fichier temporaire + os.replace), donc coûte un
+# bloc neuf sur la carte SD : mesuré à ~13 Ko de trafic réel pour 88 octets de
+# contenu, soit ~36 Mo/jour à 30 s. À 120 s on descend à ~9 Mo/jour sans
+# rapprocher dangereusement du seuil du watchdog — WATCHDOG_STALE_AFTER_SEC
+# vaut 300 s, il reste donc 2,5 battements de marge.
+STATUS_HEARTBEAT_SEC = _env_int("STATUS_HEARTBEAT_SEC", 120)
 
 # Durée en-dessous de laquelle un enregistrement est jugé "très court" :
 # conservé (jamais supprimé) mais marqué/logué (§7.2).
@@ -173,6 +179,15 @@ RESTITUTION_INTERDIGIT_SEC = _env_float("RESTITUTION_INTERDIGIT_SEC", 3.0)
 # SOUND_CARD ; échappatoire si la lecture des enregistrements mono doit être
 # routée uniquement vers l'écouteur du combiné (voir §5.7).
 RESTITUTION_SOUND_CARD = _env("RESTITUTION_SOUND_CARD", SOUND_CARD)
+
+# Durée de validité du mode en mémoire avant relecture de mode_config.json.
+# La machine à états interroge le mode à chaque tour de sa boucle d'attente
+# (20 Hz) : relire le fichier à cette cadence est inutile pour une valeur qui
+# change deux fois dans la vie de l'appareil. Une seconde reste imperceptible
+# à l'usage et divise par vingt le nombre d'appels système (~1,7 million par
+# jour, ramenés à ~86 000). Une bascule depuis le dashboard invalide le cache
+# du processus qui écrit, et reste donc immédiate côté interface.
+MODE_RELOAD_SEC = _env_float("MODE_RELOAD_SEC", 1.0)
 
 # --- Dashboard web (§5.2, §9) ---------------------------------------------
 
