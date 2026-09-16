@@ -8,8 +8,11 @@
 </head>
 <body>
   <header>
+    <button class="burger-button" id="burger-button" aria-label="Menu">☰</button>
     <h1>☁️ Synchronisation Google Drive</h1>
-    <a class="nav-link" href="{{ url_for('index') }}">← Dashboard</a>
+    <nav class="nav-menu" id="nav-menu">
+      <a class="nav-link" href="{{ url_for('index') }}">← Dashboard</a>
+    </nav>
   </header>
 
   <main>
