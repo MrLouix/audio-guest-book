@@ -170,7 +170,11 @@ def get_current_status() -> Optional[Dict[str, Any]]:
     # Si PhoneInputs est disponible et a été initialisé
     if _phone_inputs is not None:
         hook_active = _phone_inputs.is_hook_up()
-        dial_active = _phone_inputs._dial_active if hasattr(_phone_inputs, '_dial_active') else False
+        # Accesseur public plutôt que l'attribut privé : is_dial_active() prend
+        # le verrou de PhoneInputs, ce qui importe ici car cette fonction est
+        # appelée depuis le thread Flask alors que _dial_active est muté par les
+        # callbacks GPIO.
+        dial_active = _phone_inputs.is_dial_active()
         
         # Déterminer les états
         hook_state = "DECROCHE" if hook_active else "raccroché"
