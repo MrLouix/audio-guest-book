@@ -9,7 +9,7 @@ piloté manuellement (mode --test, futurs tests automatisés).
 import logging
 import threading
 from collections import deque
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import config
 
@@ -124,3 +124,77 @@ def setup(inputs: PhoneInputs) -> None:
 def cleanup() -> None:
     if GPIO is not None:
         GPIO.cleanup()
+
+
+# Instance globale pour stocker l'état des GPIO (si RPi.GPIO est disponible)
+_phone_inputs: Optional[PhoneInputs] = None
+
+
+def get_phone_inputs() -> Optional[PhoneInputs]:
+    """Retourne l'instance PhoneInputs si disponible."""
+    return _phone_inputs
+
+
+def set_phone_inputs(inputs: PhoneInputs) -> None:
+    """Définit l'instance PhoneInputs à utiliser pour get_current_status."""
+    global _phone_inputs
+    _phone_inputs = inputs
+
+
+def get_current_status() -> Optional[Dict[str, Any]]:
+    """Retourne l'état actuel des GPIO si disponible.
+    
+    Retourne un dictionnaire avec :
+    {
+        "hook": "DECROCHE" ou "raccroché",
+        "dial_offnormal": "actif" ou "repos",
+        "dial_pulse": "actif" ou "repos" (ou "inconnu" si pas de pulse détecté)
+    }
+    
+    Retourne None si RPi.GPIO n'est pas disponible (mode démo).
+    """
+    import config
+    
+    # Si PhoneInputs est disponible et a été initialisé
+    if _phone_inputs is not None:
+        hook_active = _phone_inputs.is_hook_up()
+        dial_active = _phone_inputs._dial_active if hasattr(_phone_inputs, '_dial_active') else False
+        
+        # Déterminer les états
+        hook_state = "DECROCHE" if hook_active else "raccroché"
+        dial_offnormal_state = "actif" if dial_active else "repos"
+        
+        return {
+            "hook": hook_state,
+            "dial_offnormal": dial_offnormal_state,
+            "dial_pulse": "repos",  # On ne peut pas lire directement l'état de la pulse
+        }
+    
+    # Si RPi.GPIO est disponible mais PhoneInputs n'a pas été initialisé
+    if GPIO is not None:
+        try:
+            # Lire directement les valeurs des pins
+            hook_value = GPIO.input(config.HOOK_PIN)
+            dial_offnormal_value = GPIO.input(config.DIAL_OFFNORMAL_PIN)
+            dial_pulse_value = GPIO.input(config.DIAL_PULSE_PIN)
+            
+            hook_active = (hook_value == HOOK_ACTIVE_LEVEL)
+            dial_active = (dial_offnormal_value == DIAL_ACTIVE_LEVEL)
+            pulse_active = (dial_pulse_value == DIAL_ACTIVE_LEVEL)
+            
+            return {
+                "hook": "DECROCHE" if hook_active else "raccroché",
+                "dial_offnormal": "actif" if dial_active else "repos",
+                "dial_pulse": "actif" if pulse_active else "repos",
+            }
+        except Exception:
+            # Erreur lors de la lecture GPIO
+            return None
+    
+    # RPi.GPIO non disponible (mode développement/démo)
+    return None
+
+
+def is_gpio_available() -> bool:
+    """Indique si RPi.GPIO est disponible."""
+    return GPIO is not None

@@ -20,8 +20,11 @@ from typing import List
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.serving import make_server
 
+import audio_io
 import auth
 import config
+import gpio_io
+import json
 import network_info
 import qr_utils
 import rclone_sync
@@ -261,6 +264,98 @@ def api_rclone_sync_now():
     """Lance rclone copy immédiatement et retourne le résultat (§5.2)."""
     result = rclone_sync.run_sync()
     return jsonify(result), (200 if result.get("ok") else 502)
+
+
+@app.route("/settings")
+def settings_page():
+    """Page de configuration des paramètres du système (§5.2)."""
+    # Récupérer les valeurs actuelles des paramètres
+    current_config = config.get_all_config()
+    
+    # Récupérer le statut GPIO
+    gpio_status = gpio_io.get_current_status()
+    
+    # Vérifier si la carte son est disponible
+    sound_card_available = audio_io.sound_card_available()
+    
+    return render_template(
+        "settings.html",
+        config=current_config,
+        modifiable_params=config.MODIFIABLE_PARAMS,
+        gpio_status=gpio_status,
+        gpio_available=gpio_io.is_gpio_available(),
+        sound_card=config.SOUND_CARD,
+        sound_card_available=sound_card_available,
+    )
+
+
+@app.route("/api/settings")
+def api_settings_get():
+    """Retourne la configuration et le statut actuel en JSON."""
+    current_config = config.get_all_config()
+    gpio_status = gpio_io.get_current_status()
+    sound_card_available = audio_io.sound_card_available()
+    
+    return jsonify({
+        "params": current_config,
+        "status": {
+            "sound_card": {
+                "name": config.SOUND_CARD,
+                "available": sound_card_available,
+            },
+            "gpio": gpio_status,
+            "gpio_available": gpio_io.is_gpio_available(),
+        },
+    })
+
+
+@app.route("/api/settings", methods=["POST"])
+def api_settings_post():
+    """Met à jour les paramètres de configuration."""
+    # Vérifier que l'utilisateur est admin
+    if not session.get("is_admin"):
+        return jsonify({"erreur": "Seul un administrateur peut modifier les paramètres"}), 403
+    
+    data = request.get_json(silent=True) or request.form
+    new_values = {}
+    
+    # Extraire les valeurs du formulaire ou JSON
+    for param_name in config.MODIFIABLE_PARAMS:
+        if param_name in data:
+            new_values[param_name] = data[param_name]
+    
+    if not new_values:
+        return jsonify({"erreur": "Aucun paramètre à mettre à jour"}), 400
+    
+    # Mettre à jour la configuration
+    result = config.update_config(new_values)
+    
+    if not result["ok"]:
+        return jsonify({"erreur": result["erreur"]}), 500
+    
+    # Retourner le résultat avec un avertissement si redémarrage nécessaire
+    response = {
+        "ok": True,
+        "message": "Paramètres sauvegardés avec succès.",
+        "params_modifies": result["params_modifies"],
+    }
+    
+    if result["redemarrage_necessaire"]:
+        response["message"] += " Certains paramètres nécessitent un redémarrage du service pour prendre effet."
+        response["redemarrage_necessaire"] = True
+    
+    return jsonify(response)
+
+
+@app.route("/api/gpio-status")
+def api_gpio_status():
+    """Retourne l'état actuel des GPIO en JSON."""
+    gpio_status = gpio_io.get_current_status()
+    
+    return jsonify({
+        "gpio": gpio_status,
+        "gpio_available": gpio_io.is_gpio_available(),
+    })
 
 
 def run_server() -> None:

@@ -256,3 +256,44 @@ button.secondary {
   font-size: 0.85rem;
   margin: 0;
 }
+
+/* Styles pour la page settings */
+.status-section {
+  margin-bottom: 1rem;
+}
+
+.status-section h3 {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin: 0 0 0.5rem 0;
+}
+
+.gpio-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.gpio-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gpio-item span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.gpio-item strong {
+  font-size: 0.85rem;
+}
+
+.card input[type="text"],
+.card input[type="number"] {
+  max-width: 200px;
+}
+
+.card form {
+  max-width: 400px;
+}

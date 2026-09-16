@@ -6,12 +6,17 @@ surchargées par des variables d'environnement du même nom pour l'installation
 sur le Raspberry Pi final, sans toucher au code.
 """
 
+import json
 import os
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 # config.py vit dans src/ ; l'arborescence de données (audio/, messages/,
 # logs/, static/, templates/...) reste à la racine du projet (§8).
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Fichier de configuration personnalisée pour les paramètres modifiables via le dashboard
+CUSTOM_CONFIG_FILE = BASE_DIR / "custom_config.json"
 
 
 def _env(name: str, default: str) -> str:
@@ -168,3 +173,138 @@ def ensure_directories() -> None:
     """Crée les dossiers de l'arborescence s'ils n'existent pas encore."""
     for directory in (AUDIO_SRC_DIR, AUDIO_DIR, MESSAGES_DIR, LOGS_DIR, STATIC_DIR):
         directory.mkdir(parents=True, exist_ok=True)
+
+
+# --- Paramètres modifiables via le dashboard ---
+
+# Liste des paramètres modifiables via l'interface /settings
+# Format: (nom, type, valeur_par_defaut, description)
+MODIFIABLE_PARAMS = {
+    "RING_INTERVAL_SEC": {"type": "int", "default": 90, "label": "Intervalle de sonnerie (secondes)"},
+    "RING_ANSWER_GRACE_SEC": {"type": "int", "default": 5, "label": "Fenêtre de grâce pour répondre (secondes)"},
+    "MAX_RECORD_SEC": {"type": "int", "default": 120, "label": "Durée max d'enregistrement (secondes)"},
+    "SHORT_RECORDING_THRESHOLD_SEC": {"type": "float", "default": 2.0, "label": "Seuil enregistrement court (secondes)"},
+    "AUDIO_PLAY_TIMEOUT_SEC": {"type": "int", "default": 180, "label": "Timeout lecture audio (secondes)"},
+    "SOUND_CARD": {"type": "str", "default": "plughw:1,0", "label": "Carte son ALSA"},
+    "HOOK_ACTIVE_STATE": {"type": "str", "default": "LOW", "label": "Niveau actif crochet (LOW/HIGH)"},
+    "OFFNORMAL_ACTIF_LEVEL": {"type": "str", "default": "LOW", "label": "Niveau actif cadran (LOW/HIGH)"},
+    "HOOK_DEBOUNCE_SEC": {"type": "float", "default": 0.075, "label": "Anti-rebond crochet (secondes)"},
+    "DIAL_DEBOUNCE_SEC": {"type": "float", "default": 0.02, "label": "Anti-rebond cadran (secondes)"},
+}
+
+# Paramètres nécessitant un redémarrage après modification
+RESTART_REQUIRED_PARAMS = {"SOUND_CARD"}
+
+
+def _get_current_value(name: str) -> Any:
+    """Récupère la valeur actuelle d'un paramètre (d'abord custom_config, puis globale)."""
+    import sys
+    
+    # D'abord vérifier dans custom_config.json
+    try:
+        if CUSTOM_CONFIG_FILE.exists():
+            with CUSTOM_CONFIG_FILE.open("r", encoding="utf-8") as f:
+                custom_config = json.load(f)
+                if name in custom_config:
+                    return custom_config[name]
+    except (OSError, json.JSONDecodeError):
+        pass
+    
+    # Puis retourner la valeur globale si elle existe
+    # Utiliser sys.modules pour éviter la référence circulaire
+    config_module = sys.modules.get(__name__)
+    if config_module and hasattr(config_module, name):
+        return getattr(config_module, name)
+    
+    # Enfin, retourner la valeur par défaut depuis MODIFIABLE_PARAMS
+    if name in MODIFIABLE_PARAMS:
+        return MODIFIABLE_PARAMS[name]["default"]
+    
+    return None
+
+
+def get_all_config() -> Dict[str, Any]:
+    """Retourne un dictionnaire avec tous les paramètres modifiables et leurs valeurs actuelles."""
+    result = {}
+    for name, info in MODIFIABLE_PARAMS.items():
+        result[name] = _get_current_value(name)
+    return result
+
+
+def get_config_value(name: str) -> Any:
+    """Retourne la valeur actuelle d'un paramètre modifiable."""
+    return _get_current_value(name)
+
+
+def update_config(new_values: Dict[str, Any]) -> Dict[str, Any]:
+    """Met à jour les paramètres dans custom_config.json.
+    
+    Args:
+        new_values: Dictionnaire {nom_param: nouvelle_valeur}
+    
+    Returns:
+        Dict avec {"ok": bool, "erreur": str ou None, "params_modifies": list, "redemarrage_necessaire": bool}
+    """
+    # Lire la config existante
+    try:
+        if CUSTOM_CONFIG_FILE.exists():
+            with CUSTOM_CONFIG_FILE.open("r", encoding="utf-8") as f:
+                custom_config = json.load(f)
+        else:
+            custom_config = {}
+    except (OSError, json.JSONDecodeError) as e:
+        return {"ok": False, "erreur": f"Impossible de lire custom_config.json: {e}", "params_modifies": [], "redemarrage_necessaire": False}
+    
+    # Valider et appliquer les nouvelles valeurs
+    params_modifies = []
+    redemarrage_necessaire = False
+    
+    for name, value in new_values.items():
+        if name not in MODIFIABLE_PARAMS:
+            continue
+        
+        param_info = MODIFIABLE_PARAMS[name]
+        expected_type = param_info["type"]
+        
+        # Valider le type
+        try:
+            if expected_type == "int":
+                value = int(value)
+            elif expected_type == "float":
+                value = float(value)
+            elif expected_type == "str":
+                value = str(value)
+        except (ValueError, TypeError):
+            return {"ok": False, "erreur": f"Valeur invalide pour {name}: doit être un {expected_type}", "params_modifies": [], "redemarrage_necessaire": False}
+        
+        # Vérifier si le paramètre nécessite un redémarrage
+        if name in RESTART_REQUIRED_PARAMS:
+            redemarrage_necessaire = True
+        
+        # Mettre à jour
+        custom_config[name] = value
+        params_modifies.append(name)
+    
+    # Écrire la nouvelle configuration
+    try:
+        CUSTOM_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = CUSTOM_CONFIG_FILE.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(custom_config, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp_path, CUSTOM_CONFIG_FILE)
+    except OSError as e:
+        return {"ok": False, "erreur": f"Impossible d'écrire custom_config.json: {e}", "params_modifies": [], "redemarrage_necessaire": False}
+    
+    return {
+        "ok": True,
+        "erreur": None,
+        "params_modifies": params_modifies,
+        "redemarrage_necessaire": redemarrage_necessaire,
+    }
+
+
+def ensure_custom_config_exists() -> None:
+    """Crée custom_config.json avec les valeurs par défaut si inexistant."""
+    if not CUSTOM_CONFIG_FILE.exists():
+        default_config = {name: info["default"] for name, info in MODIFIABLE_PARAMS.items()}
+        CUSTOM_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CUSTOM_CONFIG_FILE.write_text(json.dumps(default_config, ensure_ascii=False, indent=2), encoding="utf-8")
