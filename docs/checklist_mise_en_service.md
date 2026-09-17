@@ -22,6 +22,23 @@ La plupart des points nécessitent le Raspberry Pi, le téléphone câblé et un
 - [ ] Tourner le cadran → l'affichage détecte bien le mouvement et les impulsions.
 - [ ] Raccrocher → retour à l'état de repos affiché.
 
+## 3bis. Tests unitaires par fonction **(auto : outils fournis)**
+
+Un script par fonction, à lancer sur le Pi câblé ; chacun affiche un rapport
+clair et sort en erreur si une vérification échoue (détail : [`tests/README.md`](../tests/README.md)).
+
+```bash
+python3 tests/run_tous.py --reel     # ou un script à la fois, ci-dessous
+```
+
+- [ ] `python3 tests/test_decroche.py --reel` : décroché détecté en moins d'une seconde, sens logique correct.
+- [ ] `python3 tests/test_raccroche.py --reel` : raccroché détecté, aucun faux contact pendant 5 s combiné posé.
+- [ ] `python3 tests/test_composition.py --reel` : les chiffres demandés (3 puis 0) sont décodés exactement.
+- [ ] `python3 tests/test_lecture.py --reel` : tonalité, message et bip entendus dans l'écouteur ; le raccroché coupe la lecture.
+- [ ] `python3 tests/test_sonnerie.py --reel` : sonnerie sur le haut-parleur externe, coupée au décroché.
+- [ ] `python3 tests/test_enregistrement.py --reel` : message enregistré en raccrochant, puis relu correctement.
+- [ ] `python3 tests/test_status.py --reel` : `status.json` frais, loin du seuil de redémarrage du watchdog.
+
 ## 4. Test audio
 
 - [ ] Tonalité entendue **uniquement** dans l'écouteur (pas de fuite dans le haut-parleur).
@@ -77,6 +94,7 @@ python3 src/load_test.py --cycles 20
 
 ```bash
 python3 src/restitution_test.py    # (auto : logique validée sans matériel)
+python3 tests/run_tous.py          # (auto : les 8 tests unitaires, sans matériel)
 ```
 
 Puis, sur le matériel, avec quelques messages déjà présents dans `messages/` :

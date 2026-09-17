@@ -269,12 +269,22 @@ class GuestBookStateMachine:
                     logger.info("Sonnerie demandée à distance, ignorée (mode restitution).")
                 self._last_ring_start_ts = time.monotonic()
             else:
-                if consume_ring_trigger():
+                sonnerie_demandee = consume_ring_trigger()
+                if sonnerie_demandee:
                     logger.info("Sonnerie déclenchée à distance (ring_trigger)")
+                if (sonnerie_demandee
+                        or (time.monotonic() - self._last_ring_start_ts) >= config.RING_INTERVAL_SEC):
                     self._run_sonnerie()
-                    continue
-                if (time.monotonic() - self._last_ring_start_ts) >= config.RING_INTERVAL_SEC:
-                    self._run_sonnerie()
+                    # La sonnerie a publié son propre état ; sans cette
+                    # republication, status.json resterait sur « sonnerie »
+                    # jusqu'au prochain battement (STATUS_HEARTBEAT_SEC), et le
+                    # dashboard afficherait « sonnerie » deux minutes durant
+                    # alors que le téléphone est déjà revenu au repos (§5.2).
+                    # Coût : une écriture de plus par sonnerie, soit une toutes
+                    # les RING_INTERVAL_SEC — le même ordre de grandeur que
+                    # l'écriture déjà faite pour entrer en état sonnerie.
+                    self._set_state(STATE_ATTENTE, detail=self._attente_detail())
+                    last_heartbeat = time.monotonic()
                     continue
             if (time.monotonic() - last_heartbeat) >= config.STATUS_HEARTBEAT_SEC:
                 status_io.write_status(STATE_ATTENTE, detail=self._attente_detail())
