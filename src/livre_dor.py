@@ -591,7 +591,7 @@ def run_test_mode() -> None:
     print("Mode test GPIO — décrochez / tournez le cadran pour valider le câblage. Ctrl+C pour quitter.\n")
     print(f"HOOK_PIN={config.HOOK_PIN} (actif={config.HOOK_ACTIVE_STATE}) | "
           f"DIAL_OFFNORMAL_PIN={config.DIAL_OFFNORMAL_PIN} | "
-          f"DIAL_PULSE_PIN={config.DIAL_PULSE_PIN} (actif niveau {config.OFFNORMAL_ACTIF_LEVEL})\n")
+          f"DIAL_PULSE_PIN={config.DIAL_PULSE_PIN} (actif niveau {config.PULSE_ACTIF_LEVEL})\n")
     try:
         while True:
             hook_raw = GPIO.input(config.HOOK_PIN)
@@ -599,7 +599,7 @@ def run_test_mode() -> None:
             pulse_raw = GPIO.input(config.DIAL_PULSE_PIN)
             hook_state = "DECROCHE" if hook_raw == gpio_io.HOOK_ACTIVE_LEVEL else "raccroché"
             offnormal_state = "actif (cadran en mouvement)" if offnormal_raw == gpio_io.DIAL_ACTIVE_LEVEL else "repos"
-            pulse_state = "actif" if pulse_raw == gpio_io.DIAL_ACTIVE_LEVEL else "repos"
+            pulse_state = "actif" if pulse_raw == gpio_io.PULSE_ACTIVE_LEVEL else "repos"
             print(f"\rcrochet={hook_state:<10} | off-normal={offnormal_state:<25} | impulsion={pulse_state:<8}",
                   end="", flush=True)
             time.sleep(0.1)

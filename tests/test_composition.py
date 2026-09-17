@@ -66,6 +66,24 @@ def test_simule(rapport: Rapport) -> None:
     inputs.set_dial_active(False)
     rapport.egal("11 impulsions (rebond) retombent sur 1", inputs.pop_digit(), 1)
 
+    # Le contact off-normal rebondit jusqu'à 100 ms au retour au repos : chaque
+    # rebond ouvrait puis refermait une rotation sans impulsion, qui validait
+    # un « 0 » (0 % 10) au milieu du numéro composé.
+    inputs.set_dial_active(True)
+    inputs.set_dial_active(False)
+    rapport.verifie("un aller-retour sans impulsion ne valide aucun chiffre",
+                    inputs.pop_digit() is None)
+    for _ in range(5):
+        inputs.set_dial_active(True)
+        inputs.set_dial_active(False)
+    rapport.verifie("une salve de rebonds de l'off-normal n'insère aucun 0",
+                    inputs.pop_digit() is None)
+    inputs.set_dial_active(True)
+    inputs.register_pulse()
+    inputs.set_dial_active(False)
+    rapport.egal("une vraie impulsion reste comptée après les rebonds",
+                 inputs.pop_digit(), 1)
+
     inputs.set_dial_active(True)
     inputs.register_pulse()
     rapport.verifie("has_pulses() est vrai dès la 1re impulsion",

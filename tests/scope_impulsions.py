@@ -207,7 +207,7 @@ def capturer_reel(duree: float, frequence: float, avec_crochet: bool) -> Trace:
     trace = Trace(duree, "matériel")
     trace.freq_demandee = frequence
     signaux = [
-        Signal("impulsions", config.DIAL_PULSE_PIN, gpio_io.DIAL_ACTIVE_LEVEL,
+        Signal("impulsions", config.DIAL_PULSE_PIN, gpio_io.PULSE_ACTIVE_LEVEL,
                "contact d'impulsions"),
         Signal("off-normal", config.DIAL_OFFNORMAL_PIN, gpio_io.DIAL_ACTIVE_LEVEL,
                "cadran hors repos"),
@@ -292,12 +292,13 @@ def capturer_simule(numero: str, nb_rebonds: int, duree_rebond: float,
     alea = random.Random(graine)
     actif = gpio_io.DIAL_ACTIVE_LEVEL
     repos = 1 - actif
+    actif_pulse = gpio_io.PULSE_ACTIVE_LEVEL
 
-    pulse = Signal("impulsions", config.DIAL_PULSE_PIN, actif, "contact d'impulsions")
+    pulse = Signal("impulsions", config.DIAL_PULSE_PIN, actif_pulse, "contact d'impulsions")
     offnormal = Signal("off-normal", config.DIAL_OFFNORMAL_PIN, actif, "cadran hors repos")
     crochet = Signal("crochet", config.HOOK_PIN, gpio_io.HOOK_ACTIVE_LEVEL,
                      "crochet commutateur")
-    pulse.demarrer(repos)
+    pulse.demarrer(1 - actif_pulse)
     offnormal.demarrer(repos)
     crochet.demarrer(gpio_io.HOOK_ACTIVE_LEVEL)  # décroché pendant toute la capture
 
@@ -314,9 +315,9 @@ def capturer_simule(numero: str, nb_rebonds: int, duree_rebond: float,
         t += 0.09 + alea.uniform(-0.01, 0.01)   # retour du cadran avant le 1er coup
         coups = 10 if chiffre == 0 else chiffre
         for rang in range(coups):
-            _front_rebondissant(pulse, t, actif, nb_rebonds, duree_rebond, alea)
+            _front_rebondissant(pulse, t, actif_pulse, nb_rebonds, duree_rebond, alea)
             t += fermeture * alea.uniform(0.95, 1.05)
-            _front_rebondissant(pulse, t, repos, nb_rebonds, duree_rebond, alea)
+            _front_rebondissant(pulse, t, 1 - actif_pulse, nb_rebonds, duree_rebond, alea)
             if rang < coups - 1:
                 t += ouverture * alea.uniform(0.95, 1.05)
         # marge_fin se compte depuis le dernier front du contact : c'est cette
@@ -432,14 +433,18 @@ def mesurer(trace: Trace, seuil_glitch: float) -> Tuple[List[int], List[str]]:
 
     for index, (debut, fin) in enumerate(fenetres, start=1):
         coups = [t for t in pulse.fronts_vers_actif() if debut <= t < fin]
+        section(f"Rotation n°{index} — cadran hors repos pendant "
+                f"{(fin - debut) * 1000:.0f} ms")
+        if not coups:
+            # Même règle que PhoneInputs : sans impulsion, ce n'est pas un
+            # chiffre mais un rebond de l'off-normal, ou le cadran effleuré.
+            info("aucune impulsion → aucun chiffre validé")
+            remarques.append(f"rotation n°{index} : aucune impulsion dans la "
+                             f"fenêtre du cadran ({(fin - debut) * 1000:.0f} ms)")
+            continue
         chiffre = len(coups) % 10
         chiffres.append(chiffre)
-        section(f"Chiffre n°{index} — cadran hors repos pendant "
-                f"{(fin - debut) * 1000:.0f} ms")
         info(f"{len(coups)} impulsion(s) → chiffre {chiffre}")
-        if not coups:
-            remarques.append(f"chiffre n°{index} : aucune impulsion dans la fenêtre du cadran")
-            continue
 
         fermetures, ouvertures, periodes = [], [], []
         for t in coups:
@@ -472,12 +477,12 @@ def mesurer(trace: Trace, seuil_glitch: float) -> Tuple[List[int], List[str]]:
              f"après la dernière : {marge_fin:.1f} ms")
         if marge_debut < 15:
             remarques.append(
-                f"chiffre n°{index} : seulement {marge_debut:.1f} ms entre le départ du "
+                f"rotation n°{index} : seulement {marge_debut:.1f} ms entre le départ du "
                 f"cadran et la 1re impulsion — si le callback off-normal arrive après "
                 f"cette impulsion, elle est ignorée (chiffre trop petit d'une unité)")
         if marge_fin < 15:
             remarques.append(
-                f"chiffre n°{index} : seulement {marge_fin:.1f} ms entre la dernière "
+                f"rotation n°{index} : seulement {marge_fin:.1f} ms entre la dernière "
                 f"impulsion et le retour au repos — RPi.GPIO servant chaque broche dans "
                 f"son propre thread, le chiffre peut être validé avant que le dernier "
                 f"coup ne soit compté")
@@ -508,6 +513,175 @@ def pires_rebonds(signal: Signal, seuil: float) -> List[Tuple[float, float, int]
     return salves
 
 
+# --- Verdict de câblage -------------------------------------------------
+
+def excursions(signal: Signal, niveau: int, duree: float) -> List[Tuple[float, float]]:
+    """Intervalles (début, durée) pendant lesquels le signal est à ce niveau."""
+    plages = []
+    for i, (instant, valeur) in enumerate(signal.transitions):
+        if valeur != niveau:
+            continue
+        fin = (signal.transitions[i + 1][0]
+               if i + 1 < len(signal.transitions) else duree)
+        plages.append((instant, fin - instant))
+    return plages
+
+
+def niveau_au_repos(signal: Signal, duree: float) -> int:
+    """Niveau que la broche tient le plus longtemps : son état au repos."""
+    temps = {0: 0.0, 1: 0.0}
+    for niveau in (0, 1):
+        temps[niveau] = sum(d for _, d in excursions(signal, niveau, duree))
+    return 0 if temps[0] >= temps[1] else 1
+
+
+def diagnostiquer(trace: Trace, seuil_impulsion: float) -> List[str]:
+    """Ce que le signal dit du câblage, avant tout réglage logiciel.
+
+    Aucun anti-rebond ne rattrape une broche qui ne voit pas d'impulsion :
+    cette section passe donc avant le décodage, et ses alertes priment.
+    """
+    alertes: List[str] = []
+    duree = trace.duree
+    pulse = trace.impulsions
+    repos = niveau_au_repos(pulse, duree)
+    haut = sum(d for _, d in excursions(pulse, 1, duree))
+
+    section("Verdict de câblage (broche d'impulsions)")
+    info(f"niveau au repos : {'HAUT (3,3 V)' if repos else 'BAS (0 V)'} · "
+         f"{haut / duree * 100:.1f} % du temps au niveau haut")
+    info(f"niveau actif configuré : {config.PULSE_ACTIF_LEVEL} "
+         f"{GRIS}[{harness.provenance('PULSE_ACTIF_LEVEL')}]{RAZ}")
+
+    # Une impulsion est, par définition, un écart au niveau de repos : c'est
+    # celui-là qu'on mesure, même si la configuration désigne l'autre — sinon
+    # une polarité inversée ferait prendre les longues plages de repos pour
+    # des impulsions de plusieurs secondes.
+    niveau_impulsion = 1 - repos
+    if repos == pulse.niveau_actif:
+        inverse = "HIGH" if pulse.niveau_actif == 0 else "LOW"
+        alerte(f"la broche est AU REPOS sur le niveau déclaré actif "
+               f"({config.PULSE_ACTIF_LEVEL}) : le service croit donc voir une "
+               f"impulsion permanente. Soit la polarité est inversée — essayez "
+               f"PULSE_ACTIF_LEVEL={inverse} —, soit le contact est court-circuité "
+               f"en permanence (mauvaise paire de fils, ou contact de shunt du "
+               f"cadran câblé en parallèle).")
+        alertes.append(f"broche d'impulsions au repos sur le niveau actif "
+                       f"({config.PULSE_ACTIF_LEVEL})")
+
+    impulsions = excursions(pulse, niveau_impulsion, duree)
+    plausibles = [(t, d) for t, d in impulsions if d >= seuil_impulsion]
+    info(f"{len(impulsions)} écart(s) au niveau de repos, dont "
+         f"{len(plausibles)} d'au moins {seuil_impulsion * 1000:.0f} ms "
+         f"{GRIS}(les autres sont des rebonds){RAZ}")
+    retenues = sorted(d for _, d in (plausibles or impulsions))
+    if retenues:
+        milieu = retenues[len(retenues) // 2]
+        quoi = "impulsions retenues" if plausibles else "excursions (aucune retenue)"
+        info(f"durées des {quoi} : {retenues[0] * 1000:.2f} → "
+             f"{retenues[-1] * 1000:.2f} ms (médiane {milieu * 1000:.2f}) "
+             f"{GRIS}— attendu ~33 ms à 10 impulsions/s{RAZ}")
+
+    if not plausibles:
+        alerte(f"AUCUNE impulsion d'une durée plausible : rien de ce qui arrive "
+               f"sur cette broche ne ressemble au train d'impulsions d'un cadran "
+               f"(10 créneaux de ~33 ms étalés sur ~1 s). C'est un problème de "
+               f"câblage ou de contact, qu'aucun réglage logiciel ne corrigera.")
+        alertes.append("aucune impulsion plausible sur la broche d'impulsions")
+    elif len(plausibles) >= 2:
+        # Seuls les intervalles courts comptent : au-delà d'une demi-seconde on
+        # ne mesure plus la cadence du cadran, mais la pause entre deux chiffres.
+        intervalles = [plausibles[i + 1][0] - plausibles[i][0]
+                       for i in range(len(plausibles) - 1)
+                       if plausibles[i + 1][0] - plausibles[i][0] < 0.5]
+        # Médiane et non moyenne : une seule pause entre deux chiffres suffit
+        # à tirer la moyenne vers le bas et à faire croire à un cadran lent.
+        intervalles.sort()
+        periode = intervalles[len(intervalles) // 2] if intervalles else 0.0
+        cadence = 1 / periode if periode else 0
+        info(f"cadence moyenne : {cadence:.1f} impulsions/s "
+             f"{GRIS}— attendu 8 à 12{RAZ}")
+        if intervalles and not 6 <= cadence <= 16:
+            alerte(f"cadence hors de tout cadran normalisé ({cadence:.1f}/s) : "
+                   f"ce ne sont pas des impulsions, mais des rebonds ou des "
+                   f"parasites.")
+            alertes.append(f"cadence aberrante ({cadence:.1f} impulsions/s)")
+
+    # Rebonds : la plus longue salve dicte l'anti-rebond de chaque contact.
+    for nom, reglage, defaut in (("impulsions", "PULSE_DEBOUNCE_SEC",
+                                  config.PULSE_DEBOUNCE_SEC),
+                                 ("off-normal", "OFFNORMAL_DEBOUNCE_SEC",
+                                  config.OFFNORMAL_DEBOUNCE_SEC)):
+        salves = pires_rebonds(trace.signaux[nom], 0.005)
+        if not salves:
+            continue
+        debut, fin, nombre = salves[0]
+        longueur = (fin - debut) * 1000
+        info(f"{nom} : plus longue salve de rebonds {longueur:.1f} ms "
+             f"({nombre} fronts) · {reglage} = {defaut} s")
+        if longueur > defaut * 1000:
+            alerte(f"{nom} : la salve de rebonds ({longueur:.1f} ms) dépasse "
+                   f"l'anti-rebond ({defaut * 1000:.0f} ms) — des fronts "
+                   f"parasites passent. Essayez "
+                   f"{reglage}={max(longueur * 1.5, 10) / 1000:.3f}"
+                   + (" (sans dépasser 60 ms : une impulsion dure ~33 ms)"
+                      if nom == "impulsions" else ""))
+            alertes.append(f"{nom} : anti-rebond plus court que les rebonds")
+    return alertes
+
+
+def surveiller_niveaux(periode: float) -> None:
+    """Affiche en continu le niveau des trois broches et leur taux d'occupation.
+
+    C'est l'outil du test qui tranche : débranchez le fil du contact
+    d'impulsions ; la broche doit remonter à 3,3 V (niveau HAUT, 100 %) grâce
+    au pull-up interne. Si elle reste au niveau BAS débranchée, le problème
+    est côté Raspberry Pi (mauvaise broche, court-circuit à la masse) ; si
+    elle remonte, le pull-up marche et c'est bien le contact du cadran qui la
+    tient à la masse en permanence.
+    """
+    GPIO = gpio_io.GPIO
+    if GPIO is None:
+        print(f"\n{JAUNE}RPi.GPIO indisponible : --niveaux doit être lancé sur le "
+              f"Raspberry Pi câblé.{RAZ}\n")
+        raise SystemExit(2)
+
+    broches = [("impulsions", config.DIAL_PULSE_PIN, gpio_io.PULSE_ACTIVE_LEVEL),
+               ("off-normal", config.DIAL_OFFNORMAL_PIN, gpio_io.DIAL_ACTIVE_LEVEL),
+               ("crochet", config.HOOK_PIN, gpio_io.HOOK_ACTIVE_LEVEL)]
+    GPIO.setmode(GPIO.BCM)
+    for _, pin, _ in broches:
+        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+    section("Moniteur de niveaux (Ctrl+C pour arrêter)")
+    info("Test décisif : débranchez le fil du contact d'impulsions — la broche "
+         "doit passer à HAUT 100 % (pull-up interne).")
+    print()
+    try:
+        while True:
+            hauts = {nom: 0 for nom, _, _ in broches}
+            total = 0
+            fin = time.perf_counter() + periode
+            while time.perf_counter() < fin:
+                for nom, pin, _ in broches:
+                    hauts[nom] += GPIO.input(pin)
+                total += 1
+                time.sleep(0.001)
+            cellules = []
+            for nom, pin, actif in broches:
+                niveau = GPIO.input(pin)
+                part = hauts[nom] / total * 100 if total else 0.0
+                etat = "HAUT" if niveau else "BAS "
+                couleur = ROUGE if niveau == actif else VERT
+                cellules.append(f"{nom} (GPIO {pin}) {couleur}{etat}{RAZ} "
+                                f"{GRIS}{part:5.1f} % haut{RAZ}")
+            print("  " + " · ".join(cellules))
+    except KeyboardInterrupt:
+        print(f"\n  {GRIS}arrêt du moniteur{RAZ}\n")
+    finally:
+        GPIO.cleanup()
+
+
 # --- Rejeu dans la vraie machine à états --------------------------------
 
 def rejouer(trace: Trace, anti_rebond: float, latence: float) -> List[int]:
@@ -525,8 +699,13 @@ def rejouer(trace: Trace, anti_rebond: float, latence: float) -> List[int]:
     inputs.set_hook(True)
     inputs.set_dial_active(offnormal.niveau_a(0.0) == gpio_io.DIAL_ACTIVE_LEVEL)
 
+    # L'off-normal est détecté sur ses deux fronts (GPIO.BOTH) et son niveau
+    # est relu dans le callback ; l'impulsion n'est détectée que sur le front
+    # qui va vers son niveau actif (GPIO.FALLING ou RISING), et comptée sans
+    # relecture — exactement ce que fait gpio_io.setup.
     evenements = [(t, "off-normal") for t, _ in offnormal.fronts]
-    evenements += [(t, "impulsions") for t, _ in pulse.fronts]
+    evenements += [(t, "impulsions") for t, niveau in pulse.fronts
+                   if niveau == gpio_io.PULSE_ACTIVE_LEVEL]
     evenements.sort()
 
     dernier = {"off-normal": -math.inf, "impulsions": -math.inf}
@@ -539,8 +718,7 @@ def rejouer(trace: Trace, anti_rebond: float, latence: float) -> List[int]:
             niveau = offnormal.niveau_a(instant + latence)
             inputs.set_dial_active(niveau == gpio_io.DIAL_ACTIVE_LEVEL)
         else:
-            if pulse.niveau_a(instant + latence) == gpio_io.DIAL_ACTIVE_LEVEL:
-                inputs.register_pulse()
+            inputs.register_pulse()
         chiffre = inputs.pop_digit()
         while chiffre is not None:
             chiffres.append(chiffre)
@@ -556,10 +734,10 @@ def balayer(trace: Trace, attendu: List[int]) -> None:
     """Table anti-rebond × latence du callback → chiffres décodés."""
     valeurs = [0, 1, 2, 3, 5, 8, 10, 15, 20, 25, 30, 40]
     latences = [0.0, 0.002, 0.005]
-    actuel = int(round(config.DIAL_DEBOUNCE_SEC * 1000))
+    actuel = int(round(config.PULSE_DEBOUNCE_SEC * 1000))
     reference = "".join(str(c) for c in attendu)
 
-    section("Balayage de l'anti-rebond (DIAL_DEBOUNCE_SEC)")
+    section("Balayage de l'anti-rebond des impulsions (PULSE_DEBOUNCE_SEC)")
     info(f"référence : {reference or '—'}")
     entete = f"  {'anti-rebond':>12} │ " + " │ ".join(
         f"latence {l * 1000:.0f} ms".rjust(16) for l in latences)
@@ -582,7 +760,7 @@ def balayer(trace: Trace, attendu: List[int]) -> None:
         ok(f"anti-rebond correct entre {min(bons)} et {max(bons)} ms "
            f"(valeur actuelle : {actuel} ms)")
         if actuel not in bons:
-            alerte(f"DIAL_DEBOUNCE_SEC = {config.DIAL_DEBOUNCE_SEC} s décode faux sur "
+            alerte(f"PULSE_DEBOUNCE_SEC = {config.PULSE_DEBOUNCE_SEC} s décode faux sur "
                    f"cette trace : essayez {(min(bons) + max(bons)) // 2 / 1000:.3f} s "
                    f"(page /settings du dashboard, ou variable d'environnement).")
     else:
@@ -660,6 +838,15 @@ def main() -> None:
     parseur.add_argument("--glitch-ms", type=float, default=5.0, dest="glitch_ms",
                          help="Sous cette durée, un état est tenu pour un rebond "
                               "et non pour une vraie impulsion (défaut 5 ms).")
+    parseur.add_argument("--niveaux", action="store_true",
+                         help="Moniteur de niveaux en continu au lieu d'une capture : "
+                              "l'outil du test de câblage (débrancher le fil "
+                              "d'impulsions et voir si la broche remonte à 3,3 V).")
+    parseur.add_argument("--seuil-impulsion-ms", type=float, default=10.0,
+                         dest="seuil_impulsion_ms",
+                         help="Durée minimale d'une excursion pour être tenue pour "
+                              "une vraie impulsion (défaut 10 ms ; une impulsion de "
+                              "cadran en dure ~33).")
     parseur.add_argument("--sans-trace", action="store_true",
                          help="N'affiche que les mesures, sans le diagramme.")
     parseur.add_argument("--csv", metavar="FICHIER",
@@ -689,8 +876,13 @@ def main() -> None:
 
     section("Paramètres en vigueur (config.py)")
     for nom in ("DIAL_PULSE_PIN", "DIAL_OFFNORMAL_PIN", "HOOK_PIN",
-                "OFFNORMAL_ACTIF_LEVEL", "DIAL_DEBOUNCE_SEC"):
+                "OFFNORMAL_ACTIF_LEVEL", "PULSE_ACTIF_LEVEL",
+                "PULSE_DEBOUNCE_SEC", "OFFNORMAL_DEBOUNCE_SEC"):
         info(f"{nom} = {getattr(config, nom)!r}   {GRIS}[{harness.provenance(nom)}]{RAZ}")
+
+    if args.niveaux:
+        surveiller_niveaux(0.5)
+        return
 
     if args.reel:
         trace = capturer_reel(args.duree, args.freq, avec_crochet=True)
@@ -724,6 +916,8 @@ def main() -> None:
                "python3 src/livre_dor.py --test).")
         raise SystemExit(1)
 
+    alertes_cablage = diagnostiquer(trace, args.seuil_impulsion_ms / 1000.0)
+
     if not args.sans_trace:
         section("Diagramme (état électrique de chaque broche)")
         tracer_tout(trace, args.colonnes, args.ms_par_ligne)
@@ -750,11 +944,11 @@ def main() -> None:
     reference = declare or chiffres
     mesure = "".join(str(c) for c in chiffres)
     attendu = "".join(str(c) for c in reference)
-    lus = "".join(str(c) for c in rejouer(trace, config.DIAL_DEBOUNCE_SEC, 0.0))
+    lus = "".join(str(c) for c in rejouer(trace, config.PULSE_DEBOUNCE_SEC, 0.0))
     if declare:
         info(f"numéro composé (annoncé)  : {GRAS}{attendu or '—'}{RAZ}")
     info(f"reconstruit du signal nettoyé : {GRAS}{mesure or '—'}{RAZ}")
-    info(f"décodé avec DIAL_DEBOUNCE_SEC = {config.DIAL_DEBOUNCE_SEC} s : "
+    info(f"décodé avec PULSE_DEBOUNCE_SEC = {config.PULSE_DEBOUNCE_SEC} s : "
          f"{GRAS}{lus or '—'}{RAZ}")
     if declare and mesure != attendu:
         alerte(f"même le signal nettoyé ne redonne pas le bon numéro : les rebonds "
@@ -771,8 +965,17 @@ def main() -> None:
     if reference:
         balayer(trace, reference)
 
-    if remarques:
+    if alertes_cablage or remarques:
         section("Pistes")
+        if alertes_cablage:
+            info(f"{GRAS}Le câblage d'abord — tant que la broche ne délivre pas un "
+                 f"vrai train d'impulsions, aucun réglage ne donnera le bon "
+                 f"chiffre :{RAZ}")
+            for remarque in alertes_cablage:
+                alerte(remarque)
+            info("Test décisif : débranchez le fil du contact d'impulsions et "
+                 "lancez `python3 tests/scope_impulsions.py --niveaux` — la broche "
+                 "doit remonter à HAUT 100 %.")
         for remarque in remarques:
             alerte(remarque)
 

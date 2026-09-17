@@ -110,6 +110,7 @@ réelle des impulsions et les marges autour du contact off-normal.
 python3 tests/scope_impulsions.py                         # démo, signal synthétique
 python3 tests/scope_impulsions.py --numero 190 --rebond-ms 25   # cadran encrassé
 python3 tests/scope_impulsions.py --reel --duree 10 --numero 19 # capture réelle
+python3 tests/scope_impulsions.py --reel --niveaux              # moniteur de niveaux
 python3 tests/scope_impulsions.py --reel --csv /tmp/t.csv --png /tmp/t.png
 ```
 
@@ -119,6 +120,10 @@ réellement composé — il compare.
 
 Le rapport enchaîne :
 
+0. **le verdict de câblage** : niveau au repos de la broche, nombre et durée
+   des écarts à ce repos, cadence. C'est le premier à lire — tant qu'aucune
+   excursion ne dure ~33 ms, il n'y a pas de train d'impulsions sur la broche,
+   et aucun réglage logiciel n'y changera rien ;
 1. **le diagramme**, une ligne par broche (`▔` niveau haut 3,3 V, `▁` niveau
    bas 0 V, `│` un front, `╳` plusieurs fronts dans la même colonne, donc un
    rebond), plus un zoom automatique sur la plus grosse salve de rebonds ;
@@ -130,8 +135,19 @@ Le rapport enchaîne :
 4. **le balayage** de `DIAL_DEBOUNCE_SEC` croisé avec la latence du callback,
    qui donne la plage d'anti-rebond qui décode juste.
 
-Les trois causes qu'il permet de trancher :
+Les causes qu'il permet de trancher :
 
+- **le contact ne délivre rien** — la broche reste sur un niveau, ou n'émet que
+  des pointes de quelques centaines de µs au lieu de créneaux de ~33 ms. Test
+  décisif : débranchez le fil du contact d'impulsions et lancez
+  `--niveaux`. La broche doit remonter à **HAUT 100 %** grâce au pull-up
+  interne. Si elle y remonte, le pull-up marche et c'est le contact du cadran
+  qui la tient à la masse (mauvaise paire de fils, contact de shunt câblé en
+  parallèle, contact encrassé) ; si elle reste basse débranchée, le problème
+  est côté Raspberry Pi ;
+- **polarité inversée** — la broche est au repos sur le niveau déclaré actif :
+  le service croit voir une impulsion permanente. `PULSE_ACTIF_LEVEL` règle la
+  polarité du contact d'impulsions indépendamment de `OFFNORMAL_ACTIF_LEVEL` ;
 - **rebonds de contact** — l'anti-rebond est trop court : le balayage indique la
   plage correcte, à régler dans la page `/settings` du dashboard ;
 - **anti-rebond trop long** — il avale de vraies impulsions : le chiffre lu est
@@ -141,6 +157,12 @@ Les trois causes qu'il permet de trancher :
   dans son propre thread, le chiffre peut être validé avant que le dernier coup
   ne soit compté. Aucun réglage d'anti-rebond ne corrige ce cas : le script le
   signale explicitement dans « Pistes ».
+
+Les deux contacts du cadran ont chacun leur anti-rebond — `PULSE_DEBOUNCE_SEC`
+et `OFFNORMAL_DEBOUNCE_SEC`, qui suivent `DIAL_DEBOUNCE_SEC` par défaut. Une
+seule valeur pour les deux ne peut pas convenir : l'off-normal rebondit jusqu'à
+100 ms au retour au repos, là où une fenêtre de 100 ms avalerait les impulsions,
+espacées d'autant.
 
 ## Tests complémentaires déjà présents dans `src/`
 

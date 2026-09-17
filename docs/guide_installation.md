@@ -125,6 +125,7 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 | `SOUND_CARD` | `plughw:1,0` | Confirmer via `aplay -l` / `arecord -l` après branchement de la carte son USB |
 | `HOOK_ACTIVE_STATE` | `LOW` | Vérifier au multimètre le sens logique du crochet (mode `--test`, §6) |
 | `OFFNORMAL_ACTIF_LEVEL` | `LOW` | Vérifier au multimètre le sens logique du cadran (mode `--test`, §6) |
+| `PULSE_ACTIF_LEVEL` | suit `OFFNORMAL_ACTIF_LEVEL` | Sens logique du **contact d'impulsions**, qui n'est pas forcément celui de l'off-normal : un contact « normalement fermé » tient la broche au niveau bas au repos et la relâche à chaque impulsion, donc `HIGH`. À lire avec `python3 tests/scope_impulsions.py --niveaux` : cadran immobile, la broche doit être au niveau **opposé** à ce réglage |
 
 ### Machine à états et audio
 
@@ -132,6 +133,7 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 |---|---|---|
 | `HOOK_PIN` / `DIAL_OFFNORMAL_PIN` / `DIAL_PULSE_PIN` | 17 / 27 / 22 | Broches GPIO (BCM) |
 | `HOOK_DEBOUNCE_SEC` / `DIAL_DEBOUNCE_SEC` | 0.075 / 0.02 | Anti-rebond logiciel |
+| `PULSE_DEBOUNCE_SEC` / `OFFNORMAL_DEBOUNCE_SEC` | suivent `DIAL_DEBOUNCE_SEC` | Anti-rebonds séparés des deux contacts du cadran. L'off-normal est un contact lent, qui peut rebondir 100 ms au retour au repos ; les impulsions s'enchaînent toutes les 100 ms et seraient avalées par une fenêtre aussi large. `python3 tests/scope_impulsions.py --reel` mesure les deux et propose une valeur |
 | `RING_INTERVAL_SEC` | 90 | Intervalle de la sonnerie périodique |
 | `RING_ANSWER_GRACE_SEC` | 5 | Fenêtre « appel entrant » après la sonnerie |
 | `MAX_RECORD_SEC` | 120 | Durée max d'un message invité |
@@ -198,7 +200,8 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 
 ## 6. Procédure de premier démarrage
 
-1. `python3 src/livre_dor.py --test` → décrocher/raccrocher et tourner le cadran, vérifier que l'affichage reflète correctement chaque action. Ajuster `HOOK_ACTIVE_STATE`/`OFFNORMAL_ACTIF_LEVEL` si l'affichage semble inversé.
+1. `python3 src/livre_dor.py --test` → décrocher/raccrocher et tourner le cadran, vérifier que l'affichage reflète correctement chaque action. Ajuster `HOOK_ACTIVE_STATE`/`OFFNORMAL_ACTIF_LEVEL`/`PULSE_ACTIF_LEVEL` si l'affichage semble inversé.
+1. Si les chiffres composés sont lus de travers : `python3 tests/scope_impulsions.py --reel`, qui échantillonne les broches à 10 kHz, affiche la forme du signal et rend un verdict (câblage, polarité, anti-rebond). `--niveaux` donne le moniteur de niveaux en continu.
 2. Démarrer les services (`sudo ./scripts/setup_systemd.sh`), puis `systemctl status livre-dor.service dashboard.service`.
 3. Ouvrir `http://livredor.local:5000/` (ou `http://<IP>:5000/` si mDNS indisponible) → le dashboard doit demander le mot de passe.
 4. Dérouler la [checklist de mise en service](checklist_mise_en_service.md) avant l'événement.
