@@ -7,7 +7,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "== Paquets système =="
 sudo apt-get update
-sudo apt-get install -y alsa-utils rclone python3-pip python3-venv ffmpeg avahi-daemon
+sudo apt-get install -y alsa-utils rclone python3-pip python3-venv python3-full ffmpeg avahi-daemon
 
 echo "== Hostname mDNS (livredor.local) =="
 sudo hostnamectl set-hostname livredor
