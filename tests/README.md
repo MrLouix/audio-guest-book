@@ -86,6 +86,62 @@ supprimé à la fin : ils ne se mélangent jamais aux messages des invités.
 Un échec ne masque pas les suivants : le script va au bout et récapitule
 toutes les vérifications en échec à la fin.
 
+## Outils de diagnostic (pas des tests)
+
+Ces deux scripts ne renvoient ni succès ni échec : ils servent à comprendre un
+symptôme, en particulier une **lecture erratique des chiffres composés**.
+
+| Script | Ce qu'il montre |
+|---|---|
+| `debug_pulses.py` | Journal temps réel : chaque impulsion, chaque changement d'état du cadran, chaque chiffre validé |
+| `scope_impulsions.py` | Oscilloscope logique : la forme du signal sur la broche d'impulsions, et ce que le service en décode |
+
+### `scope_impulsions.py` — oscilloscope logique du cadran
+
+Une broche GPIO ne rend qu'un **0 ou un 1** : le Raspberry Pi n'a pas de
+convertisseur analogique/numérique, la courbe de tension du contact n'est donc
+pas mesurable en logiciel (il faut une sonde d'oscilloscope, ou un ADC externe
+type MCP3008/ADS1115 branché en parallèle du contact). En revanche, on peut
+échantillonner la broche à 10 kHz — un point toutes les 100 µs — et tracer son
+état dans le temps : c'est suffisant pour voir les rebonds de contact, la durée
+réelle des impulsions et les marges autour du contact off-normal.
+
+```bash
+python3 tests/scope_impulsions.py                         # démo, signal synthétique
+python3 tests/scope_impulsions.py --numero 190 --rebond-ms 25   # cadran encrassé
+python3 tests/scope_impulsions.py --reel --duree 10 --numero 19 # capture réelle
+python3 tests/scope_impulsions.py --reel --csv /tmp/t.csv --png /tmp/t.png
+```
+
+En `--reel`, le script capture pendant `--duree` secondes : décrochez et
+composez pendant ce temps, puis donnez avec `--numero` ce que vous avez
+réellement composé — il compare.
+
+Le rapport enchaîne :
+
+1. **le diagramme**, une ligne par broche (`▔` niveau haut 3,3 V, `▁` niveau
+   bas 0 V, `│` un front, `╳` plusieurs fronts dans la même colonne, donc un
+   rebond), plus un zoom automatique sur la plus grosse salve de rebonds ;
+2. **les mesures** par chiffre : durées de fermeture/ouverture du contact,
+   cadence en impulsions/s, nombre de fronts parasites, et les marges entre le
+   contact off-normal et la première/dernière impulsion ;
+3. **le rejeu** de la trace dans la vraie classe `gpio_io.PhoneInputs`, avec la
+   même logique que `gpio_io.setup` : le chiffre que le service aurait lu ;
+4. **le balayage** de `DIAL_DEBOUNCE_SEC` croisé avec la latence du callback,
+   qui donne la plage d'anti-rebond qui décode juste.
+
+Les trois causes qu'il permet de trancher :
+
+- **rebonds de contact** — l'anti-rebond est trop court : le balayage indique la
+  plage correcte, à régler dans la page `/settings` du dashboard ;
+- **anti-rebond trop long** — il avale de vraies impulsions : le chiffre lu est
+  trop petit ;
+- **course entre les deux contacts** — quand la dernière impulsion arrive à
+  moins de ~15 ms du retour au repos du cadran, RPi.GPIO servant chaque broche
+  dans son propre thread, le chiffre peut être validé avant que le dernier coup
+  ne soit compté. Aucun réglage d'anti-rebond ne corrige ce cas : le script le
+  signale explicitement dans « Pistes ».
+
 ## Tests complémentaires déjà présents dans `src/`
 
 - `python3 src/livre_dor.py --test` — affichage temps réel des trois GPIO.
