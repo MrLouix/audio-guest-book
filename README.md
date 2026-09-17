@@ -8,6 +8,7 @@ Transformation d'un téléphone à cadran vintage Socotel S63 en livre d'or auto
 - [`docs/dev_plan.md`](docs/dev_plan.md) — plan de développement détaillé en sprints.
 - [`docs/guide_installation.md`](docs/guide_installation.md) — guide d'installation reproductible (câblage, dépendances, configuration, premier démarrage).
 - [`docs/checklist_mise_en_service.md`](docs/checklist_mise_en_service.md) — checklist de recette à dérouler sur le matériel final avant l'événement.
+- [`tests/README.md`](tests/README.md) — tests unitaires par fonction (décroché, raccroché, cadran, lecture, enregistrement, sonnerie...), en simulation ou sur le matériel réel.
 
 ## Installation (Sprint 0)
 
@@ -208,6 +209,39 @@ Le mariage passé, le téléphone devient un **lecteur des messages laissés par
 **Empreinte sur le Raspberry Pi** (mesurée) : le mode est en **lecture seule** sur `messages/` — parcourir les messages n'écrit rien. En attente il n'écrit **aucun octet** sur la carte SD, et `mode_config.json` est servi par le page cache (`read_bytes = 0`). RSS stable à 15,7 Mo sur 150 appels enchaînés, sans fuite de descripteur ni de thread. Un appel complet coûte 28 Ko (7 écritures de `status.json`). À comparer aux ~10 Mo écrits par message de 2 min en mode mariage.
 
 **Point de vigilance matériel** : les enregistrements des invités sont mono, alors que les fichiers préparés sont stéréo panés (gauche = écouteur). Joué via `plughw`, un fichier mono est dupliqué sur les deux canaux : les messages sortent donc aussi par le haut-parleur externe. À constater au casque ; pour limiter l'écoute à l'écouteur, définir un périphérique ALSA `route` et le pointer via `RESTITUTION_SOUND_CARD`, sans modification de code.
+
+## Tests unitaires par fonction (`tests/`)
+
+Un script par fonction du téléphone, **indépendant des autres**, à lancer seul dans un terminal — voir [`tests/README.md`](tests/README.md) pour le détail.
+
+```bash
+python3 tests/test_decroche.py          # une fonction (code de sortie 0 ou 1)
+python3 tests/run_tous.py               # les huit, avec un bilan final
+```
+
+| Script | Fonction validée |
+|---|---|
+| `test_decroche.py` | Décroché : tonalité, purge du cadran, appel entrant, restitution |
+| `test_raccroche.py` | Raccroché à chaque étape du parcours, anti-rebond du crochet |
+| `test_composition.py` | Cadran rotatif : impulsions → chiffre, numéro multi-chiffres |
+| `test_lecture.py` | Lecture d'un message : sélection du fichier, `aplay`, interruption |
+| `test_enregistrement.py` | Enregistrement : nom horodaté, `arecord`, espace disque |
+| `test_sonnerie.py` | Sonnerie périodique, `ring_trigger`, fenêtre de grâce |
+| `test_mode.py` | Bascule mariage / restitution à chaud (`mode_config.json`) |
+| `test_status.py` | `status.json`, battement de cœur et décisions du watchdog |
+
+Aucune dépendance à installer (ni `pytest`, ni `flask`, ni `pydub`, ni `RPi.GPIO`) : les scripts appellent directement les fonctions de `src/` et lisent les paramètres déjà configurés (variable d'environnement, puis `custom_config.json` du dashboard, puis défaut de `config.py`).
+
+**En simulation** (par défaut), `PhoneInputs` est piloté à la main, `aplay`/`arecord` sont remplacés par des doublures et toute l'arborescence de données est redirigée vers un dossier temporaire : `messages/`, `audio/` et `status.json` ne sont jamais touchés.
+
+**Sur le matériel** (`--reel`), les mêmes fonctions du service sont appelées avec les broches, la carte son et les durées de l'installation — le script affiche les paramètres en vigueur et leur origine, puis demande de décrocher, composer, écouter, et vérifie ce que le matériel répond. C'est la recette physique du §7.6, automatisée :
+
+```bash
+python3 tests/test_composition.py --reel     # composez les chiffres demandés
+python3 tests/run_tous.py --reel             # recette physique complète
+```
+
+À noter, constaté en écrivant ces tests : entre deux sonneries, la machine à états reste dans sa boucle d'attente sans republier « attente ». `status.json` conserve donc l'état `sonnerie` jusqu'au prochain changement d'état ou au prochain battement de cœur (`STATUS_HEARTBEAT_SEC`, 120 s par défaut) — le dashboard peut afficher « sonnerie » alors que le téléphone est déjà revenu au repos. Sans effet sur le parcours invité.
 
 ## Statut
 
