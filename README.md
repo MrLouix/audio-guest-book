@@ -56,7 +56,7 @@ attente → décroché (tonalité 440+480 Hz) → dès la première impulsion, l
 
 ## Sonnerie & scénario « appel entrant » (Sprint 3)
 
-En attente, `livre_dor.py` sonne (`audio/ring_out.wav`) toutes les `RING_INTERVAL_SEC` (défaut 90 s), et immédiatement si le dashboard crée le fichier `ring_trigger` (consommé puis supprimé). Un décroché pendant la sonnerie ou dans les `RING_ANSWER_GRACE_SEC` (défaut 5 s) qui suivent sa fin simule un vrai appel entrant : la sonnerie est coupée immédiatement, **aucune tonalité n'est jouée et le cadran est ignoré** (impulsions journalisées en debug, sans effet), un message est tiré au hasard parmi tous les `message_N.wav` + `message_generique.wav` disponibles (jamais deux fois de suite le même), puis bip → enregistrement, comme dans le flux nominal. Un décroché hors de cette fenêtre suit le flux nominal habituel (tonalité + cadran).
+En attente, `livre_dor.py` sonne (`audio/ring_out.wav`) toutes les `RING_INTERVAL_SEC` (défaut 90 s), et immédiatement si le dashboard crée le fichier `ring_trigger` (consommé puis supprimé). Un décroché pendant la sonnerie ou dans les `RING_ANSWER_GRACE_SEC` (défaut 5 s) qui suivent sa fin simule un vrai appel entrant : la sonnerie est coupée immédiatement, **aucune tonalité n'est jouée et le cadran est ignoré** (impulsions journalisées en debug, sans effet), un message est tiré au hasard parmi tous les `message_N.wav` + `message_generique.wav` disponibles (jamais deux fois de suite le même), puis bip → enregistrement, comme dans le flux nominal. Un décroché hors de cette fenêtre suit le flux nominal habituel (tonalité + cadran). Chaque sonnerie terminée republie l'état `attente` dans `status.json` : le dashboard ne reste jamais affiché sur « sonnerie » alors que le téléphone est déjà revenu au repos.
 
 ## Surcouches de fiabilité (Sprint 4)
 
@@ -240,8 +240,6 @@ Aucune dépendance à installer (ni `pytest`, ni `flask`, ni `pydub`, ni `RPi.GP
 python3 tests/test_composition.py --reel     # composez les chiffres demandés
 python3 tests/run_tous.py --reel             # recette physique complète
 ```
-
-À noter, constaté en écrivant ces tests : entre deux sonneries, la machine à états reste dans sa boucle d'attente sans republier « attente ». `status.json` conserve donc l'état `sonnerie` jusqu'au prochain changement d'état ou au prochain battement de cœur (`STATUS_HEARTBEAT_SEC`, 120 s par défaut) — le dashboard peut afficher « sonnerie » alors que le téléphone est déjà revenu au repos. Sans effet sur le parcours invité.
 
 ## Statut
 

@@ -61,6 +61,17 @@ def test_simule(rapport: Rapport) -> None:
         rapport.verifie("la sonnerie se termine d'elle-même",
                         banc.audio.attendre_fin("ring_out.wav"),
                         "la lecture de ring_out.wav ne s'est pas terminée")
+        rapport.verifie("le téléphone revient en attente aussitôt après",
+                        banc.attendre_etat(livre_dor.STATE_ATTENTE, timeout=1.0),
+                        f"état observé : {banc.etat}")
+        # Sans republication, le dashboard resterait sur « sonnerie » jusqu'au
+        # prochain battement, soit STATUS_HEARTBEAT_SEC (120 s par défaut).
+        index_sonnerie = [i for i, (etat, _) in enumerate(journal)
+                          if etat == livre_dor.STATE_SONNERIE]
+        apres = journal[index_sonnerie[-1] + 1:] if index_sonnerie else []
+        rapport.verifie("status.json ne reste pas figé sur « sonnerie » (§5.2)",
+                        apres[:1] == [(livre_dor.STATE_ATTENTE, None)],
+                        f"états publiés après la sonnerie : {apres}")
         rapport.verifie("elle ne repart pas aussitôt (pas de sonnerie en boucle)",
                         len(banc.audio.lectures_de("ring_out.wav")) == 1,
                         f"{len(banc.audio.lectures_de('ring_out.wav'))} sonneries "
@@ -75,13 +86,6 @@ def test_simule(rapport: Rapport) -> None:
                             0.8 <= intervalle <= 1.6,
                             f"{intervalle:.2f}s entre deux sonneries pour "
                             f"RING_INTERVAL_SEC={config.RING_INTERVAL_SEC}s")
-        # Comportement connu, utile à garder en tête pour le dashboard (§5.2) :
-        # entre deux sonneries, la machine reste dans sa boucle d'attente sans
-        # republier « attente ». status.json conserve donc « sonnerie » jusqu'au
-        # prochain changement d'état ou au prochain battement du heartbeat.
-        rapport.info("entre deux sonneries, status.json garde le dernier état publié "
-                     "jusqu'au prochain battement (STATUS_HEARTBEAT_SEC = "
-                     f"{config.STATUS_HEARTBEAT_SEC}s)")
 
     rapport.section("3. Sonnerie déclenchée à distance depuis le dashboard (§5.2)")
     with Banc() as banc:
