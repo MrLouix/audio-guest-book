@@ -20,6 +20,25 @@ Sur le Raspberry Pi (Raspberry Pi OS Lite / Bookworm) :
 
 Installe les paquets système (`alsa-utils`, `rclone`, `ffmpeg`, `avahi-daemon`), configure le hostname `livredor` (mDNS), crée un environnement virtuel Python avec les dépendances de `requirements.txt`, et vérifie l'arborescence du projet ainsi que la présence de la carte son USB.
 
+## Gestion de l'environnement virtuel Python
+
+Si le venv est corrompu ou si vous devez le recréer manuellement :
+
+```bash
+# Recréer le venv (après avoir installé python3-full)
+rm -rf .venv venv
+python3 -m venv venv
+
+# Activer le venv
+source venv/bin/activate
+
+# Installer les dépendances
+pip install -r requirements.txt
+
+# Désactiver le venv (quitter l'environnement)
+deactivate
+```
+
 Les paramètres (broches GPIO, carte son, seuils réseau, etc.) sont centralisés dans `src/config.py` et surchargeables par variables d'environnement — voir §9 de la spécification.
 
 Le code Python vit dans `src/` ; l'arborescence de données (`audio_src/`, `audio/`, `messages/`, `logs/`, `static/`, `templates/`, `status.json`...) reste à la racine du projet, conformément à l'arborescence de déploiement du §8. Tous les scripts s'exécutent directement (`python3 src/<script>.py`), sans installation du projet ni `PYTHONPATH` à configurer.
