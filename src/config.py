@@ -163,16 +163,41 @@ PULSE_ACTIF_LEVEL = _env("PULSE_ACTIF_LEVEL", "HIGH")
 HOOK_DEBOUNCE_SEC = _env_float("HOOK_DEBOUNCE_SEC", 0.075)
 DIAL_DEBOUNCE_SEC = _env_float("DIAL_DEBOUNCE_SEC", 0.02)
 
-# Les deux contacts du cadran ne rebondissent pas pareil : l'off-normal est un
-# contact lent, qui peut rebondir 100 ms au retour au repos, tandis que les
-# impulsions s'enchaînent toutes les 100 ms et seraient avalées par une
-# fenêtre aussi large. D'où deux anti-rebonds séparés, dont le défaut reste
-# DIAL_DEBOUNCE_SEC — le réglage global — pour ne rien changer aux
-# installations qui marchent. Défauts dérivés : comme RESTITUTION_SOUND_CARD,
-# ils ne sont pas dans MODIFIABLE_PARAMS, où une valeur figée mentirait dès
-# que DIAL_DEBOUNCE_SEC change ; ils se règlent par variable d'environnement.
-PULSE_DEBOUNCE_SEC = _env_float("PULSE_DEBOUNCE_SEC", DIAL_DEBOUNCE_SEC)
-OFFNORMAL_DEBOUNCE_SEC = _env_float("OFFNORMAL_DEBOUNCE_SEC", DIAL_DEBOUNCE_SEC)
+# Les entrées ne sont pas lues par interruption mais par échantillonnage : un
+# thread relit les trois broches à cette cadence et ne retient un changement
+# que s'il se maintient (voir gpio_io.FiltreContact). 1 kHz donne une dizaine
+# de points sur la plus courte micro-coupure d'un contact usé, largement assez
+# pour la trancher, pour un coût CPU de l'ordre du pour cent.
+GPIO_ECHANTILLONNAGE_HZ = _env_float("GPIO_ECHANTILLONNAGE_HZ", 1000.0)
+
+# Durées de maintien exigées avant de croire à un changement d'état. Elles
+# remplacent le bouncetime de RPi.GPIO, qui ne savait pas exprimer un contact
+# usé : sa fenêtre unique bloque *tous* les fronts pendant N ms après un front
+# accepté, ce qui ne peut pas à la fois absorber 25 ms de grésillement et
+# respecter des impulsions dont la durée varie du simple au triple.
+#
+# Le contact d'impulsions en demande deux, dissymétriques (§7.6) : sur un
+# cadran usé, le contact grésille *pendant* la fermeture alors que le repos
+# entre deux impulsions reste franc. On ouvre donc l'impulsion vite, et on ne
+# la clôt qu'après un repos franc — plus long que la plus longue micro-coupure
+# interne, plus court que le plus court repos réel.
+#
+#   PULSE_MIN_ACTIF_SEC  <<  plus courte impulsion réelle (~33 ms à 10 imp/s)
+#   plus longue micro-coupure  <  PULSE_MIN_REPOS_SEC  <  plus court repos réel
+#
+# `python3 tests/scope_impulsions.py --reel` mesure ces quatre durées sur le
+# cadran et balaie PULSE_MIN_REPOS_SEC : le bon réglage est le centre du palier
+# qu'affiche le tableau.
+PULSE_MIN_ACTIF_SEC = _env_float("PULSE_MIN_ACTIF_SEC", 0.005)
+PULSE_MIN_REPOS_SEC = _env_float("PULSE_MIN_REPOS_SEC", 0.025)
+
+# Le crochet et l'off-normal sont des états, pas des événements : une seule
+# durée de confirmation, dans les deux sens. Défauts dérivés des anciens
+# anti-rebonds, pour ne rien changer aux installations réglées. Comme
+# RESTITUTION_SOUND_CARD, ils ne sont pas dans MODIFIABLE_PARAMS, où une valeur
+# figée mentirait dès que le paramètre dont ils héritent change.
+HOOK_CONFIRM_SEC = _env_float("HOOK_CONFIRM_SEC", HOOK_DEBOUNCE_SEC)
+OFFNORMAL_CONFIRM_SEC = _env_float("OFFNORMAL_CONFIRM_SEC", DIAL_DEBOUNCE_SEC)
 
 # --- Comportement du parcours invité (§1.2, §9) --------------------------
 

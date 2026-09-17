@@ -133,7 +133,10 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 |---|---|---|
 | `HOOK_PIN` / `DIAL_OFFNORMAL_PIN` / `DIAL_PULSE_PIN` | 17 / 27 / 22 | Broches GPIO (BCM) |
 | `HOOK_DEBOUNCE_SEC` / `DIAL_DEBOUNCE_SEC` | 0.075 / 0.02 | Anti-rebond logiciel |
-| `PULSE_DEBOUNCE_SEC` / `OFFNORMAL_DEBOUNCE_SEC` | suivent `DIAL_DEBOUNCE_SEC` | Anti-rebonds séparés des deux contacts du cadran. L'off-normal est un contact lent, qui peut rebondir 100 ms au retour au repos ; les impulsions s'enchaînent toutes les 100 ms et seraient avalées par une fenêtre aussi large. `python3 tests/scope_impulsions.py --reel` mesure les deux et propose une valeur |
+| `GPIO_ECHANTILLONNAGE_HZ` | 1000 | Cadence de relecture des trois broches. Les entrées ne sont pas lues par interruption mais échantillonnées, seul moyen de lire un contact usé |
+| `PULSE_MIN_ACTIF_SEC` | 0.005 | Niveau actif franc qui ouvre une impulsion. Doit rester bien sous la plus courte impulsion réelle (~33 ms) |
+| `PULSE_MIN_REPOS_SEC` | 0.025 | Repos franc qui clôt l'impulsion. **Le réglage décisif sur un contact usé** : plus long que la plus longue micro-coupure du grésillement, plus court que le plus court repos réel. `python3 tests/scope_impulsions.py --reel` balaie cette valeur et affiche le palier — réglez au centre |
+| `HOOK_CONFIRM_SEC` / `OFFNORMAL_CONFIRM_SEC` | suivent `HOOK_DEBOUNCE_SEC` / `DIAL_DEBOUNCE_SEC` | Durée de maintien confirmant un changement d'état du crochet et du contact off-normal |
 | `RING_INTERVAL_SEC` | 90 | Intervalle de la sonnerie périodique |
 | `RING_ANSWER_GRACE_SEC` | 5 | Fenêtre « appel entrant » après la sonnerie |
 | `MAX_RECORD_SEC` | 120 | Durée max d'un message invité |

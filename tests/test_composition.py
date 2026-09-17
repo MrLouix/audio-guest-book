@@ -96,7 +96,72 @@ def test_simule(rapport: Rapport) -> None:
     rapport.verifie("le compteur est remis à zéro après validation",
                     inputs.has_pulses() is False)
 
-    rapport.section("3. File de chiffres et purge")
+    rapport.section("3. Lecture d'un contact d'impulsions usé (gpio_io.FiltreContact)")
+    # Signal calqué sur une capture réelle : le contact grésille pendant toute
+    # la fermeture, mais le repos entre deux impulsions reste franc. C'est cette
+    # dissymétrie que le filtre exploite, et qu'un anti-rebond à fenêtre unique
+    # ne sait pas exprimer.
+    segments = harness.segments_cadran_use(6)
+    echantillons = harness.echantillonner(segments, config.GPIO_ECHANTILLONNAGE_HZ)
+    fronts_bruts = sum(1 for precedent, suivant in zip(segments, segments[1:])
+                       if precedent[1] != suivant[1])
+    rapport.info(f"{fronts_bruts} fronts bruts pour 6 impulsions réelles")
+
+    def _compter(min_actif: float, min_repos: float) -> int:
+        filtre = gpio_io.FiltreContact(min_actif, min_repos)
+        return sum(1 for instant, actif in echantillons
+                   if filtre.echantillon(instant, actif) is True)
+
+    rapport.egal("le grésillement est absorbé : 6 impulsions comptées",
+                 _compter(config.PULSE_MIN_ACTIF_SEC, config.PULSE_MIN_REPOS_SEC), 6)
+    rapport.egal("un repos exigé trop court compte une impulsion de trop",
+                 _compter(config.PULSE_MIN_ACTIF_SEC, 0.005), 7)
+    rapport.egal("un repos exigé plus long que le repos réel en soude deux",
+                 _compter(config.PULSE_MIN_ACTIF_SEC, 0.060) < 6, True)
+
+    palier = [ms for ms in range(11, 36)
+              if _compter(config.PULSE_MIN_ACTIF_SEC, ms / 1000.0) == 6]
+    rapport.verifie("le réglage tient sur un palier large, pas sur une valeur",
+                    len(palier) == 25,
+                    f"valeurs justes entre 11 et 35 ms : {palier}")
+    rapport.verifie("le défaut PULSE_MIN_REPOS_SEC tombe dans ce palier",
+                    int(config.PULSE_MIN_REPOS_SEC * 1000) in palier,
+                    f"défaut {config.PULSE_MIN_REPOS_SEC} s, palier {palier[0]}-{palier[-1]} ms")
+
+    # Un contact sain ne doit rien perdre au passage du filtre.
+    sain = harness.segments_cadran_use(7, coupure_longue=0.0)
+    sain = [(duree, actif) for duree, actif in sain]
+    filtre = gpio_io.FiltreContact(config.PULSE_MIN_ACTIF_SEC, config.PULSE_MIN_REPOS_SEC)
+    comptees = sum(1 for instant, actif in harness.echantillonner(
+        sain, config.GPIO_ECHANTILLONNAGE_HZ)
+        if filtre.echantillon(instant, actif) is True)
+    rapport.egal("un cadran sans coupure parasite donne son compte exact",
+                 comptees, 7)
+
+    rapport.section("4. États filtrés du crochet et du cadran")
+    # Crochet et off-normal sont des états : une confirmation symétrique suffit,
+    # mais elle doit laisser passer un décroché franc sans le retarder à l'excès.
+    filtre = gpio_io.FiltreContact(config.HOOK_CONFIRM_SEC, config.HOOK_CONFIRM_SEC)
+    decroche = harness.echantillonner([(0.05, False), (0.5, True)],
+                                      config.GPIO_ECHANTILLONNAGE_HZ)
+    bascules = [instant for instant, actif in decroche
+                if filtre.echantillon(instant, actif) is True]
+    rapport.verifie("un décroché franc est vu une fois et une seule",
+                    len(bascules) == 1, f"bascules : {bascules}")
+    rapport.verifie("il est vu après la confirmation, pas avant",
+                    bascules and bascules[0] >= 0.05 + config.HOOK_CONFIRM_SEC,
+                    f"vu à {bascules[0]:.3f} s, confirmation {config.HOOK_CONFIRM_SEC} s")
+
+    filtre = gpio_io.FiltreContact(config.OFFNORMAL_CONFIRM_SEC,
+                                   config.OFFNORMAL_CONFIRM_SEC)
+    salve = harness.echantillonner(
+        [(0.2, False)] + [(0.003, True), (0.003, False)] * 8 + [(0.2, False)],
+        config.GPIO_ECHANTILLONNAGE_HZ)
+    rapport.verifie("une salve de rebonds de l'off-normal n'ouvre aucune rotation",
+                    all(filtre.echantillon(instant, actif) is None
+                        for instant, actif in salve))
+
+    rapport.section("5. File de chiffres et purge")
     inputs = gpio_io.PhoneInputs()
     for chiffre in (4, 2, 0):
         _composer(inputs, chiffre)

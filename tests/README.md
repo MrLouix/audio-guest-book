@@ -130,10 +130,11 @@ Le rapport enchaîne :
 2. **les mesures** par chiffre : durées de fermeture/ouverture du contact,
    cadence en impulsions/s, nombre de fronts parasites, et les marges entre le
    contact off-normal et la première/dernière impulsion ;
-3. **le rejeu** de la trace dans la vraie classe `gpio_io.PhoneInputs`, avec la
-   même logique que `gpio_io.setup` : le chiffre que le service aurait lu ;
-4. **le balayage** de `DIAL_DEBOUNCE_SEC` croisé avec la latence du callback,
-   qui donne la plage d'anti-rebond qui décode juste.
+3. **le rejeu** de la trace dans les filtres et le `PhoneInputs` du service, à
+   la cadence d'échantillonnage du service : ce n'est pas un modèle du
+   décodage, c'est le décodage ;
+4. **le balayage** de `PULSE_MIN_REPOS_SEC` croisé avec la cadence
+   d'échantillonnage, qui donne le palier de réglage où le décodage est juste.
 
 Les causes qu'il permet de trancher :
 
@@ -148,21 +149,58 @@ Les causes qu'il permet de trancher :
 - **polarité inversée** — la broche est au repos sur le niveau déclaré actif :
   le service croit voir une impulsion permanente. `PULSE_ACTIF_LEVEL` règle la
   polarité du contact d'impulsions indépendamment de `OFFNORMAL_ACTIF_LEVEL` ;
-- **rebonds de contact** — l'anti-rebond est trop court : le balayage indique la
-  plage correcte, à régler dans la page `/settings` du dashboard ;
-- **anti-rebond trop long** — il avale de vraies impulsions : le chiffre lu est
-  trop petit ;
+- **contact usé qui grésille** — le repos exigé est trop court, une impulsion
+  est comptée deux fois : le balayage indique le palier correct ;
+- **repos exigé trop long** — il soude deux impulsions voisines : le chiffre lu
+  est trop petit ;
 - **course entre les deux contacts** — quand la dernière impulsion arrive à
   moins de ~15 ms du retour au repos du cadran, RPi.GPIO servant chaque broche
   dans son propre thread, le chiffre peut être validé avant que le dernier coup
   ne soit compté. Aucun réglage d'anti-rebond ne corrige ce cas : le script le
   signale explicitement dans « Pistes ».
 
-Les deux contacts du cadran ont chacun leur anti-rebond — `PULSE_DEBOUNCE_SEC`
-et `OFFNORMAL_DEBOUNCE_SEC`, qui suivent `DIAL_DEBOUNCE_SEC` par défaut. Une
-seule valeur pour les deux ne peut pas convenir : l'off-normal rebondit jusqu'à
-100 ms au retour au repos, là où une fenêtre de 100 ms avalerait les impulsions,
-espacées d'autant.
+### Le cas du contact usé, et le réglage qui le rattrape
+
+Sur un cadran usé, le contact **grésille pendant toute la fermeture** — 40 fronts
+en 25 ms, relevés sur le téléphone — alors que le repos entre deux impulsions
+reste franc. Les entrées ne sont donc plus lues par interruption : un thread
+échantillonne les broches à `GPIO_ECHANTILLONNAGE_HZ` (1 kHz) et n'admet un
+changement d'état que s'il se maintient, avec **deux durées différentes selon le
+sens** (`gpio_io.FiltreContact`) :
+
+```
+   PULSE_MIN_ACTIF_SEC  <<  plus courte impulsion réelle (~33 ms à 10 imp/s)
+   plus longue micro-coupure  <  PULSE_MIN_REPOS_SEC  <  plus court repos réel
+```
+
+L'impulsion s'ouvre vite et ne se clôt qu'après un repos franc : le grésillement
+ne la coupe jamais, et deux impulsions voisines ne fusionnent jamais.
+
+C'est le **balayage** qui donne le réglage, sur le signal réel :
+
+```
+   repos exigé │        0.5 kHz │        1.0 kHz │        2.0 kHz
+         10 ms │              7 │              7 │              7
+         12 ms │              6 │              6 │              6
+         25 ms │              6 │              6 │              6   <- au centre du palier
+         30 ms │              6 │              6 │              6
+         35 ms │              4 │              5 │              5
+```
+
+Une valeur isolée qui tombe juste ne vaut rien : seul un **palier large**
+garantit que le prochain appel sera lu pareil. Réglez au centre du palier, et
+vérifiez que le résultat ne dépend pas de la cadence d'échantillonnage — trois
+colonnes identiques, c'est le signe que la lecture est robuste.
+
+`--contact-use` reproduit ce signal en simulation, sans matériel :
+
+```bash
+python3 tests/scope_impulsions.py --numero 6 --contact-use
+```
+
+Le contact off-normal et le crochet passent par le même filtre, avec une
+confirmation symétrique (`OFFNORMAL_CONFIRM_SEC`, `HOOK_CONFIRM_SEC`) : leurs
+salves de rebonds n'ouvrent plus de rotation fantôme.
 
 ## Tests complémentaires déjà présents dans `src/`
 
