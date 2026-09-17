@@ -138,8 +138,9 @@ def test_reel() -> None:
             )
             
             gpio_io.GPIO.add_event_detect(
-                config.DIAL_PULSE_PIN, gpio_io.GPIO.RISING,
-                callback=lambda channel: inputs.register_pulse(),
+                config.DIAL_PULSE_PIN, gpio_io.GPIO.BOTH,
+                callback=lambda channel: inputs.register_pulse()
+                    if gpio_io.GPIO.input(config.DIAL_PULSE_PIN) == gpio_io.DIAL_ACTIVE_LEVEL,
                 bouncetime=int(config.DIAL_DEBOUNCE_SEC * 1000)
             )
         

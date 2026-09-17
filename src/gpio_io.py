@@ -58,16 +58,23 @@ class PhoneInputs:
         with self._lock:
             was_active = self._dial_active
             self._dial_active = active
+            logger.debug(f"dial_active: {was_active} -> {active}, pulse_count={self._pulse_count}")
             if active and not was_active:
                 self._pulse_count = 0
+                logger.debug("RESET pulse_count to 0")
             elif was_active and not active:
-                self._digit_queue.append(self._pulse_count % 10)
+                digit = self._pulse_count % 10
+                self._digit_queue.append(digit)
+                logger.debug(f"VALIDATED digit: {digit} (from {self._pulse_count} pulses)")
                 self._pulse_count = 0
 
     def register_pulse(self) -> None:
         with self._lock:
             if self._dial_active:
                 self._pulse_count += 1
+                logger.debug(f"PULSE detected, pulse_count={self._pulse_count}, dial_active={self._dial_active}")
+            else:
+                logger.debug(f"PULSE IGNORED (dial not active), pulse_count={self._pulse_count}")
 
     def reset_dial(self) -> None:
         """Purge tout comptage/chiffre en attente (ex. avant une nouvelle tonalité)."""
