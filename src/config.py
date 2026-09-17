@@ -156,7 +156,7 @@ OFFNORMAL_ACTIF_LEVEL = _env("OFFNORMAL_ACTIF_LEVEL", "LOW")
 # l'off-normal, c'est-à-dire le comportement d'avant ce réglage.
 # À vérifier avant toute autre chose : `python3 tests/scope_impulsions.py
 # --niveaux`, cadran immobile, doit montrer la broche au niveau *opposé* (§7.6).
-PULSE_ACTIF_LEVEL = _env("PULSE_ACTIF_LEVEL", OFFNORMAL_ACTIF_LEVEL)
+PULSE_ACTIF_LEVEL = _env("PULSE_ACTIF_LEVEL", "HIGH")
 
 # Anti-rebond logiciel (§7.2) : fenêtres typiques crochet ~50-100 ms,
 # impulsions du cadran nettement plus courtes (impulsion ~60 ms).
