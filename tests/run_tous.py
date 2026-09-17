@@ -37,12 +37,18 @@ ORDRE = [
 # Tests sans mode --reel : ils n'ont rien à valider sur le matériel.
 SANS_MODE_REEL = {"test_mode.py"}
 
+# Scripts interactifs : ils attendent une saisie au clavier et n'ont donc pas
+# leur place dans une recette automatique, où ils échouent sur l'entrée vide.
+# Ils restent lançables à la main, et par --seulement.
+INTERACTIFS = {"test_affichage_events.py"}
+
 
 def scripts(filtre) -> list:
     connus = ORDRE + sorted(p.name for p in DOSSIER.glob("test_*.py")
-                            if p.name not in ORDRE)
+                            if p.name not in ORDRE and p.name not in INTERACTIFS)
     if not filtre:
         return connus
+    connus = connus + sorted(INTERACTIFS)
     choisis = []
     for motif in filtre:
         nom = motif if motif.endswith(".py") else f"test_{motif}.py"

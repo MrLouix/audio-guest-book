@@ -35,38 +35,6 @@ def format_timestamp() -> str:
     return datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
 
 
-class DebugCallback:
-    """Callback wrapper that logs all events."""
-    
-    def __init__(self, inputs: gpio_io.PhoneInputs):
-        self.inputs = inputs
-        self.pulse_count = 0
-        self.start_time = time.time()
-    
-    def on_pulse(self, channel: int) -> None:
-        """Callback for pulse detection."""
-        timestamp = format_timestamp()
-        self.pulse_count += 1
-        print(f"[{timestamp}] PULSE #{self.pulse_count}")
-        self.inputs.register_pulse()
-    
-    def on_offnormal(self, channel: int) -> None:
-        """Callback for off-normal detection."""
-        timestamp = format_timestamp()
-        state = gpio_io.GPIO.input(config.DIAL_OFFNORMAL_PIN)
-        is_active = state == gpio_io.DIAL_ACTIVE_LEVEL
-        print(f"[{timestamp}] OFFNORMAL: {'ACTIF' if is_active else 'REPOS'}")
-        self.inputs.set_dial_active(is_active)
-    
-    def on_hook(self, channel: int) -> None:
-        """Callback for hook detection."""
-        timestamp = format_timestamp()
-        state = gpio_io.GPIO.input(config.HOOK_PIN)
-        is_active = state == gpio_io.HOOK_ACTIVE_LEVEL
-        print(f"[{timestamp}] HOOK: {'DECROCHE' if is_active else 'RACCROCHE'}")
-        self.inputs.set_hook(is_active)
-
-
 def test_simule() -> None:
     """Simulation logicielle des événements avec logging."""
     print("\n" + "=" * 60)
@@ -74,7 +42,6 @@ def test_simule() -> None:
     print("=" * 60)
     
     inputs = gpio_io.PhoneInputs()
-    callbacks = DebugCallback(inputs)
     
     print("\nActions disponibles :")
     print("  d - Simuler décroché")
@@ -136,41 +103,16 @@ def test_reel() -> None:
     try:
         inputs = gpio_io.PhoneInputs()
         
-        # Initialisation GPIO
+        # Le câblage des GPIO vient du service, et de lui seul : ce script
+        # rebranchait ses propres callbacks, qui avaient fini par détecter
+        # d'autres fronts que gpio_io.setup. Les impulsions, les changements
+        # d'état du cadran et les chiffres validés sont journalisés par
+        # gpio_io lui-même — il suffit de laisser passer ses logs DEBUG.
         if gpio_io.GPIO is not None:
-            gpio_io.GPIO.setmode(gpio_io.GPIO.BCM)
-            
-            # Configuration du crochet
-            gpio_io.GPIO.setup(config.HOOK_PIN, gpio_io.GPIO.IN,
-                             pull_up_down=gpio_io.GPIO.PUD_UP)
-            
-            # Configuration du cadran
-            gpio_io.GPIO.setup(config.DIAL_OFFNORMAL_PIN, gpio_io.GPIO.IN,
-                             pull_up_down=gpio_io.GPIO.PUD_UP)
-            gpio_io.GPIO.setup(config.DIAL_PULSE_PIN, gpio_io.GPIO.IN,
-                             pull_up_down=gpio_io.GPIO.PUD_UP)
-            
-            # Callbacks avec logging
-            callbacks = DebugCallback(inputs)
-            
-            gpio_io.GPIO.add_event_detect(
-                config.HOOK_PIN, gpio_io.GPIO.BOTH,
-                callback=callbacks.on_hook,
-                bouncetime=int(config.HOOK_DEBOUNCE_SEC * 1000)
-            )
-            
-            gpio_io.GPIO.add_event_detect(
-                config.DIAL_OFFNORMAL_PIN, gpio_io.GPIO.BOTH,
-                callback=callbacks.on_offnormal,
-                bouncetime=int(config.DIAL_DEBOUNCE_SEC * 1000)
-            )
-            
-            gpio_io.GPIO.add_event_detect(
-                config.DIAL_PULSE_PIN, gpio_io.GPIO.BOTH,
-                callback=callbacks.on_pulse,
-                bouncetime=int(config.DIAL_DEBOUNCE_SEC * 1000)
-            )
-        
+            gpio_io.setup(inputs)
+            logging.getLogger("gpio_io").setLevel(logging.DEBUG)
+            logging.getLogger().setLevel(logging.DEBUG)
+
         print("\nLecture en cours... (Ctrl+C pour arrêter)")
         print("-" * 60)
         

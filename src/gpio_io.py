@@ -32,6 +32,7 @@ def _active_level(name: str) -> int:
 
 HOOK_ACTIVE_LEVEL = _active_level(config.HOOK_ACTIVE_STATE)
 DIAL_ACTIVE_LEVEL = _active_level(config.OFFNORMAL_ACTIF_LEVEL)
+PULSE_ACTIVE_LEVEL = _active_level(config.PULSE_ACTIF_LEVEL)
 
 
 class PhoneInputs:
@@ -63,6 +64,15 @@ class PhoneInputs:
                 self._pulse_count = 0
                 logger.debug("RESET pulse_count to 0")
             elif was_active and not active:
+                if self._pulse_count == 0:
+                    # Un aller-retour du cadran sans la moindre impulsion n'est
+                    # pas un chiffre : c'est un rebond du contact off-normal, ou
+                    # le cadran effleuré sans atteindre la butée. Le valider
+                    # produisait un « 0 » fantôme (0 % 10) au milieu du numéro,
+                    # la salve de rebond du retour au repos en insérant parfois
+                    # plusieurs d'affilée.
+                    logger.debug("rotation sans impulsion : aucun chiffre validé")
+                    return
                 digit = self._pulse_count % 10
                 self._digit_queue.append(digit)
                 logger.debug(f"VALIDATED digit: {digit} (from {self._pulse_count} pulses)")
@@ -108,6 +118,15 @@ class PhoneInputs:
             return self._digit_queue.popleft() if self._digit_queue else None
 
 
+def _bouncetime_ms(secondes: float) -> int:
+    """Fenêtre d'anti-rebond en millisecondes, telle que RPi.GPIO l'accepte.
+
+    add_event_detect refuse un bouncetime nul ou négatif : un réglage à 0 s
+    (anti-rebond désactivé) doit donner 1 ms, pas une exception au démarrage.
+    """
+    return max(1, int(secondes * 1000))
+
+
 def setup(inputs: PhoneInputs) -> None:
     """Configure les GPIO en entrée (pull-up) et branche les callbacks matériels sur inputs."""
     if GPIO is None:
@@ -120,24 +139,33 @@ def setup(inputs: PhoneInputs) -> None:
     inputs.set_hook(GPIO.input(config.HOOK_PIN) == HOOK_ACTIVE_LEVEL)
     inputs.set_dial_active(GPIO.input(config.DIAL_OFFNORMAL_PIN) == DIAL_ACTIVE_LEVEL)
 
+    # Le crochet et l'off-normal sont des *états* : les deux fronts comptent et
+    # le callback relit la broche pour connaître le niveau courant.
     def _on_hook(_channel: int) -> None:
         inputs.set_hook(GPIO.input(config.HOOK_PIN) == HOOK_ACTIVE_LEVEL)
 
     def _on_offnormal(_channel: int) -> None:
         inputs.set_dial_active(GPIO.input(config.DIAL_OFFNORMAL_PIN) == DIAL_ACTIVE_LEVEL)
 
+    # Une impulsion, elle, est un *événement* : on la compte sur son front,
+    # sans relire la broche. Relire le niveau dans le callback — qui s'exécute
+    # après le front, avec une latence variable — revenait à perdre toute
+    # impulsion plus courte que cette latence, et donc à lire un chiffre trop
+    # petit dès que le contact est usé (tests/scope_impulsions.py montre la
+    # perte, colonne « latence » du balayage).
     def _on_pulse(_channel: int) -> None:
-        if GPIO.input(config.DIAL_PULSE_PIN) == DIAL_ACTIVE_LEVEL:
-            inputs.register_pulse()
+        inputs.register_pulse()
 
+    front_impulsion = GPIO.FALLING if PULSE_ACTIVE_LEVEL == 0 else GPIO.RISING
     GPIO.add_event_detect(config.HOOK_PIN, GPIO.BOTH, callback=_on_hook,
-                           bouncetime=int(config.HOOK_DEBOUNCE_SEC * 1000))
+                           bouncetime=_bouncetime_ms(config.HOOK_DEBOUNCE_SEC))
     GPIO.add_event_detect(config.DIAL_OFFNORMAL_PIN, GPIO.BOTH, callback=_on_offnormal,
-                           bouncetime=int(config.DIAL_DEBOUNCE_SEC * 1000))
-    GPIO.add_event_detect(config.DIAL_PULSE_PIN, GPIO.BOTH, callback=_on_pulse,
-                           bouncetime=int(config.DIAL_DEBOUNCE_SEC * 1000))
-    logger.info("GPIO initialisés (hook=%s, off-normal=%s, pulse=%s)",
-                config.HOOK_PIN, config.DIAL_OFFNORMAL_PIN, config.DIAL_PULSE_PIN)
+                           bouncetime=_bouncetime_ms(config.OFFNORMAL_DEBOUNCE_SEC))
+    GPIO.add_event_detect(config.DIAL_PULSE_PIN, front_impulsion, callback=_on_pulse,
+                           bouncetime=_bouncetime_ms(config.PULSE_DEBOUNCE_SEC))
+    logger.info("GPIO initialisés (hook=%s, off-normal=%s actif %s, pulse=%s actif %s)",
+                config.HOOK_PIN, config.DIAL_OFFNORMAL_PIN, config.OFFNORMAL_ACTIF_LEVEL,
+                config.DIAL_PULSE_PIN, config.PULSE_ACTIF_LEVEL)
 
 
 def cleanup() -> None:
@@ -203,7 +231,7 @@ def get_current_status() -> Optional[Dict[str, Any]]:
             
             hook_active = (hook_value == HOOK_ACTIVE_LEVEL)
             dial_active = (dial_offnormal_value == DIAL_ACTIVE_LEVEL)
-            pulse_active = (dial_pulse_value == DIAL_ACTIVE_LEVEL)
+            pulse_active = (dial_pulse_value == PULSE_ACTIVE_LEVEL)
             
             return {
                 "hook": "DECROCHE" if hook_active else "raccroché",

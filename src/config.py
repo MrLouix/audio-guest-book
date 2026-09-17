@@ -148,10 +148,31 @@ DIAL_PULSE_PIN = _env_int("DIAL_PULSE_PIN", 22)
 HOOK_ACTIVE_STATE = _env("HOOK_ACTIVE_STATE", "LOW")
 OFFNORMAL_ACTIF_LEVEL = _env("OFFNORMAL_ACTIF_LEVEL", "LOW")
 
+# Niveau de la broche d'impulsions *pendant* une impulsion. Il ne suit pas
+# forcément celui du contact off-normal : beaucoup de cadrans ont un contact
+# d'impulsions « normalement fermé », donc une broche au niveau bas au repos
+# (pull-up tiré à la masse) qui remonte à chaque impulsion — PULSE_ACTIF_LEVEL
+# vaut alors HIGH alors que OFFNORMAL_ACTIF_LEVEL reste à LOW. Le défaut suit
+# l'off-normal, c'est-à-dire le comportement d'avant ce réglage.
+# À vérifier avant toute autre chose : `python3 tests/scope_impulsions.py
+# --niveaux`, cadran immobile, doit montrer la broche au niveau *opposé* (§7.6).
+PULSE_ACTIF_LEVEL = _env("PULSE_ACTIF_LEVEL", OFFNORMAL_ACTIF_LEVEL)
+
 # Anti-rebond logiciel (§7.2) : fenêtres typiques crochet ~50-100 ms,
 # impulsions du cadran nettement plus courtes (impulsion ~60 ms).
 HOOK_DEBOUNCE_SEC = _env_float("HOOK_DEBOUNCE_SEC", 0.075)
 DIAL_DEBOUNCE_SEC = _env_float("DIAL_DEBOUNCE_SEC", 0.02)
+
+# Les deux contacts du cadran ne rebondissent pas pareil : l'off-normal est un
+# contact lent, qui peut rebondir 100 ms au retour au repos, tandis que les
+# impulsions s'enchaînent toutes les 100 ms et seraient avalées par une
+# fenêtre aussi large. D'où deux anti-rebonds séparés, dont le défaut reste
+# DIAL_DEBOUNCE_SEC — le réglage global — pour ne rien changer aux
+# installations qui marchent. Défauts dérivés : comme RESTITUTION_SOUND_CARD,
+# ils ne sont pas dans MODIFIABLE_PARAMS, où une valeur figée mentirait dès
+# que DIAL_DEBOUNCE_SEC change ; ils se règlent par variable d'environnement.
+PULSE_DEBOUNCE_SEC = _env_float("PULSE_DEBOUNCE_SEC", DIAL_DEBOUNCE_SEC)
+OFFNORMAL_DEBOUNCE_SEC = _env_float("OFFNORMAL_DEBOUNCE_SEC", DIAL_DEBOUNCE_SEC)
 
 # --- Comportement du parcours invité (§1.2, §9) --------------------------
 

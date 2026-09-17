@@ -108,42 +108,12 @@ def test_reel() -> None:
     try:
         inputs = gpio_io.PhoneInputs()
         
-        # Initialisation GPIO
+        # Un seul câblage des GPIO dans tout le projet : celui du service.
+        # Ce script rebranchait ses propres callbacks, qui avaient divergé
+        # (fronts détectés différents, et une syntaxe qui ne compilait plus).
         if gpio_io.GPIO is not None:
-            gpio_io.GPIO.setmode(gpio_io.GPIO.BCM)
-            
-            # Configuration du crochet
-            gpio_io.GPIO.setup(config.HOOK_PIN, gpio_io.GPIO.IN, 
-                             pull_up_down=gpio_io.GPIO.PUD_UP)
-            
-            # Configuration du cadran
-            gpio_io.GPIO.setup(config.DIAL_OFFNORMAL_PIN, gpio_io.GPIO.IN,
-                             pull_up_down=gpio_io.GPIO.PUD_UP)
-            gpio_io.GPIO.setup(config.DIAL_PULSE_PIN, gpio_io.GPIO.IN,
-                             pull_up_down=gpio_io.GPIO.PUD_UP)
-            
-            # Anti-rebond
-            gpio_io.GPIO.add_event_detect(
-                config.HOOK_PIN, gpio_io.GPIO.BOTH,
-                callback=lambda channel: inputs.set_hook(
-                    gpio_io.GPIO.input(channel) == gpio_io.HOOK_ACTIVE_LEVEL),
-                bouncetime=int(config.HOOK_DEBOUNCE_SEC * 1000)
-            )
-            
-            gpio_io.GPIO.add_event_detect(
-                config.DIAL_OFFNORMAL_PIN, gpio_io.GPIO.BOTH,
-                callback=lambda channel: inputs.set_dial_active(
-                    gpio_io.GPIO.input(channel) == gpio_io.DIAL_ACTIVE_LEVEL),
-                bouncetime=int(config.DIAL_DEBOUNCE_SEC * 1000)
-            )
-            
-            gpio_io.GPIO.add_event_detect(
-                config.DIAL_PULSE_PIN, gpio_io.GPIO.BOTH,
-                callback=lambda channel: inputs.register_pulse()
-                    if gpio_io.GPIO.input(config.DIAL_PULSE_PIN) == gpio_io.DIAL_ACTIVE_LEVEL,
-                bouncetime=int(config.DIAL_DEBOUNCE_SEC * 1000)
-            )
-        
+            gpio_io.setup(inputs)
+
         print("\nLecture en cours... (Ctrl+C pour arrêter)")
         print("-" * 60)
         

@@ -15,6 +15,8 @@ La plupart des points nécessitent le Raspberry Pi, le téléphone câblé et un
 
 - [ ] Crochet du combiné testé au multimètre (normalement ouvert ou fermé au repos) ; `HOOK_ACTIVE_STATE` ajusté si besoin.
 - [ ] Contact « off-normal » du cadran testé ; `OFFNORMAL_ACTIF_LEVEL` ajusté si besoin.
+- [ ] Contact d'impulsions testé **séparément** : il n'a pas forcément le même sens logique que l'off-normal ; `PULSE_ACTIF_LEVEL` ajusté si besoin.
+- [ ] `python3 tests/scope_impulsions.py --niveaux`, cadran immobile : la broche d'impulsions est au niveau **opposé** à `PULSE_ACTIF_LEVEL`. Si elle est déjà sur le niveau actif, le contact est court-circuité ou la paire de fils est la mauvaise — inutile d'aller plus loin.
 
 ## 3. Mode `--test` **(auto : outil fourni)**
 
