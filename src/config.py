@@ -337,6 +337,7 @@ MODIFIABLE_PARAMS = {
     "SOUND_CARD": {"type": "str", "default": "plughw:1,0", "label": "Carte son ALSA"},
     "HOOK_ACTIVE_STATE": {"type": "str", "default": "LOW", "label": "Niveau actif crochet (LOW/HIGH)"},
     "OFFNORMAL_ACTIF_LEVEL": {"type": "str", "default": "LOW", "label": "Niveau actif cadran (LOW/HIGH)"},
+    "PULSE_ACTIF_LEVEL": {"type": "str", "default": "HIGH", "label": "Niveau actif pulse (LOW/HIGH)"},
     "HOOK_DEBOUNCE_SEC": {"type": "float", "default": 0.075, "label": "Anti-rebond crochet (secondes)"},
     "DIAL_DEBOUNCE_SEC": {"type": "float", "default": 0.02, "label": "Anti-rebond cadran (secondes)"},
     # Mode restitution (§5.7). MODE_RESTITUTION n'est pas listé : la bascule a
