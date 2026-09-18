@@ -202,6 +202,37 @@ Le contact off-normal et le crochet passent par le même filtre, avec une
 confirmation symétrique (`OFFNORMAL_CONFIRM_SEC`, `HOOK_CONFIRM_SEC`) : leurs
 salves de rebonds n'ouvrent plus de rotation fantôme.
 
+### Ce que coûte le thread d'échantillonnage
+
+Il tourne **en permanence**, téléphone raccroché compris : c'est le prix de
+l'échantillonnage. Mais la cadence rapide ne sert que pendant une rotation, si
+bien que la boucle retombe à `GPIO_ECHANTILLONNAGE_REPOS_HZ` dès qu'il ne se
+passe rien, et ne repasse en cadence rapide que `GPIO_ACTIVITE_SEC` après le
+dernier front — front **brut**, pas front filtré, de sorte qu'un grésillement
+la maintient en cadence rapide tant qu'il dure.
+
+```bash
+python3 tests/scope_impulsions.py --charge        # 3 s par cadence
+python3 tests/scope_impulsions.py --reel --charge # avec les vraies broches
+```
+
+```
+               cadence │    obtenue │      CPU │   par tour
+         repos (50 Hz) │      50 Hz │    0.31 % │    62.1 µs
+    activité (1000 Hz) │     924 Hz │    1.85 % │    20.0 µs
+```
+
+Le filtre lui-même ne coûte rien (0,1 µs par appel) : **tout le coût est dans le
+réveil du thread**, ce qui explique qu'abaisser la cadence au repos paie autant.
+La cadence obtenue est toujours inférieure à la consigne, `Event.wait` ne
+descendant pas sous la granularité du timer du noyau — sans conséquence, le
+filtre travaillant sur des durées de plusieurs millisecondes.
+
+Ces chiffres viennent d'un x86 ; lancez la mesure sur la machine de destination
+plutôt que d'extrapoler. Si le repos dépasse quelques pour cent, baissez
+`GPIO_ECHANTILLONNAGE_REPOS_HZ` : au repos seul le crochet compte, et sa
+confirmation dure déjà 75 ms.
+
 ## Tests complémentaires déjà présents dans `src/`
 
 - `python3 src/livre_dor.py --test` — affichage temps réel des trois GPIO.

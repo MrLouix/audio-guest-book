@@ -40,6 +40,7 @@ import math
 import os
 import random
 import sys
+import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -710,6 +711,103 @@ def diagnostiquer(trace: Trace, seuil_impulsion: float, min_actif: float,
     return alertes
 
 
+def mesurer_charge(duree: float) -> None:
+    """Fait tourner la vraie boucle d'échantillonnage et mesure ce qu'elle coûte.
+
+    Le thread d'entrée tourne en permanence : sur une machine modeste, sa
+    cadence est le principal poste de consommation du service. Plutôt que
+    d'extrapoler d'une machine à l'autre — le rapport entre un x86 et un
+    Cortex-A53 n'a rien d'évident — cette mesure se lance sur la machine de
+    destination.
+
+    Deux chiffres comptent. La cadence **réellement** obtenue, toujours
+    inférieure à la consigne parce que `Event.wait` ne descend pas sous
+    la granularité du timer du noyau. Et le temps CPU du thread, qui dit ce que
+    le service prend à un cœur les 99 % du temps où personne ne touche au
+    téléphone.
+    """
+    reel = gpio_io.GPIO is not None
+    section("Coût du thread d'échantillonnage")
+    if reel:
+        gpio_io.GPIO.setmode(gpio_io.GPIO.BCM)
+        for pin in (config.HOOK_PIN, config.DIAL_OFFNORMAL_PIN, config.DIAL_PULSE_PIN):
+            gpio_io.GPIO.setup(pin, gpio_io.GPIO.IN, pull_up_down=gpio_io.GPIO.PUD_UP)
+        lire = gpio_io.GPIO.input
+        info("lecture des vraies broches (RPi.GPIO)")
+    else:
+        # Sans matériel, tout est mesuré sauf la lecture elle-même. On le dit,
+        # plutôt que de laisser prendre le résultat pour une mesure matérielle.
+        def lire(_pin: int) -> int:
+            return 0
+        note("RPi.GPIO absent : la lecture des broches est remplacée par une "
+             "doublure. Tout le reste est mesuré, mais le coût de GPIO.input() "
+             "manque — relancez sur le Raspberry Pi pour le chiffre complet.")
+
+    broches = (config.HOOK_PIN, config.DIAL_OFFNORMAL_PIN, config.DIAL_PULSE_PIN)
+
+    def tourner(frequence: float) -> Tuple[float, float, float]:
+        """Boucle identique à celle du service ; rend (cadence, %CPU, µs/tour)."""
+        filtres = [gpio_io.FiltreContact(config.PULSE_MIN_ACTIF_SEC,
+                                         config.PULSE_MIN_REPOS_SEC)
+                   for _ in broches]
+        attente = threading.Event()
+        periode = 1.0 / frequence
+        tours = 0
+        cpu0, mur0 = time.thread_time(), time.perf_counter()
+        while time.perf_counter() - mur0 < duree:
+            maintenant = time.monotonic()
+            for pin, filtre in zip(broches, filtres):
+                filtre.echantillon(maintenant, lire(pin) == 1)
+            attente.wait(periode)
+            tours += 1
+        cpu = time.thread_time() - cpu0
+        mur = time.perf_counter() - mur0
+        return tours / mur, cpu / mur * 100, cpu / tours * 1e6
+
+    try:
+        cadences = [
+            ("repos", min(config.GPIO_ECHANTILLONNAGE_REPOS_HZ,
+                          config.GPIO_ECHANTILLONNAGE_HZ)),
+            ("activité", config.GPIO_ECHANTILLONNAGE_HZ),
+        ]
+        resultats = {}
+        print()
+        print(f"  {GRIS}{'cadence':>20} │ {'obtenue':>10} │ {'CPU':>8} │ "
+              f"{'par tour':>10}{RAZ}")
+        for libelle, frequence in cadences:
+            obtenue, part, par_tour = tourner(max(frequence, 1.0))
+            resultats[libelle] = part
+            print(f"  {libelle + f' ({frequence:.0f} Hz)':>20} │ "
+                  f"{obtenue:>7.0f} Hz │ {part:>7.2f} % │ {par_tour:>7.1f} µs")
+        print()
+
+        # Ce que le service consomme vraiment : la cadence de repos, puisque
+        # c'est celle qui tient 24 h sur 24.
+        au_repos = resultats["repos"]
+        info(f"le service passe l'essentiel du temps à la cadence de repos : "
+             f"{GRAS}{au_repos:.2f} % d'un cœur{RAZ} en continu")
+        if config.GPIO_ECHANTILLONNAGE_REPOS_HZ >= config.GPIO_ECHANTILLONNAGE_HZ:
+            note("l'adaptation est désactivée (GPIO_ECHANTILLONNAGE_REPOS_HZ ≥ "
+                 "GPIO_ECHANTILLONNAGE_HZ) : la cadence rapide tourne en "
+                 "permanence.")
+        else:
+            gain = resultats["activité"] / au_repos if au_repos else 0
+            ok(f"l'adaptation divise la consommation au repos par {gain:.1f} "
+               f"(cadence rapide relancée {config.GPIO_ACTIVITE_SEC:.0f} s après "
+               f"chaque front)")
+        if au_repos > 5:
+            alerte(f"{au_repos:.1f} % d'un cœur en permanence, c'est beaucoup pour "
+                   f"cette machine : baissez GPIO_ECHANTILLONNAGE_REPOS_HZ "
+                   f"(la confirmation du crochet dure déjà "
+                   f"{config.HOOK_CONFIRM_SEC * 1000:.0f} ms, une cadence de "
+                   f"{1 / config.HOOK_CONFIRM_SEC * 2:.0f} Hz suffirait).")
+        info(f"mesuré sur {duree:.0f} s par cadence · le %CPU est celui d'un cœur, "
+             f"pas de la machine")
+    finally:
+        if reel:
+            gpio_io.GPIO.cleanup()
+
+
 def surveiller_niveaux(periode: float) -> None:
     """Affiche en continu le niveau des trois broches et leur taux d'occupation.
 
@@ -960,6 +1058,11 @@ def main() -> None:
                          help="Moniteur de niveaux en continu au lieu d'une capture : "
                               "l'outil du test de câblage (débrancher le fil "
                               "d'impulsions et voir si la broche remonte à 3,3 V).")
+    parseur.add_argument("--charge", nargs="?", type=float, const=3.0,
+                         metavar="SECONDES",
+                         help="Mesure ce que coûte le thread d'échantillonnage sur "
+                              "cette machine, aux deux cadences (défaut : 3 s par "
+                              "cadence), au lieu d'une capture.")
     parseur.add_argument("--seuil-impulsion-ms", type=float, default=10.0,
                          dest="seuil_impulsion_ms",
                          help="Durée minimale d'une excursion pour être tenue pour "
@@ -1000,8 +1103,13 @@ def main() -> None:
     for nom in ("DIAL_PULSE_PIN", "DIAL_OFFNORMAL_PIN", "HOOK_PIN",
                 "OFFNORMAL_ACTIF_LEVEL", "PULSE_ACTIF_LEVEL",
                 "PULSE_MIN_ACTIF_SEC", "PULSE_MIN_REPOS_SEC",
-                "OFFNORMAL_CONFIRM_SEC", "GPIO_ECHANTILLONNAGE_HZ"):
+                "OFFNORMAL_CONFIRM_SEC", "GPIO_ECHANTILLONNAGE_HZ",
+                "GPIO_ECHANTILLONNAGE_REPOS_HZ", "GPIO_ACTIVITE_SEC"):
         info(f"{nom} = {getattr(config, nom)!r}   {GRIS}[{harness.provenance(nom)}]{RAZ}")
+
+    if args.charge:
+        mesurer_charge(args.charge)
+        return
 
     if args.niveaux:
         surveiller_niveaux(0.5)

@@ -167,8 +167,27 @@ DIAL_DEBOUNCE_SEC = _env_float("DIAL_DEBOUNCE_SEC", 0.02)
 # thread relit les trois broches à cette cadence et ne retient un changement
 # que s'il se maintient (voir gpio_io.FiltreContact). 1 kHz donne une dizaine
 # de points sur la plus courte micro-coupure d'un contact usé, largement assez
-# pour la trancher, pour un coût CPU de l'ordre du pour cent.
+# pour la trancher.
+#
+# Cette cadence-là n'est utile que pendant une rotation du cadran. Le reste du
+# temps — soit l'essentiel d'une soirée — seul le crochet compte, et sa
+# confirmation dure déjà 75 ms : la boucle retombe donc à
+# GPIO_ECHANTILLONNAGE_REPOS_HZ, et ne repasse en cadence rapide que pendant
+# GPIO_ACTIVITE_SEC après le dernier changement de niveau *brut* d'une broche.
+# Le déclencheur est le niveau brut et non l'état filtré : pendant un
+# grésillement les fronts se succèdent sans arrêt et relancent la cadence
+# rapide en continu, si bien qu'on n'échantillonne jamais lentement au milieu
+# d'une impulsion. Le coût de la boucle étant presque entièrement celui du
+# réveil du thread, et non du travail fait à chaque tour, baisser la cadence au
+# repos divise la consommation d'autant (§7.2).
+#
+# Régler GPIO_ECHANTILLONNAGE_REPOS_HZ à la même valeur que
+# GPIO_ECHANTILLONNAGE_HZ désactive l'adaptation.
+# `python3 tests/scope_impulsions.py --charge` mesure le coût réel des deux
+# cadences sur la machine de destination.
 GPIO_ECHANTILLONNAGE_HZ = _env_float("GPIO_ECHANTILLONNAGE_HZ", 1000.0)
+GPIO_ECHANTILLONNAGE_REPOS_HZ = _env_float("GPIO_ECHANTILLONNAGE_REPOS_HZ", 50.0)
+GPIO_ACTIVITE_SEC = _env_float("GPIO_ACTIVITE_SEC", 2.0)
 
 # Durées de maintien exigées avant de croire à un changement d'état. Elles
 # remplacent le bouncetime de RPi.GPIO, qui ne savait pas exprimer un contact

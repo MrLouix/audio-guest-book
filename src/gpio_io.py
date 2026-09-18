@@ -199,9 +199,6 @@ class _Contact:
         self.niveau_actif = niveau_actif
         self.filtre = filtre
 
-    def lire(self) -> bool:
-        return GPIO.input(self.pin) == self.niveau_actif
-
 
 def contacts_configures(etats_initiaux: Dict[str, bool]) -> List[_Contact]:
     """Les trois contacts et leurs filtres, réglés par config.py.
@@ -242,21 +239,47 @@ _thread: Optional[threading.Thread] = None
 
 
 def _boucle_echantillonnage(inputs: PhoneInputs, contacts: List[_Contact],
-                            periode: float) -> None:
-    """Relit les broches et alimente les filtres jusqu'à l'arrêt du service."""
-    while not _arret.is_set():
-        maintenant = time.monotonic()
-        for contact in contacts:
+                            periode_rapide: float, periode_repos: float,
+                            activite_sec: float) -> None:
+    """Relit les broches et alimente les filtres jusqu'à l'arrêt du service.
+
+    La cadence suit l'activité : rapide pendant `activite_sec` après le dernier
+    changement de niveau brut, au repos le reste du temps. Le coût d'un tour de
+    boucle étant presque entièrement celui du réveil du thread, c'est la
+    cadence — et non le travail fait à chaque tour — qui décide de ce que le
+    service consomme les 99 % du temps où personne ne touche au téléphone.
+    """
+    # À ces cadences, un tour de boucle est fait pour l'essentiel de recherches
+    # d'attributs : on les sort toutes d'avance.
+    lire = GPIO.input
+    attendre = _arret.wait
+    arrete = _arret.is_set
+    horloge = time.monotonic
+    lignes = tuple((c.nom, c.pin, c.niveau_actif, c.filtre.echantillon)
+                   for c in contacts)
+    # Dernier niveau brut lu par contact, pour repérer un front sans attendre
+    # que le filtre se prononce : c'est lui qui relance la cadence rapide.
+    bruts: List[Optional[bool]] = [None] * len(lignes)
+
+    # Le service démarre en cadence rapide : le téléphone peut très bien être
+    # déjà décroché, et la première seconde ne coûte rien.
+    rapide_jusqu_a = horloge() + activite_sec
+    while not arrete():
+        maintenant = horloge()
+        for rang, (nom, pin, niveau_actif, echantillon) in enumerate(lignes):
             try:
-                brut = contact.lire()
+                brut = lire(pin) == niveau_actif
             except RuntimeError:
                 # cleanup() a libéré les GPIO pendant qu'on lisait : on sort.
                 return
-            stable = contact.filtre.echantillon(maintenant, brut)
+            if brut != bruts[rang]:
+                bruts[rang] = brut
+                rapide_jusqu_a = maintenant + activite_sec
+            stable = echantillon(maintenant, brut)
             if stable is not None:
-                appliquer(inputs, contact.nom, stable)
+                appliquer(inputs, nom, stable)
         # wait() plutôt que sleep() : l'arrêt est pris en compte tout de suite.
-        _arret.wait(periode)
+        attendre(periode_rapide if maintenant < rapide_jusqu_a else periode_repos)
 
 
 def setup(inputs: PhoneInputs) -> None:
@@ -280,17 +303,22 @@ def setup(inputs: PhoneInputs) -> None:
     inputs.set_hook(etats["crochet"])
     inputs.set_dial_active(etats["off-normal"])
 
-    frequence = max(config.GPIO_ECHANTILLONNAGE_HZ, 1.0)
+    rapide = max(config.GPIO_ECHANTILLONNAGE_HZ, 1.0)
+    # La cadence de repos ne peut pas dépasser la cadence rapide : l'inverse
+    # ferait ralentir la boucle dès qu'il se passe quelque chose.
+    repos = min(max(config.GPIO_ECHANTILLONNAGE_REPOS_HZ, 1.0), rapide)
     _arret.clear()
     _thread = threading.Thread(
         target=_boucle_echantillonnage,
-        args=(inputs, contacts_configures(etats), 1.0 / frequence),
+        args=(inputs, contacts_configures(etats), 1.0 / rapide, 1.0 / repos,
+              config.GPIO_ACTIVITE_SEC),
         name="gpio-echantillonnage", daemon=True)
     _thread.start()
 
-    logger.info("GPIO échantillonnés à %.0f Hz (crochet=%s actif %s, off-normal=%s "
-                "actif %s, impulsions=%s actif %s, maintien %.0f/%.0f ms)",
-                frequence, config.HOOK_PIN, config.HOOK_ACTIVE_STATE,
+    logger.info("GPIO échantillonnés à %.0f Hz en activité, %.0f Hz au repos "
+                "(crochet=%s actif %s, off-normal=%s actif %s, impulsions=%s "
+                "actif %s, maintien %.0f/%.0f ms)",
+                rapide, repos, config.HOOK_PIN, config.HOOK_ACTIVE_STATE,
                 config.DIAL_OFFNORMAL_PIN, config.OFFNORMAL_ACTIF_LEVEL,
                 config.DIAL_PULSE_PIN, config.PULSE_ACTIF_LEVEL,
                 config.PULSE_MIN_ACTIF_SEC * 1000, config.PULSE_MIN_REPOS_SEC * 1000)

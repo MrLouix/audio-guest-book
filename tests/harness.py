@@ -21,6 +21,7 @@ Principe des tests simulés, repris de src/restitution_test.py :
   supprimé à la fin : les vrais messages des invités ne sont jamais touchés.
 """
 
+import bisect
 import contextlib
 import datetime
 import io
@@ -683,6 +684,38 @@ def echantillonner(segments: Iterable[tuple], frequence: float) -> List[tuple]:
         while instant < fin:
             echantillons.append((instant, actif))
             instant += pas
+    return echantillons
+
+
+def echantillonner_adaptatif(segments: Iterable[tuple], hz_repos: float,
+                             hz_rapide: float, activite_sec: float) -> List[tuple]:
+    """Les échantillons que la boucle de gpio_io prélèverait sur ce signal.
+
+    Reproduit sa règle de cadence : rapide pendant `activite_sec` après le
+    dernier changement de niveau brut, au repos le reste du temps. Le départ se
+    fait volontairement en cadence de repos — le pire cas, celui où le cadran
+    se met à tourner alors que le service somnole.
+    """
+    segments = list(segments)
+    fins, niveaux = [], []
+    instant = 0.0
+    for duree, actif in segments:
+        instant += duree
+        fins.append(instant)
+        niveaux.append(actif)
+    total = instant
+
+    echantillons: List[tuple] = []
+    dernier_brut: Optional[bool] = None
+    rapide_jusqu_a = 0.0
+    instant = 0.0
+    while instant < total:
+        actif = niveaux[bisect.bisect_right(fins, instant)]
+        if actif != dernier_brut:
+            dernier_brut = actif
+            rapide_jusqu_a = instant + activite_sec
+        echantillons.append((instant, actif))
+        instant += 1.0 / (hz_rapide if instant < rapide_jusqu_a else hz_repos)
     return echantillons
 
 

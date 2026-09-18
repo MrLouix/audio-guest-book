@@ -138,6 +138,21 @@ def test_simule(rapport: Rapport) -> None:
     rapport.egal("un cadran sans coupure parasite donne son compte exact",
                  comptees, 7)
 
+    # La boucle du service n'échantillonne à pleine cadence que pendant
+    # GPIO_ACTIVITE_SEC après le dernier front : le reste du temps elle somnole.
+    # Le cas à éprouver est donc celui où le cadran se met à tourner alors
+    # qu'elle est au repos — c'est ainsi que commence toute composition.
+    adaptatif = harness.echantillonner_adaptatif(
+        segments, config.GPIO_ECHANTILLONNAGE_REPOS_HZ,
+        config.GPIO_ECHANTILLONNAGE_HZ, config.GPIO_ACTIVITE_SEC)
+    filtre = gpio_io.FiltreContact(config.PULSE_MIN_ACTIF_SEC, config.PULSE_MIN_REPOS_SEC)
+    comptees = sum(1 for instant, actif in adaptatif
+                   if filtre.echantillon(instant, actif) is True)
+    rapport.egal("la cadence adaptative ne coûte aucune impulsion", comptees, 6)
+    rapport.verifie("et elle prélève moins d'échantillons qu'une cadence fixe",
+                    len(adaptatif) < len(echantillons),
+                    f"adaptatif {len(adaptatif)}, fixe {len(echantillons)}")
+
     rapport.section("4. États filtrés du crochet et du cadran")
     # Crochet et off-normal sont des états : une confirmation symétrique suffit,
     # mais elle doit laisser passer un décroché franc sans le retarder à l'excès.
