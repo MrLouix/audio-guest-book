@@ -21,11 +21,13 @@ Principe des tests simulés, repris de src/restitution_test.py :
   supprimé à la fin : les vrais messages des invités ne sont jamais touchés.
 """
 
+import bisect
 import contextlib
 import datetime
 import io
 import logging
 import os
+import random
 import shutil
 import sys
 import tempfile
@@ -633,6 +635,88 @@ class Banc:
         """Noms des seuls enregistrements d'invités joués (hors tonalité, bip, annonces)."""
         attendus = set(self.noms_messages)
         return [nom for nom in self.audio.noms_lus() if nom in attendus]
+
+
+# --- Signal d'un contact d'impulsions usé -------------------------------
+
+def segments_cadran_use(impulsions: int, fermeture: float = 0.066,
+                        repos: float = 0.042, coupure_longue: float = 0.0106,
+                        rang_coupure: int = 2, graine: int = 7) -> List[tuple]:
+    """Segments (durée, actif) d'un cadran dont le contact d'impulsions est usé.
+
+    Reproduit ce qu'une capture réelle montre sur un tel contact (§7.6) : le
+    contact grésille pendant toute la fermeture — des dizaines de fronts, des
+    micro-coupures de quelques dixièmes de milliseconde — alors que le repos
+    entre deux impulsions, lui, reste franc. Une des fermetures porte en plus
+    une coupure longue : c'est elle qui fait compter une impulsion de trop
+    quand on filtre avec un simple seuil symétrique, et que le repos exigé par
+    gpio_io.FiltreContact doit absorber.
+
+    Les durées par défaut sont celles mesurées sur le téléphone : fermeture
+    ~66 ms, repos ~42 ms, coupure parasite de 10,6 ms.
+    """
+    alea = random.Random(graine)
+    segments: List[tuple] = []
+    for rang in range(impulsions):
+        restant = fermeture
+        while restant > 0.002:
+            tenu = min(restant, alea.uniform(0.002, 0.012))
+            segments.append((tenu, True))
+            restant -= tenu
+            if restant > 0.002:
+                coupure = min(restant, alea.uniform(0.0002, 0.0015))
+                segments.append((coupure, False))
+                restant -= coupure
+        if rang == rang_coupure and coupure_longue > 0:
+            segments.append((coupure_longue, False))
+            segments.append((fermeture / 3, True))
+        segments.append((repos * alea.uniform(0.9, 1.1), False))
+    return segments
+
+
+def echantillonner(segments: Iterable[tuple], frequence: float) -> List[tuple]:
+    """Déroule des segments (durée, actif) en échantillons (instant, actif)."""
+    pas = 1.0 / frequence
+    echantillons: List[tuple] = []
+    instant = 0.0
+    for duree, actif in segments:
+        fin = instant + duree
+        while instant < fin:
+            echantillons.append((instant, actif))
+            instant += pas
+    return echantillons
+
+
+def echantillonner_adaptatif(segments: Iterable[tuple], hz_repos: float,
+                             hz_rapide: float, activite_sec: float) -> List[tuple]:
+    """Les échantillons que la boucle de gpio_io prélèverait sur ce signal.
+
+    Reproduit sa règle de cadence : rapide pendant `activite_sec` après le
+    dernier changement de niveau brut, au repos le reste du temps. Le départ se
+    fait volontairement en cadence de repos — le pire cas, celui où le cadran
+    se met à tourner alors que le service somnole.
+    """
+    segments = list(segments)
+    fins, niveaux = [], []
+    instant = 0.0
+    for duree, actif in segments:
+        instant += duree
+        fins.append(instant)
+        niveaux.append(actif)
+    total = instant
+
+    echantillons: List[tuple] = []
+    dernier_brut: Optional[bool] = None
+    rapide_jusqu_a = 0.0
+    instant = 0.0
+    while instant < total:
+        actif = niveaux[bisect.bisect_right(fins, instant)]
+        if actif != dernier_brut:
+            dernier_brut = actif
+            rapide_jusqu_a = instant + activite_sec
+        echantillons.append((instant, actif))
+        instant += 1.0 / (hz_rapide if instant < rapide_jusqu_a else hz_repos)
+    return echantillons
 
 
 # --- Aides pour les tests sur matériel réel (--reel) --------------------

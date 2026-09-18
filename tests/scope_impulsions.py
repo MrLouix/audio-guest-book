@@ -40,6 +40,7 @@ import math
 import os
 import random
 import sys
+import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -287,8 +288,13 @@ def _front_rebondissant(signal: Signal, instant: float, niveau: int,
 
 def capturer_simule(numero: str, nb_rebonds: int, duree_rebond: float,
                     impulsions_par_sec: float, marge_fin: float,
-                    graine: int) -> Trace:
-    """Fabrique une trace crédible : cadran à 10 imp/s, contacts qui rebondissent."""
+                    graine: int, contact_use: bool = False) -> Trace:
+    """Fabrique une trace crédible : cadran à 10 imp/s, contacts qui rebondissent.
+
+    Avec contact_use, le contact d'impulsions grésille pendant toute la
+    fermeture et l'une d'elles porte une coupure longue — le signal relevé sur
+    un cadran usé, celui que le filtre doit savoir lire (harness.segments_cadran_use).
+    """
     alea = random.Random(graine)
     actif = gpio_io.DIAL_ACTIVE_LEVEL
     repos = 1 - actif
@@ -314,12 +320,22 @@ def capturer_simule(numero: str, nb_rebonds: int, duree_rebond: float,
         _front_rebondissant(offnormal, t, actif, nb_rebonds, duree_rebond, alea)
         t += 0.09 + alea.uniform(-0.01, 0.01)   # retour du cadran avant le 1er coup
         coups = 10 if chiffre == 0 else chiffre
-        for rang in range(coups):
-            _front_rebondissant(pulse, t, actif_pulse, nb_rebonds, duree_rebond, alea)
-            t += fermeture * alea.uniform(0.95, 1.05)
-            _front_rebondissant(pulse, t, 1 - actif_pulse, nb_rebonds, duree_rebond, alea)
-            if rang < coups - 1:
-                t += ouverture * alea.uniform(0.95, 1.05)
+        if contact_use:
+            # Proportions relevées sur le cadran réel : ~62 % fermé, ~38 % ouvert.
+            segments = harness.segments_cadran_use(
+                coups, fermeture=periode * 0.62, repos=periode * 0.38,
+                graine=graine + chiffre)
+            for duree, est_actif in segments:
+                pulse.ajouter(t, actif_pulse if est_actif else 1 - actif_pulse)
+                t += duree
+            t -= periode * 0.38           # le dernier repos sert de marge de fin
+        else:
+            for rang in range(coups):
+                _front_rebondissant(pulse, t, actif_pulse, nb_rebonds, duree_rebond, alea)
+                t += fermeture * alea.uniform(0.95, 1.05)
+                _front_rebondissant(pulse, t, 1 - actif_pulse, nb_rebonds, duree_rebond, alea)
+                if rang < coups - 1:
+                    t += ouverture * alea.uniform(0.95, 1.05)
         # marge_fin se compte depuis le dernier front du contact : c'est cette
         # marge-là que le retour au repos du cadran vient concurrencer.
         t += marge_fin
@@ -403,6 +419,43 @@ def filtrer(signal: Signal, duree: float, seuil: float) -> Signal:
     return propre
 
 
+def filtrer_hysteresis(signal: Signal, duree: float, confirm_actif: float,
+                       confirm_repos: float, frequence: float) -> Signal:
+    """Passe le signal dans le filtre du service et rend ce qu'il en sort.
+
+    Rééchantillonne la trace à la cadence du thread d'échantillonnage, ce qui
+    reproduit aussi l'effet de cette cadence : ce que rend cette fonction est
+    littéralement ce que le service verra.
+    """
+    filtre = gpio_io.FiltreContact(confirm_actif, confirm_repos,
+                                   signal.niveau_a(0.0) == signal.niveau_actif)
+    propre = Signal(signal.nom, signal.pin, signal.niveau_actif, signal.libelle)
+    propre.demarrer(signal.niveau_a(0.0))
+    pas = 1.0 / frequence
+    instant = 0.0
+    while instant < duree:
+        stable = filtre.echantillon(instant, signal.niveau_a(instant) == signal.niveau_actif)
+        if stable is not None:
+            # Daté de l'instant où le niveau est apparu, pas de celui où le
+            # filtre l'a confirmé : sans cela les impulsions paraîtraient plus
+            # longues et les repos plus courts qu'ils ne sont.
+            propre.ajouter(filtre.debut_etat, signal.niveau_actif if stable
+                           else 1 - signal.niveau_actif)
+        instant += pas
+    return propre
+
+
+def signaux_filtres(trace: Trace, min_actif: float, min_repos: float,
+                    frequence: float) -> Tuple[Signal, Signal]:
+    """Les deux contacts du cadran vus à travers les filtres du service."""
+    pulse = filtrer_hysteresis(trace.impulsions, trace.duree, min_actif, min_repos,
+                               frequence)
+    offnormal = filtrer_hysteresis(trace.offnormal, trace.duree,
+                                   config.OFFNORMAL_CONFIRM_SEC,
+                                   config.OFFNORMAL_CONFIRM_SEC, frequence)
+    return pulse, offnormal
+
+
 def fenetres_cadran(offnormal: Signal, duree: float) -> List[Tuple[float, float]]:
     """Intervalles pendant lesquels le cadran est hors de sa position de repos."""
     fenetres = []
@@ -418,11 +471,11 @@ def fenetres_cadran(offnormal: Signal, duree: float) -> List[Tuple[float, float]
     return fenetres
 
 
-def mesurer(trace: Trace, seuil_glitch: float) -> Tuple[List[int], List[str]]:
-    """Décrit le signal propre : chiffres réellement composés + remarques."""
+def mesurer(trace: Trace, min_actif: float, min_repos: float,
+            frequence: float) -> Tuple[List[int], List[str]]:
+    """Décrit le signal filtré : chiffres composés + remarques."""
     duree = trace.duree
-    pulse = filtrer(trace.impulsions, duree, seuil_glitch)
-    offnormal = filtrer(trace.offnormal, duree, seuil_glitch)
+    pulse, offnormal = signaux_filtres(trace, min_actif, min_repos, frequence)
     remarques: List[str] = []
     chiffres: List[int] = []
 
@@ -535,11 +588,14 @@ def niveau_au_repos(signal: Signal, duree: float) -> int:
     return 0 if temps[0] >= temps[1] else 1
 
 
-def diagnostiquer(trace: Trace, seuil_impulsion: float) -> List[str]:
-    """Ce que le signal dit du câblage, avant tout réglage logiciel.
+def diagnostiquer(trace: Trace, seuil_impulsion: float, min_actif: float,
+                  min_repos: float, frequence: float) -> List[str]:
+    """Ce que le signal dit du contact, avant et après le filtre du service.
 
-    Aucun anti-rebond ne rattrape une broche qui ne voit pas d'impulsion :
-    cette section passe donc avant le décodage, et ses alertes priment.
+    L'ordre compte : une broche qui ne porte rien ne se rattrape par aucun
+    réglage, alors qu'un contact usé mais dont le repos reste franc se rattrape
+    entièrement. Le verdict porte donc sur le signal **filtré**, le signal brut
+    ne servant qu'à décrire l'état du contact.
     """
     alertes: List[str] = []
     duree = trace.duree
@@ -547,7 +603,7 @@ def diagnostiquer(trace: Trace, seuil_impulsion: float) -> List[str]:
     repos = niveau_au_repos(pulse, duree)
     haut = sum(d for _, d in excursions(pulse, 1, duree))
 
-    section("Verdict de câblage (broche d'impulsions)")
+    section("Verdict du contact d'impulsions")
     info(f"niveau au repos : {'HAUT (3,3 V)' if repos else 'BAS (0 V)'} · "
          f"{haut / duree * 100:.1f} % du temps au niveau haut")
     info(f"niveau actif configuré : {config.PULSE_ACTIF_LEVEL} "
@@ -569,65 +625,187 @@ def diagnostiquer(trace: Trace, seuil_impulsion: float) -> List[str]:
         alertes.append(f"broche d'impulsions au repos sur le niveau actif "
                        f"({config.PULSE_ACTIF_LEVEL})")
 
-    impulsions = excursions(pulse, niveau_impulsion, duree)
+    brutes = excursions(pulse, niveau_impulsion, duree)
+    info(f"signal brut : {len(pulse.fronts)} front(s), {len(brutes)} écart(s) au "
+         f"niveau de repos")
+    salves = pires_rebonds(pulse, 0.005)
+    if salves:
+        debut_salve, fin_salve, nombre = salves[0]
+        longueur = (fin_salve - debut_salve) * 1000
+        info(f"plus longue salve de grésillement : {longueur:.1f} ms "
+             f"({nombre} fronts) {GRIS}— absorbée tant qu'elle reste sous "
+             f"PULSE_MIN_REPOS_SEC = {min_repos * 1000:.0f} ms{RAZ}")
+
+    # Le verdict porte sur ce que le filtre laisse passer. Si la polarité
+    # configurée est fausse, on mesure quand même les vraies impulsions —
+    # celles qui s'écartent du repos — sans quoi les longues plages de repos
+    # passeraient pour des impulsions et masqueraient le diagnostic.
+    a_mesurer = pulse
+    if repos == pulse.niveau_actif:
+        a_mesurer = Signal(pulse.nom, pulse.pin, niveau_impulsion, pulse.libelle)
+        a_mesurer.transitions = list(pulse.transitions)
+    propre = filtrer_hysteresis(a_mesurer, duree, min_actif, min_repos, frequence)
+    impulsions = excursions(propre, propre.niveau_actif, duree)
     plausibles = [(t, d) for t, d in impulsions if d >= seuil_impulsion]
-    info(f"{len(impulsions)} écart(s) au niveau de repos, dont "
-         f"{len(plausibles)} d'au moins {seuil_impulsion * 1000:.0f} ms "
-         f"{GRIS}(les autres sont des rebonds){RAZ}")
+    info(f"après filtrage ({min_actif * 1000:.0f} ms actif / "
+         f"{min_repos * 1000:.0f} ms repos, {frequence / 1000:.1f} kHz) : "
+         f"{len(impulsions)} impulsion(s), dont {len(plausibles)} d'au moins "
+         f"{seuil_impulsion * 1000:.0f} ms")
     retenues = sorted(d for _, d in (plausibles or impulsions))
     if retenues:
         milieu = retenues[len(retenues) // 2]
-        quoi = "impulsions retenues" if plausibles else "excursions (aucune retenue)"
-        info(f"durées des {quoi} : {retenues[0] * 1000:.2f} → "
-             f"{retenues[-1] * 1000:.2f} ms (médiane {milieu * 1000:.2f}) "
-             f"{GRIS}— attendu ~33 ms à 10 impulsions/s{RAZ}")
+        info(f"durées : {retenues[0] * 1000:.1f} → {retenues[-1] * 1000:.1f} ms "
+             f"(médiane {milieu * 1000:.1f}) {GRIS}— attendu ~33 ms à "
+             f"10 impulsions/s{RAZ}")
 
     if not plausibles:
-        alerte(f"AUCUNE impulsion d'une durée plausible : rien de ce qui arrive "
-               f"sur cette broche ne ressemble au train d'impulsions d'un cadran "
-               f"(10 créneaux de ~33 ms étalés sur ~1 s). C'est un problème de "
-               f"câblage ou de contact, qu'aucun réglage logiciel ne corrigera.")
-        alertes.append("aucune impulsion plausible sur la broche d'impulsions")
-    elif len(plausibles) >= 2:
-        # Seuls les intervalles courts comptent : au-delà d'une demi-seconde on
-        # ne mesure plus la cadence du cadran, mais la pause entre deux chiffres.
-        intervalles = [plausibles[i + 1][0] - plausibles[i][0]
-                       for i in range(len(plausibles) - 1)
-                       if plausibles[i + 1][0] - plausibles[i][0] < 0.5]
-        # Médiane et non moyenne : une seule pause entre deux chiffres suffit
-        # à tirer la moyenne vers le bas et à faire croire à un cadran lent.
-        intervalles.sort()
+        alerte("AUCUNE impulsion d'une durée plausible ne sort du filtre : rien "
+               "de ce qui arrive sur cette broche ne ressemble au train "
+               "d'impulsions d'un cadran (10 créneaux de ~33 ms étalés sur ~1 s). "
+               "C'est un problème de câblage ou de contact, qu'aucun réglage "
+               "logiciel ne corrigera.")
+        alertes.append("aucune impulsion plausible, même après filtrage")
+        return alertes
+
+    # Repos les plus courts entre deux impulsions filtrées : c'est eux qui
+    # bornent PULSE_MIN_REPOS_SEC par le haut.
+    creux = sorted(d for _, d in excursions(propre, 1 - propre.niveau_actif, duree)
+                   if 0 < d < 0.5)
+    if creux:
+        info(f"plus court repos entre deux impulsions : {creux[0] * 1000:.1f} ms "
+             f"{GRIS}— PULSE_MIN_REPOS_SEC doit rester en dessous{RAZ}")
+        if min_repos >= creux[0]:
+            alerte(f"PULSE_MIN_REPOS_SEC ({min_repos * 1000:.0f} ms) dépasse le plus "
+                   f"court repos mesuré ({creux[0] * 1000:.1f} ms) : deux impulsions "
+                   f"voisines finiront par n'en faire qu'une.")
+            alertes.append("repos exigé plus long que le repos réel du cadran")
+
+    if len(plausibles) >= 2:
+        intervalles = sorted(plausibles[i + 1][0] - plausibles[i][0]
+                             for i in range(len(plausibles) - 1)
+                             if plausibles[i + 1][0] - plausibles[i][0] < 0.5)
         periode = intervalles[len(intervalles) // 2] if intervalles else 0.0
         cadence = 1 / periode if periode else 0
-        info(f"cadence moyenne : {cadence:.1f} impulsions/s "
-             f"{GRIS}— attendu 8 à 12{RAZ}")
+        info(f"cadence : {cadence:.1f} impulsions/s {GRIS}— attendu 8 à 12{RAZ}")
         if intervalles and not 6 <= cadence <= 16:
-            alerte(f"cadence hors de tout cadran normalisé ({cadence:.1f}/s) : "
-                   f"ce ne sont pas des impulsions, mais des rebonds ou des "
-                   f"parasites.")
-            alertes.append(f"cadence aberrante ({cadence:.1f} impulsions/s)")
+            alerte(f"cadence hors de tout cadran normalisé ({cadence:.1f}/s) : le "
+                   f"filtre laisse encore passer des rebonds, ou en avale de "
+                   f"vraies impulsions. Voyez le balayage ci-dessous.")
+            alertes.append(f"cadence aberrante après filtrage ({cadence:.1f}/s)")
+        elif intervalles and len(pulse.fronts) > 4 * len(impulsions):
+            ok(f"contact usé ({len(pulse.fronts)} fronts bruts pour "
+               f"{len(impulsions)} impulsions) mais entièrement rattrapé par le "
+               f"filtre : le repos entre impulsions est franc.")
 
-    # Rebonds : la plus longue salve dicte l'anti-rebond de chaque contact.
-    for nom, reglage, defaut in (("impulsions", "PULSE_DEBOUNCE_SEC",
-                                  config.PULSE_DEBOUNCE_SEC),
-                                 ("off-normal", "OFFNORMAL_DEBOUNCE_SEC",
-                                  config.OFFNORMAL_DEBOUNCE_SEC)):
-        salves = pires_rebonds(trace.signaux[nom], 0.005)
-        if not salves:
-            continue
-        debut, fin, nombre = salves[0]
-        longueur = (fin - debut) * 1000
-        info(f"{nom} : plus longue salve de rebonds {longueur:.1f} ms "
-             f"({nombre} fronts) · {reglage} = {defaut} s")
-        if longueur > defaut * 1000:
-            alerte(f"{nom} : la salve de rebonds ({longueur:.1f} ms) dépasse "
-                   f"l'anti-rebond ({defaut * 1000:.0f} ms) — des fronts "
-                   f"parasites passent. Essayez "
-                   f"{reglage}={max(longueur * 1.5, 10) / 1000:.3f}"
-                   + (" (sans dépasser 60 ms : une impulsion dure ~33 ms)"
-                      if nom == "impulsions" else ""))
-            alertes.append(f"{nom} : anti-rebond plus court que les rebonds")
+    salve_off = pires_rebonds(trace.offnormal, 0.005)
+    if salve_off:
+        debut_salve, fin_salve, nombre = salve_off[0]
+        longueur = (fin_salve - debut_salve) * 1000
+        info(f"off-normal : plus longue salve {longueur:.1f} ms ({nombre} fronts) · "
+             f"OFFNORMAL_CONFIRM_SEC = {config.OFFNORMAL_CONFIRM_SEC} s")
+        if longueur > config.OFFNORMAL_CONFIRM_SEC * 1000:
+            alerte(f"off-normal : la salve de rebonds ({longueur:.1f} ms) dépasse la "
+                   f"confirmation ({config.OFFNORMAL_CONFIRM_SEC * 1000:.0f} ms) — "
+                   f"essayez OFFNORMAL_CONFIRM_SEC={max(longueur * 1.5, 10) / 1000:.3f}")
+            alertes.append("off-normal : confirmation plus courte que les rebonds")
     return alertes
+
+
+def mesurer_charge(duree: float) -> None:
+    """Fait tourner la vraie boucle d'échantillonnage et mesure ce qu'elle coûte.
+
+    Le thread d'entrée tourne en permanence : sur une machine modeste, sa
+    cadence est le principal poste de consommation du service. Plutôt que
+    d'extrapoler d'une machine à l'autre — le rapport entre un x86 et un
+    Cortex-A53 n'a rien d'évident — cette mesure se lance sur la machine de
+    destination.
+
+    Deux chiffres comptent. La cadence **réellement** obtenue, toujours
+    inférieure à la consigne parce que `Event.wait` ne descend pas sous
+    la granularité du timer du noyau. Et le temps CPU du thread, qui dit ce que
+    le service prend à un cœur les 99 % du temps où personne ne touche au
+    téléphone.
+    """
+    reel = gpio_io.GPIO is not None
+    section("Coût du thread d'échantillonnage")
+    if reel:
+        gpio_io.GPIO.setmode(gpio_io.GPIO.BCM)
+        for pin in (config.HOOK_PIN, config.DIAL_OFFNORMAL_PIN, config.DIAL_PULSE_PIN):
+            gpio_io.GPIO.setup(pin, gpio_io.GPIO.IN, pull_up_down=gpio_io.GPIO.PUD_UP)
+        lire = gpio_io.GPIO.input
+        info("lecture des vraies broches (RPi.GPIO)")
+    else:
+        # Sans matériel, tout est mesuré sauf la lecture elle-même. On le dit,
+        # plutôt que de laisser prendre le résultat pour une mesure matérielle.
+        def lire(_pin: int) -> int:
+            return 0
+        note("RPi.GPIO absent : la lecture des broches est remplacée par une "
+             "doublure. Tout le reste est mesuré, mais le coût de GPIO.input() "
+             "manque — relancez sur le Raspberry Pi pour le chiffre complet.")
+
+    broches = (config.HOOK_PIN, config.DIAL_OFFNORMAL_PIN, config.DIAL_PULSE_PIN)
+
+    def tourner(frequence: float) -> Tuple[float, float, float]:
+        """Boucle identique à celle du service ; rend (cadence, %CPU, µs/tour)."""
+        filtres = [gpio_io.FiltreContact(config.PULSE_MIN_ACTIF_SEC,
+                                         config.PULSE_MIN_REPOS_SEC)
+                   for _ in broches]
+        attente = threading.Event()
+        periode = 1.0 / frequence
+        tours = 0
+        cpu0, mur0 = time.thread_time(), time.perf_counter()
+        while time.perf_counter() - mur0 < duree:
+            maintenant = time.monotonic()
+            for pin, filtre in zip(broches, filtres):
+                filtre.echantillon(maintenant, lire(pin) == 1)
+            attente.wait(periode)
+            tours += 1
+        cpu = time.thread_time() - cpu0
+        mur = time.perf_counter() - mur0
+        return tours / mur, cpu / mur * 100, cpu / tours * 1e6
+
+    try:
+        cadences = [
+            ("repos", min(config.GPIO_ECHANTILLONNAGE_REPOS_HZ,
+                          config.GPIO_ECHANTILLONNAGE_HZ)),
+            ("activité", config.GPIO_ECHANTILLONNAGE_HZ),
+        ]
+        resultats = {}
+        print()
+        print(f"  {GRIS}{'cadence':>20} │ {'obtenue':>10} │ {'CPU':>8} │ "
+              f"{'par tour':>10}{RAZ}")
+        for libelle, frequence in cadences:
+            obtenue, part, par_tour = tourner(max(frequence, 1.0))
+            resultats[libelle] = part
+            print(f"  {libelle + f' ({frequence:.0f} Hz)':>20} │ "
+                  f"{obtenue:>7.0f} Hz │ {part:>7.2f} % │ {par_tour:>7.1f} µs")
+        print()
+
+        # Ce que le service consomme vraiment : la cadence de repos, puisque
+        # c'est celle qui tient 24 h sur 24.
+        au_repos = resultats["repos"]
+        info(f"le service passe l'essentiel du temps à la cadence de repos : "
+             f"{GRAS}{au_repos:.2f} % d'un cœur{RAZ} en continu")
+        if config.GPIO_ECHANTILLONNAGE_REPOS_HZ >= config.GPIO_ECHANTILLONNAGE_HZ:
+            note("l'adaptation est désactivée (GPIO_ECHANTILLONNAGE_REPOS_HZ ≥ "
+                 "GPIO_ECHANTILLONNAGE_HZ) : la cadence rapide tourne en "
+                 "permanence.")
+        else:
+            gain = resultats["activité"] / au_repos if au_repos else 0
+            ok(f"l'adaptation divise la consommation au repos par {gain:.1f} "
+               f"(cadence rapide relancée {config.GPIO_ACTIVITE_SEC:.0f} s après "
+               f"chaque front)")
+        if au_repos > 5:
+            alerte(f"{au_repos:.1f} % d'un cœur en permanence, c'est beaucoup pour "
+                   f"cette machine : baissez GPIO_ECHANTILLONNAGE_REPOS_HZ "
+                   f"(la confirmation du crochet dure déjà "
+                   f"{config.HOOK_CONFIRM_SEC * 1000:.0f} ms, une cadence de "
+                   f"{1 / config.HOOK_CONFIRM_SEC * 2:.0f} Hz suffirait).")
+        info(f"mesuré sur {duree:.0f} s par cadence · le %CPU est celui d'un cœur, "
+             f"pas de la machine")
+    finally:
+        if reel:
+            gpio_io.GPIO.cleanup()
 
 
 def surveiller_niveaux(periode: float) -> None:
@@ -684,45 +862,42 @@ def surveiller_niveaux(periode: float) -> None:
 
 # --- Rejeu dans la vraie machine à états --------------------------------
 
-def rejouer(trace: Trace, anti_rebond: float, latence: float) -> List[int]:
-    """Décode la trace exactement comme `gpio_io.setup` le ferait.
+def rejouer(trace: Trace, min_actif: float, min_repos: float,
+            frequence: float) -> List[int]:
+    """Décode la trace exactement comme le service le ferait.
 
-    Reproduit les deux mécanismes de RPi.GPIO qui décident du résultat :
-    `bouncetime` (tout front survenant moins de N ms après le dernier front
-    *accepté* sur la même broche est jeté) et la relecture du niveau dans le
-    callback, qui a lieu un peu après le front — d'où `latence`.
+    Mêmes filtres, même cadence d'échantillonnage, même ordre des contacts,
+    même PhoneInputs : ce n'est pas un modèle du décodage, c'est le décodage.
     """
     inputs = gpio_io.PhoneInputs()
+    inputs.set_hook(True)
     pulse = trace.impulsions
     offnormal = trace.offnormal
 
-    inputs.set_hook(True)
-    inputs.set_dial_active(offnormal.niveau_a(0.0) == gpio_io.DIAL_ACTIVE_LEVEL)
+    filtres = [
+        # L'off-normal est traité avant les impulsions, comme dans la boucle du
+        # service : à égalité d'instant, la rotation s'ouvre avant qu'on y
+        # compte une impulsion.
+        ("off-normal", offnormal,
+         gpio_io.FiltreContact(config.OFFNORMAL_CONFIRM_SEC,
+                               config.OFFNORMAL_CONFIRM_SEC,
+                               offnormal.niveau_a(0.0) == offnormal.niveau_actif)),
+        ("impulsions", pulse,
+         gpio_io.FiltreContact(min_actif, min_repos,
+                               pulse.niveau_a(0.0) == pulse.niveau_actif)),
+    ]
+    inputs.set_dial_active(offnormal.niveau_a(0.0) == offnormal.niveau_actif)
 
-    # L'off-normal est détecté sur ses deux fronts (GPIO.BOTH) et son niveau
-    # est relu dans le callback ; l'impulsion n'est détectée que sur le front
-    # qui va vers son niveau actif (GPIO.FALLING ou RISING), et comptée sans
-    # relecture — exactement ce que fait gpio_io.setup.
-    evenements = [(t, "off-normal") for t, _ in offnormal.fronts]
-    evenements += [(t, "impulsions") for t, niveau in pulse.fronts
-                   if niveau == gpio_io.PULSE_ACTIVE_LEVEL]
-    evenements.sort()
-
-    dernier = {"off-normal": -math.inf, "impulsions": -math.inf}
     chiffres: List[int] = []
-    for instant, nom in evenements:
-        if instant - dernier[nom] < anti_rebond:
-            continue
-        dernier[nom] = instant
-        if nom == "off-normal":
-            niveau = offnormal.niveau_a(instant + latence)
-            inputs.set_dial_active(niveau == gpio_io.DIAL_ACTIVE_LEVEL)
-        else:
-            inputs.register_pulse()
-        chiffre = inputs.pop_digit()
-        while chiffre is not None:
-            chiffres.append(chiffre)
-            chiffre = inputs.pop_digit()
+    pas = 1.0 / frequence
+    instant = 0.0
+    while instant < trace.duree:
+        for nom, signal, filtre in filtres:
+            stable = filtre.echantillon(instant,
+                                        signal.niveau_a(instant) == signal.niveau_actif)
+            if stable is not None:
+                gpio_io.appliquer(inputs, nom, stable)
+        instant += pas
     chiffre = inputs.pop_digit()
     while chiffre is not None:
         chiffres.append(chiffre)
@@ -730,43 +905,76 @@ def rejouer(trace: Trace, anti_rebond: float, latence: float) -> List[int]:
     return chiffres
 
 
-def balayer(trace: Trace, attendu: List[int]) -> None:
-    """Table anti-rebond × latence du callback → chiffres décodés."""
-    valeurs = [0, 1, 2, 3, 5, 8, 10, 15, 20, 25, 30, 40]
-    latences = [0.0, 0.002, 0.005]
-    actuel = int(round(config.PULSE_DEBOUNCE_SEC * 1000))
+def compter_impulsions(trace: Trace, min_actif: float, min_repos: float,
+                       frequence: float) -> int:
+    """Nombre d'impulsions que le filtre retient, toutes rotations confondues."""
+    pulse, _ = signaux_filtres(trace, min_actif, min_repos, frequence)
+    return len(pulse.fronts_vers_actif())
+
+
+def balayer(trace: Trace, attendu: List[int], min_actif: float,
+            frequence: float) -> None:
+    """Balaie PULSE_MIN_REPOS_SEC et affiche le palier où le décodage est juste.
+
+    C'est le tableau qui donne le réglage : une valeur isolée qui tombe juste
+    ne vaut rien, seul un palier large garantit que le prochain appel sera lu
+    pareil. On croise avec la cadence d'échantillonnage pour vérifier que le
+    résultat n'en dépend pas.
+    """
+    valeurs = [2, 5, 8, 10, 12, 15, 20, 25, 30, 35, 40, 50, 60]
+    frequences = [500.0, frequence, 2000.0] if frequence not in (500.0, 2000.0) \
+        else [500.0, 1000.0, 2000.0]
+    actuel = int(round(config.PULSE_MIN_REPOS_SEC * 1000))
     reference = "".join(str(c) for c in attendu)
 
-    section("Balayage de l'anti-rebond des impulsions (PULSE_DEBOUNCE_SEC)")
+    section("Balayage du repos exigé (PULSE_MIN_REPOS_SEC)")
     info(f"référence : {reference or '—'}")
-    entete = f"  {'anti-rebond':>12} │ " + " │ ".join(
-        f"latence {l * 1000:.0f} ms".rjust(16) for l in latences)
+    entete = f"  {'repos exigé':>12} │ " + " │ ".join(
+        f"{f / 1000:.1f} kHz".rjust(14) for f in frequences)
     print(GRIS + entete + RAZ)
     bons: List[int] = []
     for ms in valeurs:
         cellules = []
-        for latence in latences:
-            lus = "".join(str(c) for c in rejouer(trace, ms / 1000.0, latence))
+        for f in frequences:
+            lus = "".join(str(c) for c in rejouer(trace, min_actif, ms / 1000.0, f))
             juste = lus == reference
-            if juste and latence == 0.0:
+            if juste and f == frequence:
                 bons.append(ms)
             couleur = VERT if juste else ROUGE
-            cellules.append(f"{couleur}{(lus or '—'):>16}{RAZ}")
+            cellules.append(f"{couleur}{(lus or '—'):>14}{RAZ}")
         marque = f" {GRAS}<< config actuelle{RAZ}" if ms == actuel else ""
         print(f"  {ms:>9} ms │ " + " │ ".join(cellules) + marque)
 
     print()
-    if bons:
-        ok(f"anti-rebond correct entre {min(bons)} et {max(bons)} ms "
-           f"(valeur actuelle : {actuel} ms)")
-        if actuel not in bons:
-            alerte(f"PULSE_DEBOUNCE_SEC = {config.PULSE_DEBOUNCE_SEC} s décode faux sur "
-                   f"cette trace : essayez {(min(bons) + max(bons)) // 2 / 1000:.3f} s "
-                   f"(page /settings du dashboard, ou variable d'environnement).")
+    if not bons:
+        alerte("aucune durée de repos ne décode le bon numéro : le signal ne porte "
+               "pas le nombre d'impulsions attendu. Reprenez le verdict de câblage "
+               "et les marges off-normal ci-dessus.")
+        return
+
+    # Le palier est la plus longue plage contiguë de valeurs justes : c'est en
+    # son centre que le réglage supporte le mieux l'usure du contact.
+    paliers, courant = [], [bons[0]]
+    for precedent, valeur in zip(bons, bons[1:]):
+        if valeurs.index(valeur) == valeurs.index(precedent) + 1:
+            courant.append(valeur)
+        else:
+            paliers.append(courant)
+            courant = [valeur]
+    paliers.append(courant)
+    palier = max(paliers, key=len)
+    centre = (palier[0] + palier[-1]) / 2
+
+    if len(palier) < 2:
+        note(f"seule la valeur {palier[0]} ms décode juste : palier trop étroit "
+             f"pour être sûr. Recommencez la capture, et nettoyez le contact.")
     else:
-        alerte("aucune valeur d'anti-rebond ne décode le bon numéro : le problème "
-               "n'est pas (que) l'anti-rebond — regardez les marges off-normal "
-               "ci-dessus et la relecture du niveau dans le callback.")
+        ok(f"palier de {palier[0]} à {palier[-1]} ms — réglez au centre : "
+           f"PULSE_MIN_REPOS_SEC={centre / 1000:.3f}")
+    if actuel not in bons:
+        alerte(f"PULSE_MIN_REPOS_SEC = {config.PULSE_MIN_REPOS_SEC} s décode faux "
+               f"sur cette trace (page /settings du dashboard, ou variable "
+               f"d'environnement).")
 
 
 # --- Exports ------------------------------------------------------------
@@ -835,13 +1043,26 @@ def main() -> None:
     parseur.add_argument("--ms-par-ligne", type=float, default=200.0,
                          dest="ms_par_ligne",
                          help="Durée couverte par une ligne de tracé (défaut 200 ms).")
+    parseur.add_argument("--min-actif-ms", type=float, dest="min_actif_ms",
+                         default=config.PULSE_MIN_ACTIF_SEC * 1000,
+                         help="Niveau actif franc qui ouvre une impulsion "
+                              "(PULSE_MIN_ACTIF_SEC).")
+    parseur.add_argument("--min-repos-ms", type=float, dest="min_repos_ms",
+                         default=config.PULSE_MIN_REPOS_SEC * 1000,
+                         help="Repos franc qui clôt l'impulsion (PULSE_MIN_REPOS_SEC). "
+                              "C'est le réglage décisif sur un contact usé.")
     parseur.add_argument("--glitch-ms", type=float, default=5.0, dest="glitch_ms",
-                         help="Sous cette durée, un état est tenu pour un rebond "
-                              "et non pour une vraie impulsion (défaut 5 ms).")
+                         help="Diagramme seulement : sous cette durée, un état est "
+                              "écarté du tracé (défaut 5 ms).")
     parseur.add_argument("--niveaux", action="store_true",
                          help="Moniteur de niveaux en continu au lieu d'une capture : "
                               "l'outil du test de câblage (débrancher le fil "
                               "d'impulsions et voir si la broche remonte à 3,3 V).")
+    parseur.add_argument("--charge", nargs="?", type=float, const=3.0,
+                         metavar="SECONDES",
+                         help="Mesure ce que coûte le thread d'échantillonnage sur "
+                              "cette machine, aux deux cadences (défaut : 3 s par "
+                              "cadence), au lieu d'une capture.")
     parseur.add_argument("--seuil-impulsion-ms", type=float, default=10.0,
                          dest="seuil_impulsion_ms",
                          help="Durée minimale d'une excursion pour être tenue pour "
@@ -862,6 +1083,10 @@ def main() -> None:
                               "essayez 25 pour reproduire une lecture erratique).")
     parseur.add_argument("--rebonds", type=int, default=4,
                          help="Simulation : nombre de fronts parasites par front.")
+    parseur.add_argument("--contact-use", action="store_true", dest="contact_use",
+                         help="Simulation : contact d'impulsions usé, qui grésille "
+                              "pendant toute la fermeture (le cas réel que le "
+                              "filtre doit savoir lire).")
     parseur.add_argument("--imp-par-sec", type=float, default=10.0, dest="imp_par_sec",
                          help="Simulation : cadence du cadran (défaut 10 imp/s).")
     parseur.add_argument("--marge-fin-ms", type=float, default=25.0, dest="marge_fin_ms",
@@ -877,8 +1102,14 @@ def main() -> None:
     section("Paramètres en vigueur (config.py)")
     for nom in ("DIAL_PULSE_PIN", "DIAL_OFFNORMAL_PIN", "HOOK_PIN",
                 "OFFNORMAL_ACTIF_LEVEL", "PULSE_ACTIF_LEVEL",
-                "PULSE_DEBOUNCE_SEC", "OFFNORMAL_DEBOUNCE_SEC"):
+                "PULSE_MIN_ACTIF_SEC", "PULSE_MIN_REPOS_SEC",
+                "OFFNORMAL_CONFIRM_SEC", "GPIO_ECHANTILLONNAGE_HZ",
+                "GPIO_ECHANTILLONNAGE_REPOS_HZ", "GPIO_ACTIVITE_SEC"):
         info(f"{nom} = {getattr(config, nom)!r}   {GRIS}[{harness.provenance(nom)}]{RAZ}")
+
+    if args.charge:
+        mesurer_charge(args.charge)
+        return
 
     if args.niveaux:
         surveiller_niveaux(0.5)
@@ -890,7 +1121,7 @@ def main() -> None:
         numero_simule = args.numero or "19"
         trace = capturer_simule(numero_simule, args.rebonds, args.rebond_ms / 1000.0,
                                 args.imp_par_sec, args.marge_fin_ms / 1000.0,
-                                args.graine)
+                                args.graine, args.contact_use)
         note(f"Signal synthétique ({numero_simule}) : aucun matériel requis. "
              f"Lancez avec --reel sur le Raspberry Pi pour capturer le vrai cadran.")
 
@@ -916,7 +1147,11 @@ def main() -> None:
                "python3 src/livre_dor.py --test).")
         raise SystemExit(1)
 
-    alertes_cablage = diagnostiquer(trace, args.seuil_impulsion_ms / 1000.0)
+    min_actif = args.min_actif_ms / 1000.0
+    min_repos = args.min_repos_ms / 1000.0
+    frequence = config.GPIO_ECHANTILLONNAGE_HZ
+    alertes_cablage = diagnostiquer(trace, args.seuil_impulsion_ms / 1000.0,
+                                    min_actif, min_repos, frequence)
 
     if not args.sans_trace:
         section("Diagramme (état électrique de chaque broche)")
@@ -931,31 +1166,30 @@ def main() -> None:
             tracer(trace, max(debut - marge, 0.0),
                    min(fin + marge, trace.duree), args.colonnes)
 
-    section("Mesures sur le signal nettoyé "
-            f"(rebonds < {args.glitch_ms:.0f} ms écartés)")
-    chiffres, remarques = mesurer(trace, args.glitch_ms / 1000.0)
+    section(f"Mesures sur le signal filtré ({args.min_actif_ms:.0f} ms actif / "
+            f"{args.min_repos_ms:.0f} ms repos)")
+    chiffres, remarques = mesurer(trace, min_actif, min_repos, frequence)
 
     section("Ce que le service aurait lu (rejeu dans gpio_io.PhoneInputs)")
     declare = [int(c) for c in (args.numero or "") if c.isdigit()]
     if not args.reel and not declare:
         declare = [int(c) for c in numero_simule if c.isdigit()]
     # La référence est le numéro annoncé quand on le connaît ; sinon celui que
-    # le signal nettoyé permet de reconstruire.
+    # le signal filtré permet de reconstruire.
     reference = declare or chiffres
     mesure = "".join(str(c) for c in chiffres)
     attendu = "".join(str(c) for c in reference)
-    lus = "".join(str(c) for c in rejouer(trace, config.PULSE_DEBOUNCE_SEC, 0.0))
+    lus = "".join(str(c) for c in rejouer(trace, min_actif, min_repos, frequence))
     if declare:
         info(f"numéro composé (annoncé)  : {GRAS}{attendu or '—'}{RAZ}")
-    info(f"reconstruit du signal nettoyé : {GRAS}{mesure or '—'}{RAZ}")
-    info(f"décodé avec PULSE_DEBOUNCE_SEC = {config.PULSE_DEBOUNCE_SEC} s : "
+    info(f"reconstruit du signal filtré : {GRAS}{mesure or '—'}{RAZ}")
+    info(f"décodé par le service (échantillonné à {frequence / 1000:.1f} kHz) : "
          f"{GRAS}{lus or '—'}{RAZ}")
     if declare and mesure != attendu:
-        alerte(f"même le signal nettoyé ne redonne pas le bon numéro : les rebonds "
-               f"durent plus que le seuil de {args.glitch_ms:.0f} ms, ou les "
-               f"impulsions sont plus courtes. Relancez avec --glitch-ms plus haut ; "
-               f"si rien ne marche, le contact est à nettoyer/rétablir, aucun "
-               f"réglage logiciel ne rattrapera ce signal.")
+        alerte(f"le signal filtré ne redonne pas le bon numéro avec les réglages "
+               f"actuels : lisez le palier du balayage ci-dessous avant de "
+               f"conclure. Si aucune valeur ne convient, le contact est à "
+               f"nettoyer — aucun réglage ne rattrapera ce signal.")
     if lus == attendu and attendu:
         ok("le décodage est juste sur cette trace")
     else:
@@ -963,7 +1197,7 @@ def main() -> None:
                "symptôme observé sur le téléphone")
 
     if reference:
-        balayer(trace, reference)
+        balayer(trace, reference, min_actif, frequence)
 
     if alertes_cablage or remarques:
         section("Pistes")
@@ -976,6 +1210,9 @@ def main() -> None:
             info("Test décisif : débranchez le fil du contact d'impulsions et "
                  "lancez `python3 tests/scope_impulsions.py --niveaux` — la broche "
                  "doit remonter à HAUT 100 %.")
+        else:
+            info(f"{GRAS}Le contact est usé mais lisible : c'est le réglage du "
+                 f"filtre qui décide, voyez le palier du balayage.{RAZ}")
         for remarque in remarques:
             alerte(remarque)
 

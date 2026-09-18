@@ -17,6 +17,7 @@ La plupart des points nécessitent le Raspberry Pi, le téléphone câblé et un
 - [ ] Contact « off-normal » du cadran testé ; `OFFNORMAL_ACTIF_LEVEL` ajusté si besoin.
 - [ ] Contact d'impulsions testé **séparément** : il n'a pas forcément le même sens logique que l'off-normal ; `PULSE_ACTIF_LEVEL` ajusté si besoin.
 - [ ] `python3 tests/scope_impulsions.py --niveaux`, cadran immobile : la broche d'impulsions est au niveau **opposé** à `PULSE_ACTIF_LEVEL`. Si elle est déjà sur le niveau actif, le contact est court-circuité ou la paire de fils est la mauvaise — inutile d'aller plus loin.
+- [ ] `python3 tests/scope_impulsions.py --reel --numero 6` (composer un 6) : le balayage affiche un **palier** de valeurs justes. `PULSE_MIN_REPOS_SEC` réglé au centre de ce palier, et non sur une valeur isolée qui tombe juste par hasard.
 
 ## 3. Mode `--test` **(auto : outil fourni)**
 
