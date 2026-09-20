@@ -155,7 +155,7 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 | `PULSE_MIN_ACTIF_SEC` | 0.005 | Niveau actif franc qui ouvre une impulsion. Doit rester bien sous la plus courte impulsion réelle (~33 ms) |
 | `PULSE_MIN_REPOS_SEC` | 0.025 | Repos franc qui clôt l'impulsion. **Le réglage décisif sur un contact usé** : plus long que la plus longue micro-coupure du grésillement, plus court que le plus court repos réel. `python3 tests/scope_impulsions.py --reel` balaie cette valeur et affiche le palier — réglez au centre |
 | `HOOK_CONFIRM_SEC` / `OFFNORMAL_CONFIRM_SEC` | suivent `HOOK_DEBOUNCE_SEC` / `DIAL_DEBOUNCE_SEC` | Durée de maintien confirmant un changement d'état du crochet et du contact off-normal |
-| `RING_INTERVAL_SEC` | 90 | Intervalle de la sonnerie périodique |
+| `RING_INTERVAL_SEC` | 90 | Intervalle de la sonnerie périodique. **0 = le téléphone ne sonne jamais tout seul** ; le bouton « Sonner maintenant » du dashboard fonctionne toujours |
 | `RING_ANSWER_GRACE_SEC` | 5 | Fenêtre « appel entrant » après la sonnerie |
 | `MAX_RECORD_SEC` | 120 | Durée max d'un message invité |
 | `AUDIO_PLAY_TIMEOUT_SEC` | 180 | Filet de sécurité contre un `aplay` bloqué |

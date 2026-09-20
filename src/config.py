@@ -259,6 +259,10 @@ OFFNORMAL_CONFIRM_SEC = _env_float("OFFNORMAL_CONFIRM_SEC", DIAL_DEBOUNCE_SEC)
 
 # --- Comportement du parcours invité (§1.2, §9) --------------------------
 
+# Intervalle de la sonnerie périodique en attente. **0 (ou négatif) coupe la
+# sonnerie périodique** : le téléphone ne sonne plus de lui-même, mais tout le
+# reste du parcours est inchangé — le bouton « Sonner maintenant » du dashboard
+# fonctionne toujours, et un décroché ouvre le parcours normal (§5.1).
 RING_INTERVAL_SEC = _env_int("RING_INTERVAL_SEC", 90)
 RING_ANSWER_GRACE_SEC = _env_int("RING_ANSWER_GRACE_SEC", 5)
 MAX_RECORD_SEC = _env_int("MAX_RECORD_SEC", 120)
@@ -381,7 +385,8 @@ def ensure_directories() -> None:
 # Liste des paramètres modifiables via l'interface /settings
 # Format: (nom, type, valeur_par_defaut, description)
 MODIFIABLE_PARAMS = {
-    "RING_INTERVAL_SEC": {"type": "int", "default": 90, "label": "Intervalle de sonnerie (secondes)"},
+    "RING_INTERVAL_SEC": {"type": "int", "default": 90, "min": 0,
+                          "label": "Intervalle de sonnerie (secondes, 0 = ne sonne jamais)"},
     "RING_ANSWER_GRACE_SEC": {"type": "int", "default": 5, "label": "Fenêtre de grâce pour répondre (secondes)"},
     "MAX_RECORD_SEC": {"type": "int", "default": 120, "label": "Durée max d'enregistrement (secondes)"},
     "SHORT_RECORDING_THRESHOLD_SEC": {"type": "float", "default": 2.0, "label": "Seuil enregistrement court (secondes)"},

@@ -241,7 +241,13 @@ class GuestBookStateMachine:
 
     def _attente_detail(self) -> Optional[str]:
         """Détail écrit dans status.json en attente : rend le mode courant visible (§5.2)."""
-        return "mode restitution" if mode_io.is_restitution() else None
+        if mode_io.is_restitution():
+            return "mode restitution"
+        # Sans ça, une sonnerie coupée volontairement serait indiscernable
+        # d'une sonnerie en panne sur le dashboard.
+        if config.RING_INTERVAL_SEC <= 0:
+            return "sonnerie périodique désactivée"
+        return None
 
     def _run_attente(self) -> None:
         self._set_state(STATE_ATTENTE, detail=self._attente_detail())
@@ -273,8 +279,15 @@ class GuestBookStateMachine:
                 sonnerie_demandee = consume_ring_trigger()
                 if sonnerie_demandee:
                     logger.info("Sonnerie déclenchée à distance (ring_trigger)")
-                if (sonnerie_demandee
-                        or (time.monotonic() - self._last_ring_start_ts) >= config.RING_INTERVAL_SEC):
+                # RING_INTERVAL_SEC <= 0 coupe la sonnerie périodique, sans
+                # rien changer au reste du parcours (§5.1). Le déclenchement
+                # depuis le dashboard, lui, reste toujours actif : c'est un
+                # « or », et il ne consulte pas l'intervalle.
+                echeance_atteinte = (
+                    config.RING_INTERVAL_SEC > 0
+                    and (time.monotonic() - self._last_ring_start_ts) >= config.RING_INTERVAL_SEC
+                )
+                if sonnerie_demandee or echeance_atteinte:
                     self._run_sonnerie()
                     # La sonnerie a publié son propre état ; sans cette
                     # republication, status.json resterait sur « sonnerie »
