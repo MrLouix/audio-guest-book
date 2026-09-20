@@ -1,5 +1,7 @@
 [Unit]
-Description=Livre d'or telephonique - synchronisation Google Drive (Sprint 9, spec §5.4)
+Description=Livre d'or telephonique - synchronisation Google Drive (spec §5.4)
+# Deux jambes par cycle : messages/ en montant seul (rclone copy) puis
+# audio_src/ en bidirectionnel (rclone bisync).
 After=network-online.target
 Wants=network-online.target
 # Garde-fou anti-boucle-de-crash (spec §7.1) : au-dela de ce seuil, le
@@ -11,4 +13,5 @@ StartLimitBurst=6
 Type=oneshot
 WorkingDirectory=/home/pi/livre_dor
 ExecStart=/home/pi/livre_dor/.venv/bin/python3 /home/pi/livre_dor/src/rclone_sync.py --run
-TimeoutStartSec=180
+# Marge pour le bisync initial (--resync), plus long que les cycles suivants.
+TimeoutStartSec=600

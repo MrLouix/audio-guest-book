@@ -211,11 +211,14 @@ def test_simule(rapport: Rapport) -> None:
         rapport.egal("la commande est arecord", commande[0], "arecord")
         rapport.verifie("la carte son configurée est utilisée",
                         ["-D", config.SOUND_CARD] == commande[1:3], f"commande : {commande}")
-        rapport.verifie("le format est bien WAV mono 44,1 kHz 16 bits (§4.1)",
+        rapport.verifie("le format est bien WAV stéréo 48 kHz 16 bits (§4.3)",
                         ["-f", "S16_LE"] == commande[3:5]
-                        and ["-c", "1"] == commande[5:7]
-                        and ["-r", "44100"] == commande[7:9],
+                        and ["-c", "2"] == commande[5:7]
+                        and ["-r", "48000"] == commande[7:9],
                         f"commande : {commande}")
+        rapport.verifie("capture et lecture partagent la cadence (prérequis full duplex)",
+                        config.RECORD_RATE_HZ == config.AUDIO_RATE_HZ == 48000,
+                        f"capture : {config.RECORD_RATE_HZ} Hz, lecture : {config.AUDIO_RATE_HZ} Hz")
         rapport.verifie("la durée maximale est passée en filet de sécurité",
                         ["-d", "120"] == commande[9:11], f"commande : {commande}")
         rapport.egal("le fichier cible est le dernier argument",

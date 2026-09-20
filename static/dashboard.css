@@ -178,7 +178,8 @@ button:disabled {
   max-width: 320px;
 }
 
-.card input[type="text"], .card input[type="password"], .card input[type="number"] {
+.card input[type="text"], .card input[type="password"], .card input[type="number"],
+.card select {
   font-size: 1rem;
   padding: 0.5rem;
   border-radius: 6px;
@@ -368,6 +369,21 @@ button.secondary {
 .card input[type="text"],
 .card input[type="number"] {
   max-width: 200px;
+}
+
+/* Les listes de fichiers audio portent des noms longs (« sonnerie cloches du
+   village.mp3 ») : elles ont besoin de plus de place que les champs courts. */
+.card select {
+  max-width: 100%;
+}
+
+/* Badge d'état affiché à droite de chaque liste déroulante de rôle. */
+.audio-etat {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
 }
 
 .card form {

@@ -28,6 +28,7 @@ from pathlib import Path
 import harness                       # règle sys.path : doit précéder les imports de src/
 from harness import Banc, PopenFactice, Rapport
 
+import alsa_io                       # noqa: E402
 import audio_io                      # noqa: E402
 import config                        # noqa: E402
 import gpio_io                       # noqa: E402
@@ -64,6 +65,15 @@ def test_simule(rapport: Rapport) -> None:
         rapport.verifie("la lecture sort sur la carte son par défaut",
                         appels["message_7.wav"].device is None,
                         f"device : {appels['message_7.wav'].device}")
+        rapport.egal("le message part dans le combiné (sortie casque, §4.1)",
+                     banc.audio.sortie_de("message_7.wav"), config.AUDIO_OUTPUT_COMBINE)
+        rapport.egal("le bip aussi : il doit être entendu dans l'écouteur",
+                     banc.audio.sortie_de("bip.wav"), config.AUDIO_OUTPUT_COMBINE)
+        rapport.egal("la tonalité aussi",
+                     banc.audio.sortie_de("tonalite.wav"), config.AUDIO_OUTPUT_COMBINE)
+        rapport.verifie("toutes les lectures précisent une sortie (aucune au hasard)",
+                        all(s is not None for s in banc.audio.sorties_utilisees()),
+                        f"sorties : {banc.audio.sorties_utilisees()}")
 
     rapport.section("3. Message tiré au hasard sur un appel entrant (§1.2)")
     with Banc(machine=False, chiffres_maries=[1, 2]) as banc:
@@ -154,6 +164,50 @@ def test_simule(rapport: Rapport) -> None:
                           device="plughw:9,0")
         rapport.egal("le périphérique peut être surchargé (mode restitution, §5.7)",
                      popen.derniere_commande[1:3], ["-D", "plughw:9,0"])
+
+        # --- Commutation de la sortie du codec (§4.1) -------------------
+        # La bascule doit précéder l'ouverture du PCM : faite après, les
+        # premières dizaines de ms sortiraient du mauvais haut-parleur.
+        banc.alsa.reinitialiser()
+        ordre = []
+        alsa_espion = harness.AlsaFactice()
+        alsa_espion_select = alsa_espion.select_output
+
+        def select_trace(output, force=False):
+            ordre.append(("bascule", output))
+            return alsa_espion_select(output, force)
+
+        popen = PopenFactice(duree=0.1)
+        with harness.remplacer(alsa_io, "select_output", select_trace):
+            with harness.remplacer(audio_io.subprocess, "Popen", popen):
+                audio_io.play(cible, should_continue=lambda: True, poll_interval=0.02,
+                              output="lineout")
+                ordre.append(("aplay", popen.derniere_commande[-1]))
+        rapport.egal("la sortie demandée est bien appliquée",
+                     alsa_espion.bascules, ["lineout"])
+        rapport.egal("la bascule précède le lancement d'aplay",
+                     [etape for etape, _ in ordre], ["bascule", "aplay"])
+
+        # Sans output=, aucune commutation : le mode restitution et les
+        # appels internes gardent la sortie courante.
+        alsa_espion = harness.AlsaFactice()
+        popen = PopenFactice(duree=0.1)
+        with harness.remplacer(alsa_io, "select_output", alsa_espion.select_output):
+            with harness.remplacer(audio_io.subprocess, "Popen", popen):
+                audio_io.play(cible, should_continue=lambda: True, poll_interval=0.02)
+        rapport.egal("sans sortie demandée, le codec n'est pas touché",
+                     alsa_espion.bascules, [])
+
+        # Une commutation en échec ne doit jamais empêcher la lecture : le
+        # mauvais haut-parleur vaut mieux que le silence (§7.4).
+        alsa_muet = harness.AlsaFactice(echouer=True)
+        popen = PopenFactice(duree=0.1)
+        with harness.remplacer(alsa_io, "select_output", alsa_muet.select_output):
+            with harness.remplacer(audio_io.subprocess, "Popen", popen):
+                resultat = audio_io.play(cible, should_continue=lambda: True,
+                                         poll_interval=0.02, output="headphone")
+        rapport.egal("une commutation en échec n'empêche pas la lecture",
+                     resultat, "completed")
 
         # Raccroché pendant la lecture : arrêt immédiat du sous-processus.
         popen = PopenFactice(duree=60.0)

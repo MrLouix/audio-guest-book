@@ -16,9 +16,13 @@ Principe des tests simulés, repris de src/restitution_test.py :
   journalisent leurs appels au lieu de lancer aplay/arecord — sans elles,
   aplay étant absent d'un poste de développement, play() renverrait « error »
   immédiatement et tous les délais seraient faux ;
-- toute l'arborescence de données (audio/, messages/, status.json,
-  mode_config.json, ring_trigger) est redirigée vers un dossier temporaire,
-  supprimé à la fin : les vrais messages des invités ne sont jamais touchés.
+- `alsa_io.select_output` / `setup_card` sont eux aussi doublés : sans ça,
+  chaque lecture tenterait de lancer scripts/audio-setup.sh, qui échouerait
+  faute de carte et de `amixer` ;
+- toute l'arborescence de données (audio/, audio_src/, messages/, logs/,
+  status.json, mode_config.json, audio_config.json, rclone_config.json,
+  ring_trigger) est redirigée vers un dossier temporaire, supprimé à la fin :
+  les vrais messages des invités ne sont jamais touchés.
 """
 
 import bisect
@@ -42,7 +46,8 @@ SRC = RACINE / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-import audio_io    # noqa: E402  (src/ ajouté au sys.path juste au-dessus)
+import alsa_io     # noqa: E402  (src/ ajouté au sys.path juste au-dessus)
+import audio_io    # noqa: E402
 import config      # noqa: E402
 import gpio_io     # noqa: E402
 import livre_dor   # noqa: E402
@@ -182,12 +187,16 @@ class Appel:
     def __init__(self, chemin: Path, device: Optional[str] = None,
                  timeout_sec: Optional[float] = None,
                  max_duration_sec: Optional[int] = None,
-                 resultat: str = "completed") -> None:
+                 resultat: str = "completed",
+                 sortie: Optional[str] = None) -> None:
         self.chemin = Path(chemin)
         self.device = device
         self.timeout_sec = timeout_sec
         self.max_duration_sec = max_duration_sec
         self.resultat = resultat
+        # Sortie du codec demandée pour cette lecture ("lineout" pour la
+        # sonnerie, "headphone" pour le combiné), cf. §4.1.
+        self.sortie = sortie
         # Horodatages monotones : permettent de mesurer un intervalle entre
         # deux appels (cadence de la sonnerie) et de savoir si l'appel est
         # terminé (fin is None -> lecture encore en cours).
@@ -229,8 +238,14 @@ class AudioFactice:
     # signature identique à audio_io.play
     def play(self, path, should_continue, poll_interval: float = 0.1,
              timeout_sec: Optional[float] = None,
-             device: Optional[str] = None) -> str:
-        appel = Appel(path, device=device, timeout_sec=timeout_sec)
+             device: Optional[str] = None,
+             output: Optional[str] = None) -> str:
+        appel = Appel(path, device=device, timeout_sec=timeout_sec, sortie=output)
+        # Comme le vrai audio_io.play : la commutation du codec précède la
+        # lecture. C'est ce qui rend observable, via AlsaFactice, l'ordre des
+        # bascules sur un parcours complet (§4.1).
+        if output:
+            alsa_io.select_output(output)
         appel.debut = time.monotonic()
         with self._verrou:
             self.lectures.append(appel)
@@ -282,6 +297,16 @@ class AudioFactice:
 
     def a_lu(self, nom: str) -> bool:
         return nom in self.noms_lus()
+
+    def sorties_utilisees(self) -> List[Optional[str]]:
+        """Sortie du codec demandée pour chaque lecture, dans l'ordre (§4.1)."""
+        with self._verrou:
+            return [a.sortie for a in self.lectures]
+
+    def sortie_de(self, nom: str) -> Optional[str]:
+        """Sortie demandée pour la première lecture de ce fichier."""
+        appels = self.lectures_de(nom)
+        return appels[0].sortie if appels else None
 
     def lectures_de(self, nom: str) -> List[Appel]:
         """Tous les appels de lecture portant sur ce nom de fichier."""
@@ -380,15 +405,58 @@ class PopenFactice:
 
 # --- Fichiers WAV factices ----------------------------------------------
 
-def ecrire_wav(chemin: Path, secondes: float = 0.2, frequence: int = 44100) -> Path:
-    """Écrit un vrai WAV mono 16 bits (silence) de la durée demandée."""
+def ecrire_wav(chemin: Path, secondes: float = 0.2,
+               frequence: int = None, canaux: int = None) -> Path:
+    """Écrit un vrai WAV 16 bits (silence) au format courant du projet.
+
+    Par défaut 48 kHz stéréo (§4.2). Les valeurs sont paramétrables pour
+    pouvoir fabriquer un fichier « ancien format » (44 100 Hz, mono) et
+    vérifier que le détecteur de migration le signale.
+    """
+    frequence = config.AUDIO_RATE_HZ if frequence is None else frequence
+    canaux = config.AUDIO_CHANNELS if canaux is None else canaux
     chemin.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(chemin), "wb") as fichier:
-        fichier.setnchannels(1)
+        fichier.setnchannels(canaux)
         fichier.setsampwidth(2)
         fichier.setframerate(frequence)
-        fichier.writeframes(b"\x00\x00" * int(frequence * secondes))
+        fichier.writeframes(b"\x00\x00" * canaux * int(frequence * secondes))
     return chemin
+
+
+# --- Doublure de la commutation des sorties (alsa_io, §4.1) -------------
+
+class AlsaFactice:
+    """Doublure de alsa_io.select_output / setup_card : journalise, ne lance rien.
+
+    Sans elle, chaque lecture tenterait de lancer scripts/audio-setup.sh, qui
+    échouerait faute de carte et de `amixer` sur un poste de développement.
+    `echouer=True` simule un mixer en échec, pour vérifier qu'une commutation
+    ratée n'empêche jamais la lecture.
+    """
+
+    def __init__(self, echouer: bool = False) -> None:
+        self.echouer = echouer
+        self.bascules: List[str] = []
+        self.setups: List[str] = []
+
+    def select_output(self, output: str, force: bool = False) -> bool:
+        self.bascules.append(output)
+        return not self.echouer
+
+    def setup_card(self, mode: str = "headphone", store: bool = False) -> bool:
+        self.setups.append(mode)
+        return not self.echouer
+
+    def is_available(self) -> bool:
+        return not self.echouer
+
+    def derniere_bascule(self) -> Optional[str]:
+        return self.bascules[-1] if self.bascules else None
+
+    def reinitialiser(self) -> None:
+        self.bascules.clear()
+        self.setups.clear()
 
 
 # --- Remplacement temporaire d'un attribut ------------------------------
@@ -439,6 +507,16 @@ _PARAMS_SAUVEGARDES = (
     "RESTITUTION_DIGITS_MAX", "RESTITUTION_SOUND_CARD", "MODE_RELOAD_SEC",
     "DISK_WARNING_MB", "DISK_CRITICAL_MB", "AUDIO_PLAY_TIMEOUT_SEC",
     "WATCHDOG_STALE_AFTER_SEC", "SOUND_CARD",
+    # Sources brutes et mapping rôle -> fichier (§4.2). Sans redirection, un
+    # scénario écrirait dans le vrai audio_src/ du dépôt.
+    "AUDIO_SRC_DIR", "AUDIO_CONFIG_FILE", "RCLONE_CONFIG_FILE",
+    # Journaux : sans redirection, un scénario qui passe par
+    # rclone_sync._log() écrirait dans le vrai logs/rclone.log.
+    "LOGS_DIR", "RCLONE_LOG", "LIVRE_DOR_LOG",
+    # Format commun et sorties du codec (§4.1, §4.3).
+    "AUDIO_RATE_HZ", "AUDIO_CHANNELS", "AUDIO_SAMPLE_FORMAT",
+    "RECORD_RATE_HZ", "RECORD_CHANNELS",
+    "AUDIO_OUTPUT_SONNERIE", "AUDIO_OUTPUT_COMBINE", "AUDIO_SETUP_SCRIPT",
 )
 
 # Horodatage de référence des enregistrements d'invités factices.
@@ -471,7 +549,8 @@ class Banc:
                  generique: bool = True, aucun_message: bool = False,
                  sonnerie: bool = True, machine: bool = True,
                  doublure_audio: bool = True,
-                 audio: Optional[AudioFactice] = None, **parametres: Any) -> None:
+                 audio: Optional[AudioFactice] = None,
+                 alsa: Optional["AlsaFactice"] = None, **parametres: Any) -> None:
         self.restitution = restitution
         self.nb_messages = messages
         self.chiffres_maries = list(chiffres_maries)
@@ -481,6 +560,9 @@ class Banc:
         self.avec_machine = machine
         self.doublure_audio = doublure_audio
         self.audio = audio or AudioFactice()
+        # Toujours posée, même quand audio_io reste intact : sans elle,
+        # chaque lecture lancerait scripts/audio-setup.sh.
+        self.alsa = alsa or AlsaFactice()
         self.parametres = parametres
         self.inputs = gpio_io.PhoneInputs()
         self.machine: Optional[livre_dor.GuestBookStateMachine] = None
@@ -494,11 +576,21 @@ class Banc:
             nom: getattr(config, nom) for nom in _PARAMS_SAUVEGARDES
         }
         self._play, self._record = audio_io.play, audio_io.record
+        self._alsa_select, self._alsa_setup = alsa_io.select_output, alsa_io.setup_card
+        alsa_io.select_output = self.alsa.select_output
+        alsa_io.setup_card = self.alsa.setup_card
+        alsa_io.invalidate_cache()
 
         config.AUDIO_DIR = self._dossier / "audio"
+        config.AUDIO_SRC_DIR = self._dossier / "audio_src"
         config.MESSAGES_DIR = self._dossier / "messages"
         config.STATUS_FILE = self._dossier / "status.json"
         config.MODE_CONFIG_FILE = self._dossier / "mode_config.json"
+        config.AUDIO_CONFIG_FILE = self._dossier / "audio_config.json"
+        config.RCLONE_CONFIG_FILE = self._dossier / "rclone_config.json"
+        config.LOGS_DIR = self._dossier / "logs"
+        config.RCLONE_LOG = config.LOGS_DIR / "rclone.log"
+        config.LIVRE_DOR_LOG = config.LOGS_DIR / "livre_dor.log"
         config.RING_TRIGGER_FILE = self._dossier / "ring_trigger"
         config.TONALITE_WAV = config.AUDIO_DIR / "tonalite.wav"
         config.BIP_WAV = config.AUDIO_DIR / "bip.wav"
@@ -514,6 +606,8 @@ class Banc:
             setattr(config, nom, valeur)
 
         config.AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+        config.AUDIO_SRC_DIR.mkdir(parents=True, exist_ok=True)
+        config.LOGS_DIR.mkdir(parents=True, exist_ok=True)
         config.MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
         ecrire_wav(config.TONALITE_WAV, secondes=1.0)
         ecrire_wav(config.BIP_WAV)
@@ -558,6 +652,8 @@ class Banc:
             self.machine.request_stop()
             self._thread.join(timeout=5.0)
         audio_io.play, audio_io.record = self._play, self._record
+        alsa_io.select_output, alsa_io.setup_card = self._alsa_select, self._alsa_setup
+        alsa_io.invalidate_cache()
         for nom, valeur in self._sauvegarde.items():
             setattr(config, nom, valeur)
         mode_io.invalidate_cache()

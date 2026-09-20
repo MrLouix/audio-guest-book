@@ -79,15 +79,22 @@ def _env_float(name: str, default: float) -> float:
 
 # --- Arborescence (§8) -------------------------------------------------
 
-AUDIO_SRC_DIR = BASE_DIR / "audio_src"   # fichiers sources bruts, non pré-traités
-AUDIO_DIR = BASE_DIR / "audio"           # fichiers panés/gainés, prêts à être joués
+# audio_src/ : fichiers sources bruts, tels que déposés (mp3, m4a, wav…).
+# C'est le seul des deux dossiers synchronisé avec le Drive (§5.4), pour
+# pouvoir y déposer des sons depuis un smartphone.
+AUDIO_SRC_DIR = BASE_DIR / "audio_src"
+# audio/ : WAV convertis (48 kHz, 16 bits, stéréo L = R), prêts à être joués.
+# Entièrement généré depuis audio_src/, jamais synchronisé.
+AUDIO_DIR = BASE_DIR / "audio"
 MESSAGES_DIR = BASE_DIR / "messages"     # enregistrements des invités
 LOGS_DIR = BASE_DIR / "logs"
 STATIC_DIR = BASE_DIR / "static"
+SCRIPTS_DIR = BASE_DIR / "scripts"
 
 STATUS_FILE = BASE_DIR / "status.json"
 RING_TRIGGER_FILE = BASE_DIR / "ring_trigger"
 RCLONE_CONFIG_FILE = BASE_DIR / "rclone_config.json"
+AUDIO_CONFIG_FILE = BASE_DIR / "audio_config.json"
 MODE_CONFIG_FILE = BASE_DIR / "mode_config.json"
 DASHBOARD_CONFIG_FILE = BASE_DIR / "dashboard_config.json"
 SECRET_KEY_FILE = BASE_DIR / "secret_key.txt"
@@ -117,6 +124,38 @@ SOUND_CARD = _env("SOUND_CARD", "plughw:1,0")
 
 # Filet de sécurité contre un sous-processus aplay bloqué (§7.2).
 AUDIO_PLAY_TIMEOUT_SEC = _env_int("AUDIO_PLAY_TIMEOUT_SEC", 180)
+
+# Configuration du codec IQaudio Codec Zero (DA7213). Les numids du DA7213
+# ne vivent que dans ce script — jamais dupliqués côté Python : un numid
+# n'est qu'un index dans l'énumération des contrôles ALSA, qui peut glisser
+# d'une version de driver à l'autre.
+AUDIO_SETUP_SCRIPT = SCRIPTS_DIR / "audio-setup.sh"
+
+# Sorties du codec, nommées par leur rôle matériel et non par leur nom ALSA.
+#   lineout   : un seul haut-parleur mono de sonnerie, qui lit la piste gauche
+#   headphone : écouteur du combiné (L) + écouteur secondaire (R)
+AUDIO_OUTPUT_SONNERIE = _env("AUDIO_OUTPUT_SONNERIE", "lineout")
+AUDIO_OUTPUT_COMBINE = _env("AUDIO_OUTPUT_COMBINE", "headphone")
+
+# Garde-fous sur les appels au script (amixer peut se bloquer sur une carte
+# qui vient d'être débranchée).
+AUDIO_SWITCH_TIMEOUT_SEC = _env_float("AUDIO_SWITCH_TIMEOUT_SEC", 3.0)
+AUDIO_SETUP_TIMEOUT_SEC = _env_float("AUDIO_SETUP_TIMEOUT_SEC", 15.0)
+
+# --- Format audio commun (§4.2, §4.3) -----------------------------------
+
+# 48 kHz : cadence requise par RNNoise, et prérequis du full duplex — la
+# lecture et la capture doivent partager cadence et format.
+AUDIO_RATE_HZ = _env_int("AUDIO_RATE_HZ", 48000)
+# Stéréo avec les deux pistes identiques : le line out mono lit la piste
+# gauche, le casque alimente un écouteur par côté, au même niveau.
+AUDIO_CHANNELS = _env_int("AUDIO_CHANNELS", 2)
+AUDIO_SAMPLE_FORMAT = _env("AUDIO_SAMPLE_FORMAT", "S16_LE")
+
+# Par défaut identiques à la lecture. Volontairement hors MODIFIABLE_PARAMS :
+# changer le format en plein événement scinderait le corpus d'enregistrements.
+RECORD_RATE_HZ = _env_int("RECORD_RATE_HZ", AUDIO_RATE_HZ)
+RECORD_CHANNELS = _env_int("RECORD_CHANNELS", AUDIO_CHANNELS)
 
 # Intervalle de rafraîchissement de status.json en état attente, pour que le
 # watchdog (§7.1) ne le voie jamais périmé lors des longues idles.
@@ -292,6 +331,19 @@ RCLONE_INTERVAL_MIN = _env_int("RCLONE_INTERVAL_MIN", 5)
 RCLONE_TIMEOUT_SEC = _env_int("RCLONE_TIMEOUT_SEC", 120)
 RCLONE_DRYRUN_TIMEOUT_SEC = _env_int("RCLONE_DRYRUN_TIMEOUT_SEC", 20)
 
+# Seconde jambe de synchronisation : audio_src/ en BIDIRECTIONNEL
+# (`rclone bisync`), pour déposer des sonneries ou des messages depuis un
+# smartphone. messages/ reste en `rclone copy` montant : aucune action côté
+# Drive ne doit pouvoir effacer un enregistrement d'invité (§5.4).
+# Le dossier doit être distinct de RCLONE_FOLDER, sans quoi les
+# enregistrements deviendraient eux aussi bidirectionnels.
+RCLONE_SOURCES_FOLDER = _env("RCLONE_SOURCES_FOLDER", "MariageGuestBookSources")
+RCLONE_BISYNC_TIMEOUT_SEC = _env_int("RCLONE_BISYNC_TIMEOUT_SEC", 300)
+# Garde-fou, en POURCENTAGE des fichiers (c'est l'unité de --max-delete pour
+# bisync, dont le défaut est 50 %) : au-delà, rclone abandonne le cycle plutôt
+# que de supprimer en masse.
+RCLONE_BISYNC_MAX_DELETE_PCT = _env_int("RCLONE_BISYNC_MAX_DELETE_PCT", 10)
+
 # Unité systemd régénérée par le dashboard quand l'intervalle change (§5.4) ;
 # symlinkée depuis /etc/systemd/system par scripts/setup_rclone_systemd.sh,
 # de sorte que le réécrire ne demande aucun privilège particulier.
@@ -335,9 +387,20 @@ MODIFIABLE_PARAMS = {
     "SHORT_RECORDING_THRESHOLD_SEC": {"type": "float", "default": 2.0, "label": "Seuil enregistrement court (secondes)"},
     "AUDIO_PLAY_TIMEOUT_SEC": {"type": "int", "default": 180, "label": "Timeout lecture audio (secondes)"},
     "SOUND_CARD": {"type": "str", "default": "plughw:1,0", "label": "Carte son ALSA"},
-    "HOOK_ACTIVE_STATE": {"type": "str", "default": "LOW", "label": "Niveau actif crochet (LOW/HIGH)"},
-    "OFFNORMAL_ACTIF_LEVEL": {"type": "str", "default": "LOW", "label": "Niveau actif cadran (LOW/HIGH)"},
-    "PULSE_ACTIF_LEVEL": {"type": "str", "default": "HIGH", "label": "Niveau actif pulse (LOW/HIGH)"},
+    # Sorties du codec : seul moyen de re-tester un câblage depuis le
+    # dashboard, sans SSH (§4.1).
+    "AUDIO_OUTPUT_SONNERIE": {"type": "str", "default": "lineout",
+                               "choices": ["lineout", "headphone", "both"],
+                               "label": "Sortie de la sonnerie"},
+    "AUDIO_OUTPUT_COMBINE": {"type": "str", "default": "headphone",
+                              "choices": ["lineout", "headphone", "both"],
+                              "label": "Sortie du combiné et de l'écouteur secondaire"},
+    "HOOK_ACTIVE_STATE": {"type": "str", "default": "LOW", "choices": ["LOW", "HIGH"],
+                           "label": "Niveau actif crochet"},
+    "OFFNORMAL_ACTIF_LEVEL": {"type": "str", "default": "LOW", "choices": ["LOW", "HIGH"],
+                               "label": "Niveau actif cadran"},
+    "PULSE_ACTIF_LEVEL": {"type": "str", "default": "HIGH", "choices": ["LOW", "HIGH"],
+                           "label": "Niveau actif pulse"},
     "HOOK_DEBOUNCE_SEC": {"type": "float", "default": 0.075, "label": "Anti-rebond crochet (secondes)"},
     "DIAL_DEBOUNCE_SEC": {"type": "float", "default": 0.02, "label": "Anti-rebond cadran (secondes)"},
     # Mode restitution (§5.7). MODE_RESTITUTION n'est pas listé : la bascule a
@@ -437,7 +500,16 @@ def update_config(new_values: Dict[str, Any]) -> Dict[str, Any]:
                 value = str(value)
         except (ValueError, TypeError):
             return {"ok": False, "erreur": f"Valeur invalide pour {name}: doit être un {expected_type}", "params_modifies": [], "redemarrage_necessaire": False}
-        
+
+        # Valeurs énumérées (sorties audio, niveaux LOW/HIGH). Sans ce
+        # contrôle, un AUDIO_OUTPUT_SONNERIE fantaisiste passerait et rendrait
+        # la sonnerie muette sans le moindre message.
+        choices = param_info.get("choices")
+        if choices and value not in choices:
+            return {"ok": False,
+                    "erreur": f"Valeur invalide pour {name} : attendu l'un de {', '.join(choices)}",
+                    "params_modifies": [], "redemarrage_necessaire": False}
+
         # Vérifier si le paramètre nécessite un redémarrage
         if name in RESTART_REQUIRED_PARAMS:
             redemarrage_necessaire = True

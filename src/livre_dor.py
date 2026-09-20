@@ -36,6 +36,7 @@ import wave
 from pathlib import Path
 from typing import Callable, List, Optional
 
+import alsa_io
 import audio_io
 import config
 import gpio_io
@@ -300,6 +301,7 @@ class GuestBookStateMachine:
                 config.RING_OUT_WAV,
                 should_continue=lambda: not self.inputs.is_hook_up(),
                 timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+                output=config.AUDIO_OUTPUT_SONNERIE,
             )
         finally:
             self._ring_active = False
@@ -331,13 +333,15 @@ class GuestBookStateMachine:
         logger.info("Message tiré au hasard : %s", message_path.name)
         self._set_state(STATE_APPEL_REPONDU, detail=message_path.name)
         audio_io.play(message_path, should_continue=self._hook_up_ignoring_dial,
-                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC)
+                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+                      output=config.AUDIO_OUTPUT_COMBINE)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant le message (appel répondu), retour en attente.")
             return
 
         audio_io.play(config.BIP_WAV, should_continue=self._hook_up_ignoring_dial,
-                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC)
+                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+                      output=config.AUDIO_OUTPUT_COMBINE)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant le bip (appel répondu), retour en attente.")
             return
@@ -352,6 +356,7 @@ class GuestBookStateMachine:
             config.TONALITE_WAV,
             should_continue=lambda: self.inputs.is_hook_up() and not self.inputs.has_pulses(),
             timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+            output=config.AUDIO_OUTPUT_COMBINE,
         )
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant la tonalité, retour en attente.")
@@ -379,13 +384,15 @@ class GuestBookStateMachine:
         self._set_state(STATE_LECTURE_MESSAGE, detail=message_path.name)
         logger.info("Lecture du message : %s", message_path.name)
         audio_io.play(message_path, should_continue=self.inputs.is_hook_up,
-                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC)
+                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+                      output=config.AUDIO_OUTPUT_COMBINE)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant le message, retour en attente.")
             return
 
         audio_io.play(config.BIP_WAV, should_continue=self.inputs.is_hook_up,
-                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC)
+                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+                      output=config.AUDIO_OUTPUT_COMBINE)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant le bip, retour en attente.")
             return
@@ -411,7 +418,8 @@ class GuestBookStateMachine:
             self._set_state(STATE_RESTITUTION_LECTURE, detail="aucun message disponible")
             audio_io.play(restitution_absence_wav(),
                           should_continue=self._hook_up_ignoring_dial,
-                          timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC)
+                          timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+                          output=config.AUDIO_OUTPUT_COMBINE)
             self._wait_for_hangup()
             return
 
@@ -421,6 +429,7 @@ class GuestBookStateMachine:
             config.TONALITE_WAV,
             should_continue=lambda: self.inputs.is_hook_up() and not self.inputs.has_pulses(),
             timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+            output=config.AUDIO_OUTPUT_COMBINE,
         )
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant la tonalité (mode restitution), retour en attente.")
@@ -497,7 +506,8 @@ class GuestBookStateMachine:
                     index, total, message_path.name)
         audio_io.play(message_path, should_continue=self._hook_up_ignoring_dial,
                       timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                      device=config.RESTITUTION_SOUND_CARD)
+                      device=config.RESTITUTION_SOUND_CARD,
+                      output=config.AUDIO_OUTPUT_COMBINE)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant la lecture (mode restitution), retour en attente.")
             return
@@ -619,6 +629,35 @@ def _check_required_audio_files() -> None:
         raise SystemExit(detail + " — lancez d'abord `python3 prepare_audio.py`.")
 
 
+def _check_audio_format() -> None:
+    """Signale les fichiers restés à l'ancien format (§4.2), sans bloquer le démarrage.
+
+    Détecteur de migration : avant le nouveau câblage, audio/ contenait des
+    WAV 44,1 kHz panés à 100 % sur un canal. Joués sur le montage actuel, ils
+    seraient muets d'un côté — la sonnerie ne sortirait pas du haut-parleur,
+    ou un seul écouteur fonctionnerait. Cinq lectures d'en-tête au démarrage
+    coûtent moins qu'un mariage silencieux.
+    """
+    perimes = []
+    for path in sorted(config.AUDIO_DIR.glob("*.wav")):
+        try:
+            with wave.open(str(path), "rb") as wav:
+                conforme = (wav.getnchannels() == config.AUDIO_CHANNELS
+                            and wav.getframerate() == config.AUDIO_RATE_HZ)
+        except (wave.Error, OSError):
+            perimes.append(f"{path.name} (illisible)")
+            continue
+        if not conforme:
+            perimes.append(path.name)
+
+    if perimes:
+        detail = ("Fichiers audio à reconvertir (format attendu : "
+                  f"{config.AUDIO_RATE_HZ} Hz, {config.AUDIO_CHANNELS} canaux) : "
+                  + ", ".join(perimes))
+        logger.warning("%s — lancez `python3 src/prepare_audio.py` ou « Tout "
+                       "reconvertir » depuis le dashboard.", detail)
+
+
 def _wait_for_sound_card(poll_sec: float = 2.0) -> None:
     """Attend que la carte son configurée soit énumérée (§7.2) : ne renonce jamais, retente périodiquement."""
     if audio_io.sound_card_available():
@@ -668,7 +707,16 @@ def main() -> None:
     mode_io.ensure_config_exists()
     logger.info("Mode de fonctionnement : %s", mode_io.mode_label())
     _wait_for_sound_card()
+    # Configuration complète du codec (entrée micro, routage, ALC off) : une
+    # seule fois ici, après l'énumération de la carte. Un avertissement et non
+    # un arrêt — sur une carte déjà figée par `alsactl restore` au démarrage,
+    # le téléphone fonctionne parfaitement.
+    if not alsa_io.setup_card(config.AUDIO_OUTPUT_COMBINE):
+        logger.warning("Configuration ALSA (%s) non appliquée : vérifiez les "
+                       "sorties avec `%s status`.",
+                       config.AUDIO_SETUP_SCRIPT, config.AUDIO_SETUP_SCRIPT)
     _check_required_audio_files()
+    _check_audio_format()
 
     inputs = gpio_io.PhoneInputs()
     gpio_io.setup(inputs)

@@ -38,6 +38,15 @@
           <span class="badge badge-erreur">déconnectée</span>
           {% endif %}
         </p>
+        <p>
+          Sortie active du codec :
+          <strong>{{ audio_output_courant or "inconnue" }}</strong>
+        </p>
+        <p class="muted">
+          La sonnerie sort sur le <em>line out</em> (haut-parleur mono, piste gauche),
+          le combiné et l'écouteur secondaire sur la sortie <em>casque</em>
+          (un écouteur par canal). Le codec est commuté avant chaque lecture.
+        </p>
       </div>
 
       {% if gpio_available and gpio_status %}
@@ -81,6 +90,56 @@
     </section>
 
     <section class="card">
+      <h2>🎵 Fichiers audio</h2>
+
+      <p class="muted">
+        Chaque son est choisi parmi les fichiers déposés dans
+        <code>audio_src/</code> — y compris ceux arrivés par la synchronisation
+        Google Drive depuis un smartphone. Les fichiers gardent leur nom
+        d'origine : nul besoin de les renommer. Enregistrer convertit aussitôt
+        les fichiers choisis en WAV {{ audio_rate }} Hz stéréo, prêts à être joués.
+      </p>
+
+      <form id="audio-form">
+        {% for role in audio_roles %}
+        <label>
+          {{ role.label }}
+          <select name="{{ role.nom }}">
+            <option value="" {% if not role.source %}selected{% endif %}>— aucun —</option>
+            {% for source in audio_sources %}
+            <option value="{{ source }}" {% if role.source == source %}selected{% endif %}>{{ source }}</option>
+            {% endfor %}
+          </select>
+          <span class="audio-etat" data-role="{{ role.nom }}">
+            {% if role.perimee %}
+            <span class="badge badge-erreur">source modifiée, à reconvertir</span>
+            {% elif role.pret %}
+            <span class="badge badge-decroche">converti</span>
+            {% elif role.obligatoire %}
+            <span class="badge badge-erreur">manquant</span>
+            {% else %}
+            <span class="badge">non converti</span>
+            {% endif %}
+            {% if role.origine == "convention" %}
+            <span class="muted">repli : {{ role.source_effective }}</span>
+            {% endif %}
+          </span>
+        </label>
+        {% endfor %}
+
+        <button type="submit" id="audio-save-button">💾 Enregistrer et convertir</button>
+        <button type="button" id="audio-reconvert-button">♻️ Tout reconvertir</button>
+        <p class="muted">
+          « Tout reconvertir » est ce qu'il faut lancer après avoir déposé de
+          nouveaux fichiers sur le Drive. La conversion peut prendre une minute
+          ou deux, et n'est pas possible pendant une communication.
+        </p>
+      </form>
+
+      <p class="muted" id="audio-feedback"></p>
+    </section>
+
+    <section class="card">
       <h2>Paramètres de fonctionnement</h2>
       
       {% if message %}
@@ -109,14 +168,17 @@
             min="0"
             step="0.001"
           >
+          {% elif param_info.choices %}
+          <select name="{{ param_name }}">
+            {% for choix in param_info.choices %}
+            <option value="{{ choix }}" {% if config[param_name] | string == choix %}selected{% endif %}>{{ choix }}</option>
+            {% endfor %}
+          </select>
           {% elif param_info.type == "str" %}
-          <input 
-            type="text" 
-            name="{{ param_name }}" 
+          <input
+            type="text"
+            name="{{ param_name }}"
             value="{{ config[param_name] | string }}"
-            {% if param_name == "HOOK_ACTIVE_STATE" or param_name == "OFFNORMAL_ACTIF_LEVEL" %}
-            placeholder="LOW ou HIGH"
-            {% endif %}
           >
           {% endif %}
         </label>

@@ -115,6 +115,21 @@ def test_simule(rapport: Rapport) -> None:
                         any(n.startswith("message_") for n in joues),
                         f"fichiers joués : {joues}")
 
+        # Le câblage sépare les deux sorties du codec (§4.1) : la sonnerie
+        # part sur le haut-parleur du line out, le message doit revenir dans
+        # les écouteurs. C'est la commutation la plus critique du parcours,
+        # puisque les deux se suivent immédiatement.
+        rapport.egal("la sonnerie part sur le haut-parleur de sonnerie",
+                     banc.audio.sortie_de("ring_out.wav"), config.AUDIO_OUTPUT_SONNERIE)
+        message = next((n for n in joues if n.startswith("message_")), None)
+        rapport.egal("le message qui suit revient dans le combiné",
+                     banc.audio.sortie_de(message) if message else None,
+                     config.AUDIO_OUTPUT_COMBINE)
+        rapport.verifie("le codec a bien été commuté dans cet ordre",
+                        banc.alsa.bascules[:2] == [config.AUDIO_OUTPUT_SONNERIE,
+                                                    config.AUDIO_OUTPUT_COMBINE],
+                        f"bascules : {banc.alsa.bascules}")
+
     rapport.section("5. Fenêtre de grâce après la sonnerie (RING_ANSWER_GRACE_SEC)")
     with Banc(RING_ANSWER_GRACE_SEC=5) as banc:
         banc.declencher_sonnerie_a_distance()

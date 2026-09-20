@@ -36,20 +36,33 @@ def _terminate(proc: subprocess.Popen, grace_sec: float = TERMINATE_GRACE_SEC) -
 def play(path: Path, should_continue: Callable[[], bool],
          poll_interval: float = POLL_INTERVAL_SEC,
          timeout_sec: Optional[float] = None,
-         device: Optional[str] = None) -> str:
+         device: Optional[str] = None,
+         output: Optional[str] = None) -> str:
     """Joue un fichier WAV sur la carte son configurée.
 
     should_continue() est interrogé toutes les poll_interval secondes ; dès
     qu'il renvoie False (ex. raccroché détecté), la lecture est interrompue
     immédiatement. Retourne "completed", "interrupted" ou "error".
 
-    device permet de surcharger le périphérique ALSA (défaut : SOUND_CARD),
-    utilisé par le mode restitution pour router éventuellement les
-    enregistrements mono des invités vers le seul écouteur (§5.7).
+    device permet de surcharger le périphérique ALSA (défaut : SOUND_CARD) :
+    échappatoire de routage laissée au mode restitution (§5.7), qui peut ainsi
+    pointer un périphérique ALSA `route` sans modification de code.
+
+    output commute la sortie du codec avant la lecture (§4.1) : "lineout"
+    pour la sonnerie, "headphone" pour le combiné et l'écouteur secondaire.
+    La commutation est faite AVANT l'ouverture du PCM — la faire après
+    mettrait les premières dizaines de millisecondes sur le mauvais
+    haut-parleur. Un échec de commutation n'empêche jamais la lecture.
     """
     if not path.exists():
         logger.error("Fichier audio introuvable : %s", path)
         return "error"
+
+    if output:
+        # Import local : alsa_io importe ce module (pour card_index), un
+        # import en tête de fichier serait circulaire.
+        import alsa_io
+        alsa_io.select_output(output)
 
     cmd = ["aplay", "-D", device or config.SOUND_CARD, str(path)]
     logger.debug("Lecture : %s", " ".join(cmd))
@@ -85,7 +98,13 @@ def play(path: Path, should_continue: Callable[[], bool],
 
 def record(path: Path, max_duration_sec: int, should_continue: Callable[[], bool],
            poll_interval: float = POLL_INTERVAL_SEC) -> str:
-    """Enregistre directement vers path (WAV mono 44,1 kHz).
+    """Enregistre directement vers path (WAV stéréo 48 kHz, 16 bits).
+
+    48 kHz, et non 44,1 : c'est la cadence exigée par RNNoise, et le full
+    duplex impose que capture et lecture partagent cadence et format (§4.3).
+    Le micro est sur l'entrée Aux gauche, dupliquée sur les deux canaux DAI
+    par scripts/audio-setup.sh (numids 89 et 90) — les deux pistes portent
+    donc le même signal.
 
     should_continue() est interrogé toutes les poll_interval secondes ; dès
     qu'il renvoie False (raccroché), l'enregistrement est arrêté immédiatement
@@ -96,9 +115,9 @@ def record(path: Path, max_duration_sec: int, should_continue: Callable[[], bool
     cmd = [
         "arecord",
         "-D", config.SOUND_CARD,
-        "-f", "S16_LE",
-        "-c", "1",
-        "-r", "44100",
+        "-f", config.AUDIO_SAMPLE_FORMAT,
+        "-c", str(config.RECORD_CHANNELS),
+        "-r", str(config.RECORD_RATE_HZ),
         "-d", str(max_duration_sec),
         str(path),
     ]
@@ -127,12 +146,24 @@ def record(path: Path, max_duration_sec: int, should_continue: Callable[[], bool
     return result
 
 
-def sound_card_available(sound_card: Optional[str] = None) -> bool:
-    """Vérifie que le périphérique ALSA configuré est bien listé par `aplay -l` (§7.2)."""
+def card_index(sound_card: Optional[str] = None) -> Optional[str]:
+    """Index de carte ALSA extrait de « plughw:1,0 » -> « 1 » ; None si illisible.
+
+    Utilisé par sound_card_available() et par alsa_io, qui le passe à
+    scripts/audio-setup.sh : le numéro de carte reste ainsi dérivé de
+    SOUND_CARD, sans constante à tenir à jour en double.
+    """
     sound_card = sound_card or config.SOUND_CARD
     try:
-        card_index = sound_card.split(":")[1].split(",")[0]
+        return sound_card.split(":")[1].split(",")[0]
     except IndexError:
+        return None
+
+
+def sound_card_available(sound_card: Optional[str] = None) -> bool:
+    """Vérifie que le périphérique ALSA configuré est bien listé par `aplay -l` (§7.2)."""
+    index = card_index(sound_card)
+    if index is None:
         return False
     try:
         output = subprocess.run(
@@ -140,7 +171,7 @@ def sound_card_available(sound_card: Optional[str] = None) -> bool:
         ).stdout
     except (subprocess.SubprocessError, OSError):
         return False
-    return f"card {card_index}:" in output
+    return f"card {index}:" in output
 
 
 def _cli() -> None:

@@ -6,10 +6,12 @@ La plupart des points nécessitent le Raspberry Pi, le téléphone câblé et un
 
 ---
 
-## 1. Identification de la carte son
+## 1. Identification et configuration de la carte son
 
-- [ ] `aplay -l` et `arecord -l` exécutés sur le Pi ; carte son USB repérée (ex. `card 1`).
+- [ ] `aplay -l` et `arecord -l` exécutés sur le Pi ; **IQaudio Codec Zero** repéré (ex. `card 1`).
 - [ ] `config.SOUND_CARD` (ou variable d'environnement `SOUND_CARD`) mis à jour en conséquence (ex. `plughw:1,0`).
+- [ ] `sudo ./scripts/audio-setup.sh headphone` exécuté une fois : « Etat sauvegarde (asound.state) » affiché — la carte sera correcte dès le prochain boot.
+- [ ] `./scripts/audio-setup.sh status` : **ALC off** (`off,off`), au moins une sortie active, aucune ligne `! echec numid=`. Un numid en échec signale un glissement de driver : ne pas aller plus loin sans l'avoir corrigé.
 
 ## 2. Sens logique des contacts (multimètre)
 
@@ -42,11 +44,38 @@ python3 tests/run_tous.py --reel     # ou un script à la fois, ci-dessous
 - [ ] `python3 tests/test_enregistrement.py --reel` : message enregistré en raccrochant, puis relu correctement.
 - [ ] `python3 tests/test_status.py --reel` : `status.json` frais, loin du seuil de redémarrage du watchdog.
 
-## 4. Test audio
+## 4. Test audio (deux sorties du codec)
 
-- [ ] Tonalité entendue **uniquement** dans l'écouteur (pas de fuite dans le haut-parleur).
-- [ ] Sonnerie entendue **uniquement** dans le haut-parleur externe (pas de fuite dans l'écouteur).
+- [ ] Format des fichiers générés contrôlé — **48 000 Hz, 2 canaux, 16 bits** :
+      `soxi audio/*.wav` (ou `ffprobe`). Des fichiers à 44 100 Hz ou mono sont
+      des restes de l'ancien câblage : relancer `python3 src/prepare_audio.py`.
+- [ ] `./scripts/audio-setup.sh lineout && aplay -D plughw:1,0 audio/ring_out.wav`
+      → sonnerie entendue **uniquement** sur le haut-parleur de sonnerie.
+- [ ] `./scripts/audio-setup.sh headphone && aplay -D plughw:1,0 audio/message_generique.wav`
+      → message entendu dans **les deux** écouteurs (combiné et secondaire), **au même niveau**.
+      Un écouteur muet = câblage du jack casque à revoir (les fichiers portent le même signal sur les deux pistes).
+- [ ] Aucun « pop » gênant au moment de la bascule entre les deux sorties.
+- [ ] `python3 src/prepare_audio.py --play-all` : chaque fichier sort sur la bonne destination.
 - [ ] Volume du haut-parleur réglé au potentiomètre PAM8403 à un niveau approprié (ni inaudible, ni agressif).
+
+## 4bis. Capture (prérequis RNNoise et full duplex)
+
+- [ ] Enregistrer 5 s (`python3 src/audio_io.py record /tmp/essai.wav --duration 5`) en parlant dans le combiné.
+- [ ] `soxi /tmp/essai.wav` → **48 000 Hz, 2 canaux, 16 bits**.
+- [ ] **Les deux pistes portent du signal** (`ffmpeg -i /tmp/essai.wav -af astats -f null -` :
+      comparer les niveaux RMS des deux canaux). Le micro est sur l'entrée Aux gauche,
+      dupliquée sur les deux canaux DAI par `audio-setup.sh` — si la piste droite ressort
+      muette, le second écouteur n'entendra rien en mode restitution.
+- [ ] Parole clairement audible, sans saturation ni souffle excessif (ALC bien désactivé).
+
+## 4ter. Choix des fichiers audio depuis le dashboard
+
+- [ ] `/settings`, section « Fichiers audio » : chaque rôle utilisé porte un badge **« converti »**.
+- [ ] Changer le fichier d'un rôle → message de succès, et le fichier correspondant
+      de `audio/` a bien un horodatage frais (`ls -l audio/`).
+- [ ] « Tout reconvertir » régénère l'ensemble sans erreur.
+- [ ] Une conversion lancée combiné décroché est **refusée** avec un message clair
+      (garde-fou : décoder sature le Pi et ferait rater un enregistrement en cours).
 
 ## 5. Parcours nominal (scénario « appel sortant »)
 
@@ -65,6 +94,17 @@ python3 tests/run_tous.py --reel     # ou un script à la fois, ci-dessous
 
 - [ ] Enregistrer un message test → le fichier WAV apparaît dans `messages/`, horodaté, lisible.
 - [ ] Attendre le prochain cycle `rclone-sync.timer` (ou déclencher `/rclone` → « Synchroniser maintenant ») → le fichier test apparaît sur le Google Drive configuré.
+- [ ] Les deux dossiers Drive (enregistrements et sources) sont **distincts et non imbriqués** ; le dashboard refuse toute autre saisie.
+- [ ] Synchronisation bidirectionnelle **initialisée avant l'événement** : `/rclone`
+      affiche « active » (et non « à initialiser »). Sinon, bouton « Réinitialiser la
+      synchronisation bidirectionnelle » — ce premier passage peut être long.
+- [ ] **Aller-retour smartphone** : déposer un son dans le dossier Drive des sources
+      → au cycle suivant il apparaît dans `audio_src/` et dans les listes déroulantes
+      de `/settings`. Déposer un fichier localement dans `audio_src/` → il remonte sur le Drive.
+- [ ] Après plusieurs cycles, `messages/` **n'a rien perdu** : la copie montante ne
+      supprime jamais rien, et les enregistrements ne sont jamais en bisync.
+- [ ] `logs/rclone.log` ne contient ni « Bisync critical error » répété, ni avertissement
+      de version rclone trop ancienne.
 
 ## 7. Réseau : bascule WiFi → AP
 
@@ -113,15 +153,19 @@ Puis, sur le matériel, avec quelques messages déjà présents dans `messages/`
 - [ ] Combiné laissé décroché plusieurs minutes : **aucune sonnerie** ne se déclenche.
 - [ ] Après une session de restitution complète, `messages/` **ne contient aucun
       fichier nouveau ni modifié** (`ls -l messages/`) — le mode est en lecture seule.
-- [ ] Écoute au casque : niveau correct dans l'écouteur ; comportement du
-      haut-parleur externe constaté (les enregistrements sont mono, cf. §5.7) et
-      jugé acceptable, ou `RESTITUTION_SOUND_CARD` ajusté.
+- [ ] Écoute : niveau correct dans **les deux** écouteurs, rien ne sort du
+      haut-parleur de sonnerie (la lecture est commutée sur la sortie casque, §4.1).
+      Si le second écouteur reste muet sur les enregistrements récents, reprendre
+      le point 4bis ; `RESTITUTION_SOUND_CARD` reste l'échappatoire de routage.
+- [ ] Les enregistrements antérieurs au passage en 48 kHz (mono 44,1 kHz) restent lisibles.
 - [ ] Retour en mode mariage depuis le dashboard : le parcours d'origine
       (message des mariés, bip, enregistrement) fonctionne de nouveau.
 
 ## 10. Espace disque et stockage
 
 - [ ] Espace disque disponible vérifié (`df -h`), largement au-dessus du seuil d'alerte (500 Mo).
+      **Attention** : un enregistrement stéréo 48 kHz pèse 11,5 Mo/min, soit 2,17 fois
+      l'ancien format mono 44,1 kHz. Compter ~4,6 Go pour 200 messages de 2 min.
 - [ ] `logs/livre_dor.log`, `logs/reseau.log`, `logs/rclone.log` tous non vides et lisibles.
 
 ## 11. Sécurité

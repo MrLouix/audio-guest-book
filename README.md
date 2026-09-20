@@ -18,7 +18,7 @@ Sur le Raspberry Pi (Raspberry Pi OS Lite / Bookworm) :
 ./scripts/install.sh
 ```
 
-Installe les paquets système (`alsa-utils`, `rclone`, `ffmpeg`, `avahi-daemon`), configure le hostname `livredor` (mDNS), crée un environnement virtuel Python avec les dépendances de `requirements.txt`, et vérifie l'arborescence du projet ainsi que la présence de la carte son USB.
+Installe les paquets système (`alsa-utils`, `rclone`, `ffmpeg`, `avahi-daemon`), configure le hostname `livredor` (mDNS), crée un environnement virtuel Python avec les dépendances de `requirements.txt`, vérifie l'arborescence du projet et la présence du Codec Zero, applique `scripts/audio-setup.sh` sous root (`alsactl store`, pour que la carte soit correcte dès le boot) et signale une version de rclone trop ancienne pour `bisync`.
 
 ## Gestion de l'environnement virtuel Python
 
@@ -43,16 +43,48 @@ Les paramètres (broches GPIO, carte son, seuils réseau, etc.) sont centralisé
 
 Le code Python vit dans `src/` ; l'arborescence de données (`audio_src/`, `audio/`, `messages/`, `logs/`, `static/`, `templates/`, `status.json`...) reste à la racine du projet, conformément à l'arborescence de déploiement du §8. Tous les scripts s'exécutent directement (`python3 src/<script>.py`), sans installation du projet ni `PYTHONPATH` à configurer.
 
-## Pré-traitement audio (Sprint 1)
+## Sorties audio (IQaudio Codec Zero)
 
-Placer les fichiers sources bruts dans `audio_src/` (`sonnerie.*`, `message_generique.*`, `message_0.*` … `message_9.*`), puis :
+Les deux sorties du codec sont câblées à des destinations différentes :
+
+| Sortie du codec | Matériel | Ce qui y passe |
+|---|---|---|
+| **line out** | 1 haut-parleur **mono** de sonnerie, qui lit la piste **gauche** | `ring_out.wav` |
+| **headphone** (stéréo) | écouteur du combiné (**L**) + écouteur secondaire (**R**) | tonalité, messages des mariés, bip, mode restitution |
+
+Le codec ne peut pas alimenter les deux en même temps : il est **commuté avant chaque lecture**, line out pour la sonnerie, casque pour tout le reste. Tous les fichiers joués sont donc **stéréo avec les deux pistes identiques** — aucun panning, contrairement au câblage précédent où les deux destinations se partageaient une seule sortie stéréo.
+
+Tous les réglages du DA7213 (numids `amixer`) vivent dans `scripts/audio-setup.sh`, et nulle part ailleurs : un numid n'est qu'un index dans l'énumération des contrôles ALSA, qui peut glisser d'une version de driver à l'autre. `src/alsa_io.py` ne connaît que trois mots — `lineout`, `headphone`, `both`.
 
 ```bash
-python3 src/prepare_audio.py            # génère tous les fichiers panés/gainés dans audio/
-python3 src/prepare_audio.py --play-all  # rejoue chaque fichier généré, pour vérifier le panning au casque
+./scripts/audio-setup.sh status           # état courant (entrée, routage, sorties)
+./scripts/audio-setup.sh headphone        # configuration complète, sortie casque
+./scripts/audio-setup.sh switch-lineout   # bascule de sortie seule (quelques ms)
+python3 src/alsa_io.py status             # même chose, vu depuis Python
 ```
 
-`tonalite.wav` (440+480 Hz) et `bip.wav` sont générés par synthèse, sans fichier source. Un chiffre sans fichier `message_N.*` correspondant est simplement ignoré (le fallback `message_generique.wav` sera utilisé par `livre_dor.py`).
+`livre_dor.py` applique la configuration complète une fois au démarrage, puis ne fait plus que des bascules rapides. Un échec de commutation est journalisé mais n'empêche jamais la lecture : le mauvais haut-parleur vaut mieux que le silence en plein mariage.
+
+## Pré-traitement audio
+
+Deux dossiers, deux rôles :
+
+- **`audio_src/`** — les fichiers sources bruts, tels que déposés (mp3, m4a, wav…), **avec leur nom d'origine**. C'est le seul des deux qui est synchronisé avec Google Drive : on peut y déposer une sonnerie ou un message depuis un smartphone.
+- **`audio/`** — les WAV convertis, prêts à être joués. Entièrement généré, jamais synchronisé, jamais édité à la main.
+
+La conversion produit du **48 kHz, 16 bits (S16_LE), stéréo L = R**. 48 kHz parce que c'est la cadence exigée par RNNoise, et parce que le full duplex impose que lecture et capture partagent cadence et format — `arecord` enregistre donc lui aussi en 48 kHz stéréo.
+
+Le fichier qui joue chaque rôle (sonnerie, message générique, message 0 à 9, annonce « aucun message ») se choisit **dans le dashboard**, page Paramètres, par liste déroulante sur le contenu de `audio_src/` — aucun renommage nécessaire. Le choix est enregistré dans `audio_config.json` ; un rôle sans choix explicite retombe sur l'ancienne convention de nommage (`audio_src/sonnerie.*`), ce qui laisse fonctionner une installation antérieure telle quelle.
+
+En ligne de commande :
+
+```bash
+python3 src/prepare_audio.py                 # (re)génère tout dans audio/
+python3 src/prepare_audio.py --role sonnerie  # un seul rôle
+python3 src/prepare_audio.py --play-all       # rejoue chaque fichier sur SA sortie
+```
+
+`tonalite.wav` (440+480 Hz) et `bip.wav` (800 Hz, 600 ms, encadré de silence) sont générés par synthèse, sans fichier source. Un rôle sans source est simplement ignoré : `livre_dor.py` retombe sur `message_generique.wav`. Chaque fichier est écrit via un temporaire puis `os.replace()` — une reconversion déclenchée depuis le dashboard ne peut donc pas faire lire un WAV tronqué à `aplay`.
 
 Les primitives de lecture/enregistrement bas niveau (`audio_io.py`) peuvent être testées isolément :
 
@@ -94,6 +126,16 @@ python3 src/dashboard_app.py   # démarre le serveur sur http://0.0.0.0:5000/
 ```
 
 Page `/` : état en direct avec code couleur, nombre de messages, mode réseau + IP (détection best-effort via `network_info.py`, en attendant `wifi_or_ap.sh` au Sprint 8), derniers logs (auto-rafraîchi : statut ~4 s, logs ~8 s, scroll préservé), et un bouton « Sonner maintenant ». API : `/api/status` (état + réseau + nb messages), `/api/logs` (150 dernières lignes), `/api/messages/count`, `/api/ring` (POST, crée `ring_trigger`). Toutes les lectures tolèrent l'absence de fichier (`status.json`, logs) sans jamais renvoyer d'erreur 500. Le port est fixe (`WEB_PORT=5000`) : s'il est déjà occupé, le service s'arrête avec un message explicite plutôt que de basculer sur un autre port ; le port réellement utilisé est écrit dans `active_port.txt`.
+
+### Page Paramètres : choix des fichiers audio
+
+Section **« 🎵 Fichiers audio »** : une liste déroulante par rôle (sonnerie, message générique, message 0 à 9, annonce « aucun message »), alimentée par le contenu de `audio_src/`. Enregistrer écrit le choix dans `audio_config.json` **et convertit aussitôt** les seuls rôles modifiés ; un badge indique par rôle s'il est converti, absent, ou si sa source a changé depuis la dernière conversion (typiquement après une synchro Drive). Le bouton « Tout reconvertir » régénère l'ensemble.
+
+API (administrateur uniquement pour les écritures) : `GET /api/audio/sources`, `POST /api/audio/roles`, `POST /api/audio/reconvert`, `POST /api/audio/test` (joue un fichier généré sur sa sortie, pour vérifier le câblage).
+
+Deux garde-fous : les conversions sont refusées (409) tant que `status.json` n'est pas en `attente` — décoder une dizaine de fichiers sature le Pi Zero 2 W et provoquerait des ratés si un invité était en train de laisser son message — et un verrou non bloquant répond « occupé » plutôt que d'empiler deux décodages. Les noms de fichier venus du formulaire sont validés : ni chemin absolu, ni `..`, ni sous-chemin, et le fichier doit exister dans `audio_src/`.
+
+Le formulaire des fichiers audio est **distinct** de celui des paramètres de fonctionnement : changer un timeout ne déclenche pas une conversion.
 
 ## Authentification du dashboard (Sprint 6)
 
@@ -146,17 +188,31 @@ Comme pour le GPIO (Sprint 2), la logique de décision a été vérifiée sans m
 
 Les unités systemd (`systemd/wifi-or-ap.service` + `.timer`) sont fournies mais pas encore installées automatiquement — l'activation de l'ensemble des services sera finalisée au Sprint 10.
 
-## Synchronisation Google Drive (Sprint 9)
+## Synchronisation Google Drive
 
-`src/rclone_sync.py` exécute `rclone copy` (**jamais `sync`** : n'ajoute que les fichiers nouveaux/modifiés, ne supprime jamais rien ni en local ni sur le Drive) vers le remote/dossier configurés dans `rclone_config.json` (contrat §8 : `remote`, `dossier`, `intervalle_min`, `actif`). Un échec (pas d'internet, remote indisponible...) est toléré : journalisé dans `logs/rclone.log`, sans jamais planter — le prochain cycle du timer retentera.
+`src/rclone_sync.py` exécute **deux jambes par cycle**, aux règles volontairement différentes :
+
+| Dossier | Sens | Commande | Pourquoi |
+|---|---|---|---|
+| `messages/` | montant seul | `rclone copy` (**jamais `sync`**) | Les enregistrements des invités sont le livrable du mariage : aucune action côté Drive ne doit pouvoir les effacer. |
+| `audio_src/` | **bidirectionnel** | `rclone bisync` | Pour déposer une sonnerie ou un message des mariés depuis un smartphone et le retrouver sur le Pi — et inversement. |
+
+Les deux dossiers Drive doivent être **distincts et non imbriqués** ; le dashboard refuse toute autre configuration, sinon les enregistrements deviendraient de fait bidirectionnels.
+
+`rclone_config.json` (contrat §8) : `remote`, `dossier`, `intervalle_min`, `actif`, `sources_dossier`, `sources_actif`, `sources_resync_fait`. Les nouvelles clés apparaissent seules sur une installation existante (fusion sur les valeurs par défaut), avec `sources_actif` à `false` : rien ne change tant que la synchro bidirectionnelle n'est pas activée depuis `/rclone`.
+
+Un échec (pas d'internet, remote indisponible...) est toléré : journalisé dans `logs/rclone.log`, sans jamais planter — le prochain cycle du timer retentera.
+
+**Bootstrap `--resync`.** `bisync` a besoin d'un premier passage qui établit l'état de référence. Il est lancé automatiquement au premier cycle, *à condition* que rclone soit assez récent (≥ 1.66) pour `--resync-mode newer` : sans cette option, le resync prendrait le Pi comme référence et supprimerait du Drive tout ce qui n'y est pas encore descendu. Sur un rclone plus ancien, l'initialisation refuse de se faire toute seule et demande le bouton dédié de `/rclone`. Si rclone perd ensuite son état, un `--resync` est retenté une fois, automatiquement. Un verrou `flock` garantit qu'un cycle du timer et le bouton « Synchroniser maintenant » ne se marchent jamais dessus.
 
 ```bash
 rclone config                       # configuration initiale du remote (une fois, avant l'événement)
-python3 src/rclone_sync.py --run    # exécute un cycle de synchronisation immédiatement
+python3 src/rclone_sync.py --run      # un cycle complet (messages + sources audio)
+python3 src/rclone_sync.py --resync   # (ré)initialise la synchro bidirectionnelle de audio_src/
 sudo ./scripts/setup_rclone_systemd.sh   # installation unique : symlinks systemd + règle sudoers ciblée
 ```
 
-Page **`/rclone`** (protégée) : statut (dernière synchronisation réussie, fichiers en attente — calculés via `rclone copy --dry-run`, sans rien modifier —, erreurs récentes lues dans `logs/rclone.log`), bouton « Synchroniser maintenant » (`/api/rclone/sync-now`, exécuté en tâche de fond grâce à `threaded=True` sur le serveur pour ne pas geler le reste du dashboard), et formulaire de configuration. **Changer l'intervalle régénère** `systemd/rclone-sync.timer` puis recharge le service (`systemctl daemon-reload && restart`) automatiquement, sans intervention shell.
+Page **`/rclone`** (protégée) : statut de chaque jambe (dernière synchronisation réussie, fichiers en attente — calculés via `rclone copy --dry-run`, sans rien modifier —, erreurs récentes lues dans `logs/rclone.log`, état d'initialisation du bisync), bouton « Synchroniser maintenant » (`/api/rclone/sync-now`, exécuté en tâche de fond grâce à `threaded=True` sur le serveur pour ne pas geler le reste du dashboard), bouton « Réinitialiser la synchronisation bidirectionnelle » (`/api/rclone/resync`, administrateur, avec confirmation — ce passage peut être long, il se fait à l'installation et non pendant l'événement), et formulaire de configuration. **Changer l'intervalle régénère** `systemd/rclone-sync.timer` puis recharge le service (`systemctl daemon-reload && restart`) automatiquement, sans intervention shell.
 
 `scripts/setup_rclone_systemd.sh` symlinke les unités depuis le dépôt (le dashboard peut donc réécrire `systemd/rclone-sync.timer` directement, sans privilège particulier) et installe une **règle sudoers strictement ciblée** — NOPASSWD limité à `systemctl daemon-reload`, `restart rclone-sync.timer` et `start rclone-sync.timer`, jamais un accès plus large (point de sécurité identifié par la spec, §5.4).
 
@@ -227,7 +283,7 @@ Le mariage passé, le téléphone devient un **lecteur des messages laissés par
 
 **Empreinte sur le Raspberry Pi** (mesurée) : le mode est en **lecture seule** sur `messages/` — parcourir les messages n'écrit rien. En attente il n'écrit **aucun octet** sur la carte SD, et `mode_config.json` est servi par le page cache (`read_bytes = 0`). RSS stable à 15,7 Mo sur 150 appels enchaînés, sans fuite de descripteur ni de thread. Un appel complet coûte 28 Ko (7 écritures de `status.json`). À comparer aux ~10 Mo écrits par message de 2 min en mode mariage.
 
-**Point de vigilance matériel** : les enregistrements des invités sont mono, alors que les fichiers préparés sont stéréo panés (gauche = écouteur). Joué via `plughw`, un fichier mono est dupliqué sur les deux canaux : les messages sortent donc aussi par le haut-parleur externe. À constater au casque ; pour limiter l'écoute à l'écouteur, définir un périphérique ALSA `route` et le pointer via `RESTITUTION_SOUND_CARD`, sans modification de code.
+**Point de vigilance matériel** : le micro est câblé sur l'entrée **Aux gauche**, dupliquée sur les deux canaux DAI par `scripts/audio-setup.sh` (numids 89 et 90) — les deux pistes d'un enregistrement portent donc le même signal. À vérifier sur la première prise réelle : si la piste droite ressortait muette, le second écouteur n'entendrait rien en mode restitution. La lecture, elle, est toujours commutée sur la sortie casque, jamais sur le haut-parleur de sonnerie. `RESTITUTION_SOUND_CARD` reste disponible comme échappatoire de routage ALSA, sans modification de code.
 
 ## Tests unitaires par fonction (`tests/`)
 

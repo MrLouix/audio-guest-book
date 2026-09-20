@@ -8,9 +8,18 @@
   var settingsForm = document.getElementById("settings-form");
   var settingsFeedback = document.getElementById("settings-feedback");
   var saveMessage = document.getElementById("save-message");
+  var audioForm = document.getElementById("audio-form");
+  var audioFeedback = document.getElementById("audio-feedback");
+  var audioSaveButton = document.getElementById("audio-save-button");
+  var audioReconvertButton = document.getElementById("audio-reconvert-button");
 
   // Rafraîchir le statut GPIO toutes les 500ms
   var GPIO_REFRESH_MS = 500;
+
+  // Décoder une dizaine de fichiers sur un Pi Zero 2 W prend du temps ;
+  // fetch() n'a aucun timeout par défaut, l'interface resterait sinon
+  // bloquée indéfiniment sur « Conversion en cours… ».
+  var AUDIO_TIMEOUT_MS = 180000;
 
   // Fonction pour rafraîchir le statut GPIO
   function refreshGPIOStatus() {
@@ -109,6 +118,94 @@
       });
   }
 
+  // --- Fichiers audio : choix des sources et conversion -----------------
+
+  // Réaffiche les badges d'état sans recharger la page : après une
+  // conversion, recharger ferait perdre le message de résultat.
+  function renderAudioRoles(roles) {
+    if (!roles) return;
+    roles.forEach(function (role) {
+      var cellule = document.querySelector('.audio-etat[data-role="' + role.nom + '"]');
+      if (!cellule) return;
+      var badge, texte;
+      if (role.perimee) {
+        badge = "badge badge-erreur";
+        texte = "source modifiée, à reconvertir";
+      } else if (role.pret) {
+        badge = "badge badge-decroche";
+        texte = "converti";
+      } else if (role.obligatoire) {
+        badge = "badge badge-erreur";
+        texte = "manquant";
+      } else {
+        badge = "badge";
+        texte = "non converti";
+      }
+      var html = '<span class="' + badge + '">' + texte + "</span>";
+      if (role.origine === "convention") {
+        html += ' <span class="muted">repli : ' + role.source_effective + "</span>";
+      }
+      cellule.innerHTML = html;
+    });
+  }
+
+  function audioRequest(url, body, message) {
+    if (audioFeedback) audioFeedback.textContent = message;
+    if (audioSaveButton) audioSaveButton.disabled = true;
+    if (audioReconvertButton) audioReconvertButton.disabled = true;
+
+    var controleur = new AbortController();
+    var minuterie = setTimeout(function () {
+      controleur.abort();
+    }, AUDIO_TIMEOUT_MS);
+
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controleur.signal,
+    })
+      .then(function (response) {
+        return response.json().then(function (json) {
+          return { ok: response.ok, data: json };
+        });
+      })
+      .then(function (result) {
+        if (audioFeedback) {
+          audioFeedback.textContent = result.ok
+            ? result.data.message || "Terminé."
+            : "Erreur : " + (result.data.erreur || "erreur inconnue");
+        }
+        renderAudioRoles(result.data.roles);
+      })
+      .catch(function (error) {
+        if (audioFeedback) {
+          audioFeedback.textContent =
+            error.name === "AbortError"
+              ? "Conversion trop longue : vérifiez les logs du dashboard."
+              : "Erreur : " + error.message;
+        }
+      })
+      .finally(function () {
+        clearTimeout(minuterie);
+        if (audioSaveButton) audioSaveButton.disabled = false;
+        if (audioReconvertButton) audioReconvertButton.disabled = false;
+      });
+  }
+
+  function handleAudioSubmit(event) {
+    event.preventDefault();
+    var data = {};
+    new FormData(event.target).forEach(function (valeur, cle) {
+      data[cle] = valeur;
+    });
+    audioRequest("/api/audio/roles", data, "Conversion en cours…");
+  }
+
+  function handleReconvertAll() {
+    audioRequest("/api/audio/reconvert", {}, "Reconversion de tous les fichiers…");
+  }
+
   // Initialisation
   function init() {
     // Démarrer le rafraîchissement périodique du GPIO
@@ -120,6 +217,15 @@
     // Gérer le formulaire
     if (settingsForm) {
       settingsForm.addEventListener("submit", handleFormSubmit);
+    }
+
+    // Formulaire des fichiers audio : charge utile disjointe de celle des
+    // paramètres, pour ne pas déclencher une conversion en changeant un timeout.
+    if (audioForm) {
+      audioForm.addEventListener("submit", handleAudioSubmit);
+    }
+    if (audioReconvertButton) {
+      audioReconvertButton.addEventListener("click", handleReconvertAll);
     }
   }
 
