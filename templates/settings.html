@@ -151,11 +151,13 @@
         <label>
           {{ param_info.label }}
           {% if param_info.type == "int" %}
-          <input 
-            type="number" 
-            name="{{ param_name }}" 
-            value="{{ config[param_name] | int }}" 
-            {% if param_name in ["RING_INTERVAL_SEC", "MAX_RECORD_SEC", "AUDIO_PLAY_TIMEOUT_SEC"] %}
+          <input
+            type="number"
+            name="{{ param_name }}"
+            value="{{ config[param_name] | int }}"
+            {% if param_info.min is defined %}
+            min="{{ param_info.min }}"
+            {% elif param_name in ["MAX_RECORD_SEC", "AUDIO_PLAY_TIMEOUT_SEC"] %}
             min="1"
             {% endif %}
             step="1"

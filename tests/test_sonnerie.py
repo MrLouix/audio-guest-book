@@ -96,6 +96,46 @@ def test_simule(rapport: Rapport) -> None:
         rapport.verifie("le drapeau est consommé",
                         not config.RING_TRIGGER_FILE.exists())
 
+    rapport.section("3bis. Sonnerie périodique désactivée (RING_INTERVAL_SEC = 0)")
+    with harness.journal_status() as journal, Banc(RING_INTERVAL_SEC=0) as banc:
+        # Sans le garde-fou, « >= 0 » est toujours vrai et le téléphone
+        # sonnerait en boucle, sans interruption : exactement l'inverse.
+        time.sleep(1.0)
+        rapport.verifie("le téléphone ne sonne jamais de lui-même",
+                        not banc.audio.a_lu("ring_out.wav"),
+                        f"fichiers joués : {banc.audio.noms_lus()}")
+        rapport.verifie("le dashboard sait que c'est volontaire, pas une panne",
+                        any(detail == "sonnerie périodique désactivée"
+                            for etat, detail in journal if etat == livre_dor.STATE_ATTENTE),
+                        f"états publiés : {journal}")
+
+        # La coupure ne porte que sur la sonnerie périodique : tout le reste
+        # du parcours doit continuer de fonctionner.
+        banc.declencher_sonnerie_a_distance()
+        rapport.verifie("le bouton « Sonner maintenant » fonctionne toujours",
+                        banc.attendre_lecture("ring_out.wav", timeout=1.5),
+                        f"fichiers joués : {banc.audio.noms_lus()}")
+
+    # Banc distinct : décrocher juste après la sonnerie ci-dessus tomberait
+    # dans RING_ANSWER_GRACE_SEC et ouvrirait — à raison — le parcours
+    # « appel entrant ». Ce qu'on veut vérifier ici, c'est le parcours
+    # nominal, hors de toute sonnerie.
+    with Banc(RING_INTERVAL_SEC=0) as banc:
+        banc.decrocher()
+        rapport.verifie("un décroché ouvre le parcours normal (tonalité, cadran)",
+                        banc.attendre_etat(livre_dor.STATE_NUMEROTATION, timeout=2.0),
+                        f"état observé : {banc.etat}")
+        rapport.verifie("la tonalité est bien jouée",
+                        banc.audio.a_lu("tonalite.wav"),
+                        f"fichiers joués : {banc.audio.noms_lus()}")
+        banc.raccrocher()
+
+    with Banc(RING_INTERVAL_SEC=-1) as banc:
+        time.sleep(0.6)
+        rapport.verifie("une valeur négative coupe aussi la sonnerie",
+                        not banc.audio.a_lu("ring_out.wav"),
+                        f"fichiers joués : {banc.audio.noms_lus()}")
+
     rapport.section("4. Décroché pendant la sonnerie : appel entrant (§1.2)")
     with Banc(RING_ANSWER_GRACE_SEC=5) as banc:
         banc.declencher_sonnerie_a_distance()

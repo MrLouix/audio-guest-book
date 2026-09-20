@@ -109,7 +109,7 @@ Chaque sprint liste : objectifs, tâches, fichiers concernés, critères d'accep
 **Objectif :** ajouter la branche parallèle « appel entrant » (simulation d'un vrai appel) et la sonnerie (périodique + déclenchement distant).
 
 **Tâches :**
-- Sonnerie périodique en état `attente` : joue `ring_out.wav` toutes les `RING_INTERVAL_SEC` (défaut 90 s), interrompue immédiatement au décroché.
+- Sonnerie périodique en état `attente` : joue `ring_out.wav` toutes les `RING_INTERVAL_SEC` (défaut 90 s), interrompue immédiatement au décroché. `RING_INTERVAL_SEC = 0` la désactive entièrement.
 - Vérification à chaque itération de l'existence du fichier drapeau `ring_trigger` → sonnerie immédiate puis suppression du fichier.
 - Drapeau interne « sonnerie récente » actif pendant la sonnerie + `RING_ANSWER_GRACE_SEC` (défaut 5 s) après sa fin.
 - Si décroché pendant ce drapeau → transition vers `appel_repondu` : coupe la sonnerie, **pas de tonalité, cadran ignoré**, tirage aléatoire d'un message parmi tous les `message_N.wav` + `message_generique.wav`, sans répéter le dernier tiré, puis bip → enregistrement → sauvegarde au raccroché.
