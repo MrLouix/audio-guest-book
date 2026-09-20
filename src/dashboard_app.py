@@ -22,6 +22,8 @@ from typing import List
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.serving import make_server
 
+import alsa_io
+import audio_config
 import audio_io
 import auth
 import config
@@ -273,8 +275,13 @@ def rclone_page():
             intervalle_min = config.RCLONE_INTERVAL_MIN
         intervalle_min = max(1, intervalle_min)
         actif = request.form.get("actif") == "on"
+        sources_dossier = (request.form.get("sources_dossier", "").strip()
+                           or config.RCLONE_SOURCES_FOLDER)
+        sources_actif = request.form.get("sources_actif") == "on"
 
-        result = rclone_sync.update_config(remote, dossier, intervalle_min, actif)
+        result = rclone_sync.update_config(remote, dossier, intervalle_min, actif,
+                                           sources_dossier=sources_dossier,
+                                           sources_actif=sources_actif)
         if not result["ok"]:
             error = result["erreur"]
 
@@ -310,8 +317,22 @@ def mode_page():
 
 @app.route("/api/rclone/sync-now", methods=["POST"])
 def api_rclone_sync_now():
-    """Lance rclone copy immédiatement et retourne le résultat (§5.2)."""
+    """Lance un cycle complet immédiatement et retourne le résultat (§5.2)."""
     result = rclone_sync.run_sync()
+    return jsonify(result), (200 if result.get("ok") else 502)
+
+
+@app.route("/api/rclone/resync", methods=["POST"])
+def api_rclone_resync():
+    """Réinitialise la synchronisation bidirectionnelle de audio_src/ (§5.4).
+
+    Réservé à l'administrateur : ce premier passage établit l'état de
+    référence et peut transférer beaucoup — à faire à l'installation, pas
+    pendant l'événement.
+    """
+    if not session.get("is_admin"):
+        return jsonify({"erreur": "Seul un administrateur peut réinitialiser la synchronisation"}), 403
+    result = rclone_sync.run_bisync_sources(resync=True)
     return jsonify(result), (200 if result.get("ok") else 502)
 
 
@@ -335,6 +356,10 @@ def settings_page():
         gpio_available=gpio_io.is_gpio_available(),
         sound_card=config.SOUND_CARD,
         sound_card_available=sound_card_available,
+        audio_roles=audio_config.mapping_status(),
+        audio_sources=audio_config.available_sources(),
+        audio_output_courant=alsa_io.current_output(),
+        audio_rate=config.AUDIO_RATE_HZ,
     )
 
 
@@ -405,6 +430,162 @@ def api_gpio_status():
         "gpio": gpio_status,
         "gpio_available": gpio_io.is_gpio_available(),
     })
+
+
+# --- Choix et conversion des fichiers audio (§4.2, §5.2) ----------------
+
+
+def _audio_payload(extra: dict = None) -> dict:
+    """État complet des rôles, renvoyé après chaque action pour rafraîchir l'UI."""
+    payload = {
+        "roles": audio_config.mapping_status(),
+        "sources": audio_config.available_sources(),
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _refuse_si_communication():
+    """Refuse une conversion en pleine communication : réponse Flask ou None.
+
+    Décoder une dizaine de fichiers sature le Pi Zero 2 W ; le faire pendant
+    qu'un invité laisse son message provoquerait des ratés à l'enregistrement.
+    Même esprit que le garde-fou de transcribe_batch.py.
+    """
+    etat = (status_io.read_status() or {}).get("etat")
+    if etat not in (None, "attente", "erreur"):
+        return jsonify({"erreur": f"Téléphone en cours d'utilisation (état « {etat} ») : "
+                                  "réessayez une fois raccroché."}), 409
+    return None
+
+
+@app.route("/api/audio/sources")
+def api_audio_sources():
+    """Liste les fichiers d'audio_src/ et l'état de chaque rôle (§4.2)."""
+    return jsonify(_audio_payload())
+
+
+@app.route("/api/audio/roles", methods=["POST"])
+def api_audio_roles():
+    """Enregistre le choix de fichier de chaque rôle, puis convertit (§4.2).
+
+    Seuls les rôles réellement modifiés sont reconvertis : changer une
+    sonnerie ne doit pas redécoder les douze messages.
+    """
+    if not session.get("is_admin"):
+        return jsonify({"erreur": "Seul un administrateur peut modifier les fichiers audio"}), 403
+
+    data = request.get_json(silent=True) or request.form
+    mapping = {nom: data[nom] for nom in audio_config.ROLE_NAMES if nom in data}
+    if not mapping:
+        return jsonify({"erreur": "Aucun rôle à modifier"}), 400
+
+    refus = _refuse_si_communication()
+    if refus is not None:
+        return refus
+
+    import prepare_audio
+
+    resultat = audio_config.set_role_sources(mapping)
+    if not resultat["ok"]:
+        return jsonify({"erreur": resultat["erreur"]}), 400
+
+    if not resultat["roles_modifies"]:
+        return jsonify(_audio_payload({
+            "ok": True, "resultats": {},
+            "message": "Aucun changement : rien à convertir.",
+        }))
+
+    conversion = prepare_audio.prepare_all_locked(resultat["roles_modifies"])
+    if conversion.get("occupe"):
+        return jsonify({"erreur": conversion["message"]}), 409
+
+    erreurs = conversion["erreurs"]
+    message = (f"{len(conversion['generes'])} fichier(s) converti(s)."
+               if not erreurs else
+               f"{len(erreurs)} conversion(s) en échec : "
+               + " ; ".join(f"{role} — {msg}" for role, msg in erreurs.items()))
+
+    return jsonify(_audio_payload({
+        "ok": not erreurs,
+        "resultats": conversion["resultats"],
+        "message": message,
+    }))
+
+
+@app.route("/api/audio/reconvert", methods=["POST"])
+def api_audio_reconvert():
+    """Reconvertit tous les rôles (ou ceux demandés) depuis audio_src/ (§4.2).
+
+    Utile après une synchronisation Drive, qui remplace des sources sans
+    passer par le formulaire.
+    """
+    if not session.get("is_admin"):
+        return jsonify({"erreur": "Seul un administrateur peut reconvertir les fichiers audio"}), 403
+
+    refus = _refuse_si_communication()
+    if refus is not None:
+        return refus
+
+    import prepare_audio
+
+    data = request.get_json(silent=True) or {}
+    demandes = data.get("roles") or None
+    if demandes is not None:
+        inconnus = [r for r in demandes if r not in audio_config.ROLE_NAMES]
+        if inconnus:
+            return jsonify({"erreur": f"Rôle(s) inconnu(s) : {', '.join(inconnus)}"}), 400
+
+    conversion = prepare_audio.prepare_all_locked(demandes)
+    if conversion.get("occupe"):
+        return jsonify({"erreur": conversion["message"]}), 409
+
+    erreurs = conversion["erreurs"]
+    message = (f"{len(conversion['generes'])} fichier(s) converti(s), "
+               f"{len(conversion['ignores'])} rôle(s) sans source.")
+    if erreurs:
+        message += (" Échecs : "
+                    + " ; ".join(f"{role} — {msg}" for role, msg in erreurs.items()))
+
+    return jsonify(_audio_payload({
+        "ok": not erreurs,
+        "resultats": conversion["resultats"],
+        "message": message,
+    }))
+
+
+@app.route("/api/audio/test", methods=["POST"])
+def api_audio_test():
+    """Joue un fichier généré sur sa sortie, pour vérifier le câblage (§7.6)."""
+    if not session.get("is_admin"):
+        return jsonify({"erreur": "Seul un administrateur peut lancer un test audio"}), 403
+
+    refus = _refuse_si_communication()
+    if refus is not None:
+        return refus
+
+    import prepare_audio
+
+    data = request.get_json(silent=True) or {}
+    role = data.get("role")
+    if role not in audio_config.ROLE_NAMES:
+        return jsonify({"erreur": f"Rôle inconnu : {role}"}), 400
+
+    cible = audio_config.target_for(role)
+    if cible is None or not cible.exists():
+        return jsonify({"erreur": f"{role} n'a pas encore été converti."}), 400
+
+    sortie = data.get("output") or prepare_audio.output_for(role)
+    if sortie not in alsa_io.OUTPUTS:
+        return jsonify({"erreur": f"Sortie inconnue : {sortie}"}), 400
+
+    resultat = audio_io.play(cible, should_continue=lambda: True,
+                             timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+                             output=sortie)
+    if resultat != "completed":
+        return jsonify({"erreur": f"Lecture de {cible.name} : {resultat}"}), 500
+    return jsonify({"ok": True, "message": f"{cible.name} joué sur {sortie}."})
 
 
 def run_server() -> None:

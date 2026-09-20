@@ -34,19 +34,26 @@ La capsule carbone d'origine et le circuit hybride du téléphone ne sont **pas*
   [Cadran: off-normal] ── GPIO27 (BCM, phys. 13)  + GND
   [Cadran: impulsions] ── GPIO22 (BCM, phys. 15)  + GND
 
-  Carte son USB (via adaptateur OTG)
-     ├── MIC IN  ◄── Micro électret (dans la cavité du combiné)
-     └── Sortie stéréo (jack 3,5 mm)
-            ├── Canal GAUCHE + masse ──► Écouteur d'origine
-            └── Canal DROIT  + masse ──► Entrée PAM8403 ──► Haut-parleur externe
+  IQaudio Codec Zero (HAT, carte 1)
+     ├── AUX IN (gauche) ◄── Micro ADA1063 (dans la cavité du combiné)
+     ├── LINE OUT ──► Entrée PAM8403 ──► Haut-parleur MONO de sonnerie
+     │                 (le haut-parleur lit la piste GAUCHE)
+     └── CASQUE (jack 3,5 mm, stéréo)
+            ├── Canal GAUCHE + masse ──► Écouteur d'origine du combiné
+            └── Canal DROIT  + masse ──► Écouteur secondaire
 ```
+
+Le codec n'alimente pas les deux sorties en même temps : il est commuté avant
+chaque lecture (line out pour la sonnerie, casque pour tout le reste). Les
+fichiers joués sont donc stéréo avec **les deux pistes identiques** — l'écouteur
+du combiné et l'écouteur secondaire entendent la même chose, au même niveau.
 
 ### 2.2 Étapes
 
 1. **Crochet** → GPIO17 + GND, pull-up interne (`PUD_UP`). ⚠️ Vérifier au multimètre si le contact est normalement ouvert ou fermé au repos, et ajuster `HOOK_ACTIVE_STATE` en conséquence (voir §4 ci-dessous).
 2. **Cadran, contact off-normal** → GPIO27 + GND. **Contact d'impulsions** → GPIO22 + GND. Même vérification multimètre pour `OFFNORMAL_ACTIF_LEVEL`.
-3. **Micro électret** → entrée MIC de la carte son USB directement (jamais via le circuit hybride ou la capsule carbone d'origine).
-4. **Sortie stéréo** : canal gauche vers l'écouteur (volume modéré), canal droit vers l'entrée du PAM8403 puis le haut-parleur externe (volume réglé au potentiomètre, voir §5).
+3. **Micro ADA1063** → entrée **Aux gauche** du Codec Zero directement (jamais via le circuit hybride ou la capsule carbone d'origine).
+4. **Line out** → entrée du PAM8403 puis haut-parleur mono de sonnerie (volume réglé au potentiomètre, voir §5). **Sortie casque** : canal gauche vers l'écouteur du combiné, canal droit vers l'écouteur secondaire (volumes modérés, identiques).
 5. **Alimentation** : Pi sur bloc 5 V ≥ 2,5 A ; PAM8403 alimenté depuis les broches 5V/GND du Pi.
 
 ---
@@ -61,11 +68,14 @@ cd /home/pi/livre_dor
 # 1. Système : paquets, hostname mDNS, venv Python, arborescence, carte son
 ./scripts/install.sh
 
-# 2. Fichiers audio : déposer les enregistrements des mariés dans audio_src/
+# 2. Fichiers audio : déposer les sources dans audio_src/, avec leur nom
+#    d'origine (mp3, m4a, wav...). Le fichier joué pour chaque rôle se choisit
+#    ensuite dans le dashboard (/settings), par liste déroulante.
+#    À défaut de choix explicite, l'ancienne convention de nommage s'applique
 #    (sonnerie.*, message_generique.*, message_0.* ... message_9.*, et
-#    éventuellement aucun_message.* pour le mode restitution, §5.7), puis :
-python3 src/prepare_audio.py
-python3 src/prepare_audio.py --play-all   # vérification manuelle du panning au casque
+#    éventuellement aucun_message.* pour le mode restitution, §5.7).
+python3 src/prepare_audio.py              # conversion 48 kHz, 16 bits, stéréo L = R
+python3 src/prepare_audio.py --play-all   # rejoue chaque fichier sur SA sortie (vérif. câblage)
 
 # 3. Mots de passe du dashboard
 python3 src/set_password.py         # mot de passe standard (remplace le défaut "livredor")
@@ -74,6 +84,12 @@ python3 src/set_admin_password.py   # optionnel : second mot de passe, connu de 
 # 4. Synchronisation Google Drive (une fois, avant l'événement)
 rclone config                          # créer le remote "gdrive" (ou autre nom, cf. rclone_config.json)
 sudo ./scripts/setup_rclone_systemd.sh
+# Puis, depuis le dashboard (/rclone) : renseigner les deux dossiers Drive
+# (celui des enregistrements et celui des sources, DISTINCTS), activer la
+# synchronisation bidirectionnelle et lancer « Réinitialiser la synchronisation
+# bidirectionnelle » une fois — ce premier passage peut être long, il se fait
+# maintenant et pas pendant l'événement.
+python3 src/rclone_sync.py --resync    # équivalent en ligne de commande
 
 # 5. Transcription (optionnelle, à faire après l'événement, jamais avant)
 ./scripts/install_whisper.sh
@@ -155,7 +171,10 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 | `RESTITUTION_DIGITS_MAX` | 4 | Nombre max de chiffres du numéro de message ; au dernier chiffre la saisie se ferme aussitôt. Réglable depuis `/settings` |
 | `RESTITUTION_INTERDIGIT_SEC` | 3.0 | Silence du cadran validant un numéro plus court (« 1 » puis attente). Réglable depuis `/settings` |
 | `MODE_RELOAD_SEC` | 1.0 | Durée de validité du mode en mémoire avant relecture de `mode_config.json`. Plus haut = moins d'appels système, bascule un peu moins réactive |
-| `RESTITUTION_SOUND_CARD` | = `SOUND_CARD` | Périphérique ALSA de lecture des messages des invités. Ces enregistrements sont **mono** : joués via `plughw`, ils sortent aussi par le haut-parleur externe. Pour les limiter à l'écouteur, définir un périphérique ALSA `route` et le pointer ici |
+| `RESTITUTION_SOUND_CARD` | = `SOUND_CARD` | Périphérique ALSA de lecture des messages des invités. Échappatoire de routage : définir un périphérique ALSA `route` et le pointer ici, sans modification de code |
+| `AUDIO_OUTPUT_SONNERIE` / `AUDIO_OUTPUT_COMBINE` | `lineout` / `headphone` | Sortie du codec pour la sonnerie et pour les écouteurs (§4.1). Modifiables depuis `/settings` |
+| `AUDIO_RATE_HZ` / `AUDIO_CHANNELS` | 48000 / 2 | Format commun lecture et capture (RNNoise, full duplex) |
+| `RCLONE_SOURCES_FOLDER` | `MariageGuestBookSources` | Dossier Drive de `audio_src/`, synchronisé **dans les deux sens**. Doit être distinct de celui des enregistrements |
 
 ### Dashboard & authentification
 
@@ -199,7 +218,15 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 1. Fichiers audio préparés (`python3 src/prepare_audio.py`) et carte son branchée.
 2. Couper le volume du potentiomètre au minimum avant la première mise sous tension de l'ampli (évite un pic sonore).
 3. Jouer la sonnerie seule (`python3 src/audio_io.py play audio/ring_out.wav`) et monter progressivement le potentiomètre jusqu'au volume souhaité pour attirer l'attention sans être agressif.
-4. Vérifier qu'aucun son de la sonnerie ne fuite dans l'écouteur, et qu'aucun son de la tonalité/des messages ne sort du haut-parleur externe (panning correct, §4.2) — sinon revérifier le câblage des canaux gauche/droit.
+4. Vérifier que la sonnerie ne sort **que** du haut-parleur de sonnerie, et que la tonalité et les messages sortent des **deux** écouteurs, au même niveau, sans rien laisser passer par le haut-parleur (§4.1) :
+
+```bash
+./scripts/audio-setup.sh lineout   && aplay -D plughw:1,0 audio/ring_out.wav
+./scripts/audio-setup.sh headphone && aplay -D plughw:1,0 audio/message_generique.wav
+./scripts/audio-setup.sh status    # ALC off, sortie active cohérente
+```
+
+Si un écouteur reste muet, c'est le câblage du jack casque qu'il faut revoir — les fichiers générés portent le même signal sur les deux pistes. Si rien ne sort du tout, vérifier d'abord `./scripts/audio-setup.sh status`.
 
 ---
 

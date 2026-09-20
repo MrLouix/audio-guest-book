@@ -23,21 +23,28 @@ python3 tests/run_tous.py               # toutes, avec un bilan final
 | `test_raccroche.py` | Raccroché à chaque étape du parcours, anti-rebond du crochet |
 | `test_composition.py` | Cadran rotatif : impulsions → chiffre, numéro multi-chiffres |
 | `test_lecture.py` | Lecture d'un message : sélection du fichier, `aplay`, interruption |
-| `test_enregistrement.py` | Enregistrement : nom horodaté, `arecord`, espace disque |
+| `test_enregistrement.py` | Enregistrement : nom horodaté, `arecord` (48 kHz stéréo), espace disque |
+| `test_audio_prep.py` | Choix des fichiers sources, conversion 48 kHz dual-mono, commutation des sorties, synchro bidirectionnelle |
 | `test_sonnerie.py` | Sonnerie périodique, `ring_trigger`, fenêtre de grâce |
 | `test_mode.py` | Bascule mariage / restitution à chaud (`mode_config.json`) |
 | `test_status.py` | `status.json`, battement de cœur et décisions du watchdog |
 
 `harness.py` n'est pas un test : c'est la boîte à outils commune (rapport
-terminal, téléphone simulé, doublures audio).
+terminal, téléphone simulé, doublures audio et ALSA).
+
+`test_audio_prep.py` n'a pas de mode `--reel` : il ne valide que de la logique
+et du traitement de fichiers. Ses contrôles de conversion demandent `pydub`
+(et `ffmpeg` pour les sources compressées) et sont **ignorés**, et non mis en
+échec, si la dépendance manque.
 
 ## Deux modes d'exécution
 
 **Simulation** (par défaut) — tourne sur n'importe quelle machine, y compris
 un poste de développement. Les GPIO sont pilotés à la main via
-`gpio_io.PhoneInputs`, `aplay`/`arecord` sont remplacés par des doublures, et
-toute l'arborescence de données est redirigée vers un dossier temporaire :
-**`messages/`, `audio/` et `status.json` du dépôt ne sont jamais touchés.**
+`gpio_io.PhoneInputs`, `aplay`/`arecord` et la commutation des sorties du codec
+(`alsa_io`) sont remplacés par des doublures, et toute l'arborescence de
+données est redirigée vers un dossier temporaire : **`messages/`, `audio/`,
+`audio_src/` et `status.json` du dépôt ne sont jamais touchés.**
 
 **Matériel réel** (`--reel`) — à lancer sur le Raspberry Pi câblé, avec la
 carte son branchée. Ce sont les mêmes fonctions du service qui sont
@@ -50,7 +57,7 @@ et vérifie ce que le matériel répond.
 ```bash
 python3 tests/test_decroche.py --reel        # décrochez / raccrochez à la demande
 python3 tests/test_composition.py --reel     # composez les chiffres demandés
-python3 tests/test_lecture.py --reel         # écoute : panning, niveau, coupure
+python3 tests/test_lecture.py --reel         # écoute : les deux écouteurs, niveau, coupure
 python3 tests/test_sonnerie.py --reel        # sonnerie sur le haut-parleur
 python3 tests/test_enregistrement.py --reel  # parlez, raccrochez, réécoutez
 python3 tests/test_status.py --reel          # état réel publié par le service

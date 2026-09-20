@@ -26,7 +26,12 @@
     {% endif %}
 
     <section class="card">
-      <h2>Statut</h2>
+      <h2>Enregistrements des invités (montant seul)</h2>
+      <p class="muted">
+        <code>messages/</code> est envoyé vers le Drive par <code>rclone copy</code>,
+        jamais <code>sync</code> : aucune action côté Drive ne peut effacer un
+        enregistrement d'invité.
+      </p>
       <p>Dernière synchronisation réussie : <strong>{{ status.derniere_sync_reussie or "jamais" }}</strong></p>
       <p>Fichiers en attente : <strong>{{ status.fichiers_en_attente if status.fichiers_en_attente is not none else "inconnu" }}</strong></p>
       {% if status.erreurs_recentes %}
@@ -38,6 +43,47 @@
     </section>
 
     <section class="card">
+      <h2>Fichiers sources (bidirectionnel)</h2>
+      <p class="muted">
+        <code>audio_src/</code> est synchronisé dans les <strong>deux sens</strong>
+        avec le Drive : déposez une sonnerie ou un message des mariés depuis
+        votre smartphone, il arrive sur le Raspberry Pi — et inversement.
+        Choisissez ensuite le fichier à jouer pour chaque son dans
+        <a href="{{ url_for('settings_page') }}">Paramètres</a>.
+      </p>
+
+      {% if not status.sources.bisync_supporte %}
+      <p class="warning">
+        ⚠️ rclone v{{ status.sources.rclone_version }} est trop ancien pour
+        <code>bisync</code>. Installez une version récente
+        (<code>curl https://rclone.org/install.sh | sudo bash</code>).
+      </p>
+      {% endif %}
+
+      <p>
+        État :
+        {% if not status.sources.actif %}
+        <span class="badge">désactivée</span>
+        {% elif status.sources.resync_fait %}
+        <span class="badge badge-decroche">active</span>
+        {% else %}
+        <span class="badge badge-erreur">à initialiser</span>
+        {% endif %}
+      </p>
+      <p>Dernière synchronisation réussie : <strong>{{ status.sources.derniere_sync_reussie or "jamais" }}</strong></p>
+      <p>Fichiers présents dans <code>audio_src/</code> : <strong>{{ status.sources.fichiers_locaux }}</strong></p>
+
+      <button id="resync-button">♻️ Réinitialiser la synchronisation bidirectionnelle</button>
+      <p class="muted" id="resync-feedback"></p>
+      <p class="muted">
+        La réinitialisation (<code>--resync</code>) établit l'état de référence
+        entre le Pi et le Drive. Elle est lancée automatiquement au premier
+        cycle, et peut transférer beaucoup : <strong>à faire à l'installation,
+        pas pendant l'événement</strong>.
+      </p>
+    </section>
+
+    <section class="card">
       <h2>Configuration</h2>
       <form method="post">
         <label>
@@ -45,7 +91,7 @@
           <input type="text" name="remote" value="{{ status.remote }}" required>
         </label>
         <label>
-          Dossier Drive
+          Dossier Drive des enregistrements
           <input type="text" name="dossier" value="{{ status.dossier }}" required>
         </label>
         <label>
@@ -54,10 +100,23 @@
         </label>
         <label class="remember">
           <input type="checkbox" name="actif" {% if status.actif %}checked{% endif %}>
-          Synchronisation active
+          Envoi des enregistrements actif
+        </label>
+        <label>
+          Dossier Drive des fichiers sources
+          <input type="text" name="sources_dossier" value="{{ status.sources.dossier }}" required>
+        </label>
+        <label class="remember">
+          <input type="checkbox" name="sources_actif" {% if status.sources.actif %}checked{% endif %}>
+          Synchronisation bidirectionnelle des sources active
         </label>
         <button type="submit">Enregistrer</button>
       </form>
+      <p class="muted">
+        Les deux dossiers Drive doivent être <strong>distincts</strong> : partagés,
+        les enregistrements des invités deviendraient eux aussi bidirectionnels
+        et une suppression côté Drive les effacerait.
+      </p>
       <p class="muted">
         Changer l'intervalle régénère et recharge automatiquement le timer systemd
         (<code>systemctl daemon-reload</code> puis <code>restart</code>, via une règle sudoers ciblée).

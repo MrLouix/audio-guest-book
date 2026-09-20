@@ -36,7 +36,7 @@ Règles transverses du parcours :
 |---|---|---|---|
 | 1 | Téléphone Socotel S63 | Boîtier, combiné, crochet, cadran | Acheté 19 € |
 | 2 | Raspberry Pi Zero 2 W | Cerveau du montage | 512 Mo RAM, quad-core 1 GHz, WiFi + Bluetooth intégrés |
-| 3 | Carte microSD (≥ 16 Go, classe A1) | OS + enregistrements | Prévoir marge : 1 h de WAV mono 44,1 kHz ≈ 300 Mo |
+| 3 | Carte microSD (≥ 32 Go, classe A1) | OS + enregistrements | Prévoir marge : 1 h de WAV **stéréo 48 kHz** ≈ 690 Mo (§4.3) |
 | 4 | Carte son USB stéréo (entrée mic + sortie casque) | Toute l'entrée/sortie audio | Le Pi Zero n'a pas d'audio analogique natif |
 | 5 | Adaptateur micro-USB OTG | Brancher la carte son sur le Pi Zero | |
 | 6 | Micro électret (~2 €) | Capture de la voix des invités | Caché dans la cavité du combiné |
@@ -103,10 +103,10 @@ Règles transverses du parcours :
 - **Ne jamais repasser par le circuit hybride ni la capsule carbone d'origine.**
 - Positionner l'électret dans la cavité micro du combiné, derrière la grille.
 
-**D. Sortie stéréo → deux destinations séparées (astuce clé du projet)**
-- **Canal gauche** → écouteur d'origine du combiné (tonalité, messages des mariés, bip). Volume modéré.
-- **Canal droit** → entrée du PAM8403 → haut-parleur externe (sonnerie uniquement). Volume élevé, réglable au potentiomètre.
-- Cela permet d'avoir **une seule carte son** avec deux sorties indépendantes, à condition que tous les fichiers audio soient pré-traités (voir §4.2).
+**D. Deux sorties distinctes du codec (IQaudio Codec Zero / DA7213)**
+- **Line out** → entrée du PAM8403 → **un seul haut-parleur mono** de sonnerie, qui lit la **piste gauche**. Volume élevé, réglable au potentiomètre.
+- **Sortie casque (stéréo)** → **un écouteur par canal** : écouteur d'origine du combiné à gauche, écouteur secondaire à droite. Volume modéré.
+- Le codec n'alimente pas les deux simultanément : il est **commuté avant chaque lecture** (line out pour la sonnerie, casque pour tout le reste), cf. §4.1. Tous les fichiers joués sont donc **stéréo avec les deux pistes identiques** (§4.2) — le panning de l'ancien montage, où les deux destinations se partageaient une seule sortie stéréo, n'a plus lieu d'être.
 
 **E. Alimentation**
 - Pi alimenté par bloc 5 V ≥ 2,5 A.
@@ -118,26 +118,51 @@ Règles transverses du parcours :
 
 ### 4.1 Périphérique
 
-- Périphérique ALSA de la carte son USB, identifié une fois avec `aplay -l` et `arecord -l`. Valeur type : **`plughw:1,0`** (paramètre `SOUND_CARD` / `CARTE_SON`).
+- Périphérique ALSA du Codec Zero, identifié une fois avec `aplay -l` et `arecord -l`. Valeur type : **`plughw:1,0`** (paramètre `SOUND_CARD` / `CARTE_SON`).
 - Lecture via `aplay`, enregistrement via `arecord` (paquet `alsa-utils`) pilotés en sous-processus.
 
-### 4.2 Pré-traitement des fichiers (étape unique, avant l'événement)
+**Configuration et commutation du codec.** Tous les réglages du DA7213 (entrée micro ADA1063 sur Aux gauche, ALC impérativement désactivé, routage DAI/DAC, sélection de sortie) vivent dans **`scripts/audio-setup.sh`**, sous forme de `amixer cset numid=…`. Ils n'y sont **jamais dupliqués côté Python** : un numid n'est qu'un index dans l'énumération des contrôles ALSA, qui peut glisser d'une version de driver à l'autre, et deux copies finiraient par diverger.
 
-Un script de préparation (équivalent de `prepare_audio.py`, à recoder) transforme chaque fichier source mono/stéréo en fichier **stéréo pané à 100 % sur un seul canal**, avec gain ajustable par fichier (bibliothèque type pydub) :
+- `audio-setup.sh {headphone|lineout|both}` : configuration complète. Lancée une fois au démarrage de `livre_dor.py`, juste après l'attente de la carte son, et une fois à l'installation **sous root** pour figer `asound.state` (`alsactl store`) — le service tourne sous un utilisateur non privilégié et ne peut pas l'écrire.
+- `audio-setup.sh switch-{headphone|lineout|both}` : **commutation rapide**, uniquement les numids de sortie (28/29/75/7/8), sans toucher à l'entrée ni au routage, sans `alsactl store`. Quelques dizaines de millisecondes, appelées avant chaque lecture.
+- `audio-setup.sh status` : état courant, dont une ligne `output=` analysable par le dashboard.
+- `src/alsa_io.py` enveloppe le script et ne connaît que trois mots (`lineout`, `headphone`, `both`). Il mémorise la dernière sortie appliquée pour ne pas relancer le script inutilement, et **ne lève jamais** : script absent, `amixer` absent ou mixer en échec sont journalisés puis ignorés, et la lecture a lieu quand même — le mauvais haut-parleur vaut mieux que le silence.
+- La commutation est faite **avant** l'ouverture du PCM : après, les premières dizaines de millisecondes sortiraient du mauvais haut-parleur.
+- Paramètres : `AUDIO_OUTPUT_SONNERIE` (défaut `lineout`) et `AUDIO_OUTPUT_COMBINE` (défaut `headphone`), modifiables depuis le dashboard.
 
-| Fichier source | Canal cible | Gain indicatif | Usage |
+### 4.2 Pré-traitement des fichiers
+
+Deux dossiers, deux rôles distincts :
+
+- **`audio_src/`** — fichiers sources bruts, tels que déposés (mp3, m4a, wav…), **avec leur nom d'origine**. Seul dossier synchronisé avec le Drive, et **dans les deux sens** (§5.4), pour pouvoir y déposer un son depuis un smartphone.
+- **`audio/`** — WAV convertis, prêts à être joués. Entièrement généré par `prepare_audio.py`, jamais synchronisé, jamais édité à la main.
+
+**Format cible : 48 000 Hz, 16 bits (S16_LE), stéréo avec les deux pistes identiques.** Stéréo L = R parce que le line out n'a qu'un haut-parleur mono lisant la piste gauche et que la sortie casque alimente un écouteur par canal : les deux doivent recevoir le même signal au même niveau. 48 kHz parce que c'est la cadence exigée par RNNoise et que le full duplex impose que lecture et capture partagent cadence et format (§4.3).
+
+| Rôle | Source | Sortie | Gain |
 |---|---|---|---|
-| Sonnerie | **Droit** | 0 dB | Haut-parleur externe |
-| Message(s) des mariés (un par chiffre + un générique) | **Gauche** | −6 à −12 dB | Écouteur |
-| Tonalité (440 + 480 Hz, générée par synthèse) | **Gauche** | −12 dB | Écouteur |
-| Bip avant enregistrement | **Gauche** | −6 dB | Écouteur |
-| Annonce « aucun message disponible » (`aucun_message.*`, **optionnelle**, §5.7) | **Gauche** | −9 dB | Écouteur |
+| `sonnerie` → `ring_out.wav` | `audio_src/` | line out | 0 dB |
+| `message_generique`, `message_0` … `message_9` | `audio_src/` | casque | −9 dB |
+| `aucun_message` (**optionnel**, §5.7) | `audio_src/` | casque | −9 dB |
+| `tonalite.wav` (440 + 480 Hz) | synthèse | casque | −12 dB |
+| `bip.wav` (800 Hz, 600 ms, encadré de 250 ms de silence) | synthèse | casque | −6 dB |
+
+**Association rôle → fichier source.** Le fichier qui alimente chaque rôle est choisi depuis le dashboard (§5.2) et enregistré dans `audio_config.json` (contrat §8). Les fichiers gardent ainsi leur nom d'origine. Précédence à la conversion : mapping explicite, puis repli sur l'ancienne convention de nommage `audio_src/<role>.*` — une installation antérieure continue donc de fonctionner sans `audio_config.json`.
+
+**Points d'implémentation :**
+- chaque fichier est écrit via un temporaire puis `os.replace()` : une reconversion lancée depuis le dashboard peut tomber pendant que `livre_dor.py` joue ce même fichier, et `aplay` ne doit jamais lire un WAV tronqué ;
+- une source illisible n'interrompt pas le lot : les autres rôles sont convertis, l'échec est remonté rôle par rôle ;
+- un silence de tête de 20 ms absorbe le « pop » de l'ampli au moment de la commutation de sortie ;
+- garde-fou mémoire : une source de plus de 5 minutes est refusée proprement (pydub charge tout en RAM, le Pi Zero 2 W n'a que 512 Mo).
 
 L'équilibre final des volumes se règle par le couple **gain logiciel** (pré-traitement) + **potentiomètre physique** du PAM8403.
 
+Au démarrage, `livre_dor.py` lit l'en-tête de chaque WAV de `audio/` et **avertit** (sans bloquer) si l'un n'est pas au format attendu : c'est le détecteur de migration des anciens fichiers panés à 44,1 kHz, qui seraient muets d'un côté sur le montage actuel.
+
 ### 4.3 Enregistrements
 
-- Format : **WAV**, mono, 44,1 kHz (ou 22,05 kHz si l'espace disque est un souci).
+- Format : **WAV**, stéréo, 48 kHz, 16 bits — mêmes cadence et format que la lecture, prérequis du full duplex et de RNNoise. Le micro est sur l'entrée Aux gauche, dupliquée sur les deux canaux DAI par `audio-setup.sh` (numids 89 et 90) : les deux pistes portent le même signal.
+- Coût disque : 11,5 Mo/min (contre 5,3 en mono 44,1 kHz). Un message de 2 min ≈ 23 Mo ; 200 messages ≈ 4,6 Go. À prendre en compte dans le dimensionnement de la carte SD (§2) et les seuils `DISK_WARNING_MB` / `DISK_CRITICAL_MB`.
 - Nommage : horodaté, ex. `message_YYYY-MM-DD_HH-MM-SS.wav`, éventuellement suffixé du chiffre composé.
 - Dossier : `/home/pi/livre_dor/messages/` (cf. arborescence §8).
 
@@ -185,7 +210,13 @@ Serveur Flask écoutant sur `0.0.0.0:5000`, accessible via `http://livredor.loca
 | `/qr/label` | GET | Étiquette imprimable dimensionnée en millimètres (défaut 45 mm, paramètre `?taille=NN`) à coller sur le téléphone |
 | `/wifi` | GET | Page permettant de photographier le QR code WiFi d'un lieu ; décodage **100 % côté client** avec `jsQR.min.js` **servi localement** (vendorisé via npm, fichier statique Flask — aucune connexion internet requise) ; confirmation du SSID détecté par l'utilisateur |
 | `/api/wifi/add` | POST | Crée le profil WiFi via `nmcli` et tente la connexion. **Avertissement affiché dans l'UI** : si le Pi est en mode AP au moment de la confirmation, le téléphone de l'utilisateur perd sa connexion en cours de requête (une seule antenne, impossible de tenir les deux réseaux) ; se reconnecter ensuite au nouveau WiFi et rouvrir `livredor.local` |
-| `/rclone` | GET/POST | Configuration de la synchronisation Google Drive (voir §5.4) |
+| `/rclone` | GET/POST | Configuration des deux jambes de synchronisation Google Drive (voir §5.4) |
+| `/api/rclone/resync` | POST | **Administrateur.** Réinitialise (`--resync`) la synchronisation bidirectionnelle de `audio_src/` |
+| `/settings` | GET | Statut matériel (carte son, sortie active du codec, GPIO), **choix des fichiers audio** et paramètres de fonctionnement |
+| `/api/audio/sources` | GET | JSON : fichiers de `audio_src/` et état de chaque rôle (converti / périmé / absent, origine du choix) |
+| `/api/audio/roles` | POST | **Administrateur.** Enregistre le fichier choisi pour chaque rôle, puis convertit les seuls rôles modifiés |
+| `/api/audio/reconvert` | POST | **Administrateur.** Reconvertit tous les rôles depuis `audio_src/` (après une synchro Drive) |
+| `/api/audio/test` | POST | **Administrateur.** Joue un fichier généré sur sa sortie, pour vérifier le câblage |
 | `/mode` | GET/POST | Bascule mode mariage / mode restitution (voir §5.7). Écrit `mode_config.json`, relu à chaud par `livre_dor.py` — aucun redémarrage de service |
 
 Le bouton « Sonner maintenant » de l'accueil est **désactivé en mode restitution**, où la sonnerie n'a plus de sens (§5.7) ; `/api/status` expose `mode_restitution` pour que l'UI le sache.
@@ -219,13 +250,28 @@ Exécuté toutes les ~30 s par un couple `.service`/`.timer` systemd.
 
 ### 5.4 Synchronisation Google Drive (rclone)
 
-- Outil : **rclone**, configuré une fois avant le mariage (`rclone config`, remote Google Drive, ex. nommé `gdrive`), dossier de destination ex. `MariageGuestBook`.
-- Commande : **`rclone copy`** (jamais `sync`) — n'ajoute que les nouveaux fichiers, **ne supprime jamais rien** ni en local ni sur Drive. Compare taille/date : pas de re-upload.
-- Si pas d'internet au moment de l'exécution : échec silencieux, nouvelle tentative au cycle suivant. Log dans `logs/rclone.log`.
+- Outil : **rclone**, configuré une fois avant le mariage (`rclone config`, remote Google Drive, ex. nommé `gdrive`).
+- **Deux jambes par cycle, aux règles volontairement différentes :**
+
+| Dossier local | Sens | Commande | Justification |
+|---|---|---|---|
+| `messages/` | montant seul | **`rclone copy`** (jamais `sync`) | Les enregistrements des invités sont le livrable : aucune action côté Drive ne doit pouvoir les effacer. N'ajoute que les nouveaux fichiers, compare taille/date, pas de re-upload. |
+| `audio_src/` | **bidirectionnel** | **`rclone bisync`** | Permet de déposer une sonnerie ou un message des mariés depuis un smartphone et de le retrouver sur le Pi, et inversement. |
+
+- Les deux dossiers Drive doivent être **distincts et non imbriqués** ; le dashboard refuse toute autre configuration, sinon les enregistrements deviendraient de fait bidirectionnels.
+- Les jambes sont exécutées **en séquence, `messages/` d'abord** : la charge précieuse ne doit pas attendre qu'un problème de bisync soit réglé. Une seule unité systemd, un seul timer.
+- Si pas d'internet au moment de l'exécution : échec toléré, nouvelle tentative au cycle suivant. Log dans `logs/rclone.log`.
+- **Spécificités de `bisync` :**
+  - il exige un premier passage **`--resync`** qui établit l'état de référence. Il est lancé automatiquement au premier cycle **à condition** que rclone soit ≥ 1.66 et accepte `--resync-mode newer` ; sans cette option, le resync prendrait le Pi comme référence et **supprimerait du Drive** tout ce qui n'y est pas encore descendu. Sur un rclone plus ancien, l'initialisation refuse de se faire seule et exige le bouton dédié de `/rclone` ;
+  - si rclone perd son état (« must run --resync », « cannot find prior listing »), un `--resync` est retenté **une** fois, automatiquement ;
+  - `--conflict-resolve newer --conflict-loser pathname` : en cas d'édition des deux côtés, le plus récent gagne et l'autre est conservé sous un nom suffixé — rien n'est perdu. Options retirées avec avertissement sur rclone < 1.66 (Bookworm livre 1.60 par apt) ;
+  - `--max-delete` (en % des fichiers) borne toute suppression en masse ;
+  - un verrou `flock` empêche deux bisync simultanés — rclone corrompt son état interne si on le fait ; un cycle du timer qui tombe pendant un bisync manuel est simplement sauté.
 - **Paramétrable depuis le dashboard** (page `/rclone`), via un fichier `rclone_config.json` :
-  - nom du remote, dossier Drive de destination, intervalle de sync, activation on/off ;
-  - bouton **« Synchroniser maintenant »** (lance `rclone copy` en arrière-plan, retourne le résultat) ;
-  - indicateur de statut : dernière sync réussie, fichiers en attente, erreurs (lues depuis le log rclone).
+  - nom du remote, dossier Drive des enregistrements, dossier Drive des sources, intervalle de sync, activation on/off de chaque jambe ;
+  - bouton **« Synchroniser maintenant »** (lance un cycle complet en arrière-plan, retourne le résultat) ;
+  - bouton **« Réinitialiser la synchronisation bidirectionnelle »** (`--resync`, administrateur, avec confirmation) — ce passage peut être long : il se fait à l'installation, pas pendant l'événement ;
+  - indicateur de statut par jambe : dernière sync réussie, fichiers en attente, état d'initialisation du bisync, erreurs (lues depuis le log rclone).
 - Planification : **timer systemd** (et non cron fixe) dont le fichier `.timer` est régénéré quand l'intervalle change dans le dashboard, suivi de `systemctl daemon-reload && restart`.
 - **Point de sécurité identifié** : Flask tourne sous l'utilisateur `pi` qui n'a pas le droit de faire `systemctl` sans mot de passe → prévoir une règle **sudoers ciblée** (NOPASSWD limité aux seules commandes `systemctl daemon-reload` / `systemctl restart <unité rclone>` / `systemctl start <unité rclone>`), jamais un NOPASSWD global.
 
@@ -313,16 +359,18 @@ bornée** : un combiné posé à côté du téléphone y reste indéfiniment. Le
 heartbeat de `status.json` y est donc maintenu, sans quoi le watchdog (§7.1)
 verrait le fichier périmé et redémarrerait le service en boucle.
 
-**Audio — point de vigilance :** les enregistrements des invités sont **mono**
-(§4.3), alors que les fichiers préparés sont stéréo panés (§4.2, gauche =
-écouteur, droite = haut-parleur externe). Joué via `plughw`, un fichier mono est
-dupliqué sur les deux canaux : les messages sortent donc **aussi par le
-haut-parleur externe**. À constater au casque avant la recette. Si l'écoute doit
-se limiter à l'écouteur, définir un périphérique ALSA `route` et le pointer via
-`RESTITUTION_SOUND_CARD` (§9) — aucune modification de code n'est nécessaire. La
-conversion des WAV à la volée est **écartée** : elle ajouterait ffmpeg/pydub au
-chemin critique d'exécution, que les primitives audio gardent volontairement
-libre de toute bibliothèque.
+**Audio — point de vigilance :** la lecture des enregistrements est commutée sur
+la sortie casque comme le reste du parcours (§4.1) : rien ne sort du
+haut-parleur de sonnerie. Les enregistrements sont stéréo (§4.3), le micro
+étant câblé sur l'entrée Aux gauche puis dupliqué sur les deux canaux DAI par
+`audio-setup.sh` (numids 89 et 90) — **à vérifier sur la première prise
+réelle** : si la piste droite ressortait muette, le second écouteur n'entendrait
+rien ici. Les enregistrements antérieurs au passage en 48 kHz restent en mono
+44,1 kHz et restent lisibles tels quels via `plughw`, qui rééchantillonne et
+duplique. `RESTITUTION_SOUND_CARD` (§9) reste l'échappatoire de routage ALSA, sans
+modification de code. La conversion des WAV à la volée est **écartée** : elle
+ajouterait ffmpeg/pydub au chemin critique d'exécution, que les primitives audio
+gardent volontairement libre de toute bibliothèque.
 
 ---
 
@@ -401,10 +449,13 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
   1. `aplay -l` / `arecord -l` → renseigner `SOUND_CARD`.
   2. Multimètre sur crochet + contacts du cadran → ajuster les niveaux logiques.
   3. `python3 livre_dor.py --test` → vérifier les 3 broches.
-  4. Test audio : tonalité dans l'écouteur seul, sonnerie sur le haut-parleur seul (validation du panning).
+  4. `scripts/audio-setup.sh status` → ALC off, sortie active cohérente.
+  4bis. Test audio : sonnerie **uniquement** sur le haut-parleur de sonnerie ; tonalité et messages dans **les deux** écouteurs, au même niveau (validation des deux sorties du codec, §4.1).
+  4ter. Contrôler le format des WAV générés : 48 000 Hz, 2 canaux, 16 bits, pistes identiques (§4.2).
   5. Composer chaque chiffre → vérifier le bon message + fallback.
   5bis. Déclencher la sonnerie (dashboard) et décrocher pendant/juste après → vérifier qu'un message aléatoire est joué **sans tonalité ni cadran**, puis bip + enregistrement ; répéter pour vérifier la variation des messages.
-  6. Enregistrer un message test → vérifier le WAV et sa synchro Drive.
+  6. Enregistrer un message test → vérifier le WAV (48 kHz, stéréo, **les deux pistes portent du signal**) et sa synchro Drive.
+  6bis. Déposer un son depuis un smartphone dans le dossier Drive des sources → vérifier qu'il arrive dans `audio_src/` et apparaît dans les listes déroulantes de `/settings`, puis l'affecter à un rôle et contrôler la conversion (§4.2, §5.4).
   7. Débrancher le wifi → vérifier l'apparition de l'AP « Livre-dor-Mariage » et l'accès `192.168.4.1:5000` puis `livredor.local:5000`.
   7bis. Test « wifi zombie » : connecter le Pi à un réseau puis l'éloigner (ou couper la passerelle de ce réseau) → vérifier qu'après ~90 s le Pi bascule seul en AP, que le SSID fautif reste blacklisté ~10 min, et que le dashboard redevient accessible via l'AP.
   8. Couper/remettre l'alimentation → vérifier que tout redémarre seul et que le dashboard demande le mot de passe.
@@ -421,13 +472,16 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 ├── wifi_or_ap.sh             # bascule réseau
 ├── static/
 │   └── jsQR.min.js           # décodeur QR vendorisé (servi localement)
-├── audio/
-│   ├── tonalite.wav          # généré (440+480 Hz), pané gauche
-│   ├── bip.wav               # pané gauche
-│   ├── ring_out.wav          # sonnerie, panée droite
-│   ├── message_generique.wav # pané gauche (fallback)
-│   ├── aucun_message.wav     # optionnel, pané gauche (annonce du mode restitution, §5.7)
-│   └── message_N.wav         # un par chiffre attribué (N = 0..9), pané gauche
+├── scripts/
+│   └── audio-setup.sh        # réglages du codec (numids amixer) + commutation des sorties
+├── audio_src/                # sources brutes, noms d'origine (mp3, m4a, wav...) — SYNC BIDIRECTIONNELLE
+├── audio/                    # tout généré : 48 kHz, 16 bits, stéréo L = R
+│   ├── tonalite.wav          # généré par synthèse (440+480 Hz)
+│   ├── bip.wav               # généré par synthèse (800 Hz, 600 ms + silences)
+│   ├── ring_out.wav          # sonnerie (sortie line out)
+│   ├── message_generique.wav # repli
+│   ├── aucun_message.wav     # optionnel (annonce du mode restitution, §5.7)
+│   └── message_N.wav         # un par chiffre attribué (N = 0..9)
 ├── messages/                 # enregistrements des invités (WAV horodatés)
 ├── logs/
 │   ├── livre_dor.log         # rotation 5 × 1 Mo
@@ -436,6 +490,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 ├── status.json               # état courant écrit par livre_dor.py (atomique)
 ├── ring_trigger              # fichier drapeau (créé par dashboard, consommé par livre_dor.py)
 ├── rclone_config.json        # paramètres de sync éditables via dashboard
+├── audio_config.json         # association rôle -> fichier de audio_src/, éditable via dashboard (§4.2)
 ├── mode_config.json          # mode mariage / restitution, éditable via dashboard (§5.7)
 ├── dashboard_config.json     # hash du mot de passe dashboard + options
 ├── secret_key.txt            # clé de session Flask (chmod 600)
@@ -445,7 +500,8 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 **Interfaces inter-processus (contrats) :**
 - `status.json` : `{ "etat": "attente|sonnerie|decroche|numerotation|lecture|appel_repondu|enregistrement|restitution_numerotation|restitution_lecture|erreur", "derniere_maj": "ISO-8601", "detail": "texte optionnel" }`
 - `ring_trigger` : simple existence du fichier = demande de sonnerie ; supprimé par le script principal après exécution.
-- `rclone_config.json` : `{ "remote": "gdrive", "dossier": "MariageGuestBook", "intervalle_min": 5, "actif": true }`
+- `rclone_config.json` : `{ "remote": "gdrive", "dossier": "MariageGuestBook", "intervalle_min": 5, "actif": true, "sources_dossier": "MariageGuestBookSources", "sources_actif": false, "sources_resync_fait": false }` — les clés `sources_*` apparaissent seules sur une installation existante (fusion sur les valeurs par défaut), avec la jambe bidirectionnelle inactive.
+- `audio_config.json` : `{ "roles": { "sonnerie": "cloches du village.mp3", "message_3": "papy.m4a" } }` — les valeurs sont des **noms de fichier relatifs à `audio_src/`**, jamais des chemins. Un rôle absent retombe sur la convention `audio_src/<role>.*` (§4.2).
 - `mode_config.json` : `{ "restitution": false }` — écrit par le dashboard, relu à chaud par le script principal (§5.7). Absent ou illisible → mode mariage (valeur de `MODE_RESTITUTION`).
 
 ---
@@ -467,6 +523,16 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 | `RESTITUTION_DIGITS_MAX` | 4 | Nombre max de chiffres du numéro de message ; au dernier chiffre la saisie se ferme aussitôt |
 | `RESTITUTION_INTERDIGIT_SEC` | 3.0 | Silence du cadran validant un numéro plus court (« 1 » puis attente) |
 | `RESTITUTION_SOUND_CARD` | = `SOUND_CARD` | Périphérique ALSA de lecture des messages invités (échappatoire mono → écouteur seul, §5.7) |
+| `AUDIO_OUTPUT_SONNERIE` | `lineout` | Sortie du codec pour la sonnerie (haut-parleur mono, §4.1) |
+| `AUDIO_OUTPUT_COMBINE` | `headphone` | Sortie du codec pour le combiné et l'écouteur secondaire |
+| `AUDIO_RATE_HZ` | 48000 | Cadence commune lecture/capture (RNNoise, full duplex) |
+| `AUDIO_CHANNELS` | 2 | Stéréo L = R : une piste par écouteur, la gauche pour le line out |
+| `RECORD_RATE_HZ` / `RECORD_CHANNELS` | = lecture | Format d'enregistrement. **Hors paramètres du dashboard** : en changer pendant l'événement scinderait le corpus |
+| `AUDIO_SETUP_SCRIPT` | `scripts/audio-setup.sh` | Réglages du codec ; source unique des numids `amixer` |
+| `AUDIO_SWITCH_TIMEOUT_SEC` / `AUDIO_SETUP_TIMEOUT_SEC` | 3,0 / 15,0 | Garde-fous sur les appels au script |
+| `RCLONE_SOURCES_FOLDER` | `MariageGuestBookSources` | Dossier Drive de `audio_src/` (bidirectionnel). **Doit être distinct de `RCLONE_FOLDER`** |
+| `RCLONE_BISYNC_TIMEOUT_SEC` | 300 | Timeout d'un passage de `bisync` |
+| `RCLONE_BISYNC_MAX_DELETE_PCT` | 10 | Pourcentage de fichiers au-delà duquel `bisync` abandonne plutôt que de supprimer |
 | `MODE_RELOAD_SEC` | 1.0 | Durée de validité du mode en mémoire avant relecture de `mode_config.json` |
 | `STATUS_HEARTBEAT_SEC` | 120 | Rafraîchissement de `status.json` en attente. Chaque écriture atomique coûte un bloc neuf sur la carte SD (~13 Ko réels pour 88 octets de contenu) ; 120 s laisse 2,5 battements de marge sous `WATCHDOG_STALE_AFTER_SEC` |
 | `WEB_PORT` | 5000 | Port dashboard, **fixe** |
@@ -485,7 +551,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 | Dossier Drive | `MariageGuestBook` | Modifiable via dashboard |
 | Intervalle sync | 5 min | Modifiable via dashboard |
 | Mot de passe dashboard | à définir à l'installation | Stocké haché ; protège toutes les routes |
-| Seuils disque | 500 Mo / 100 Mo | Alerte / refus d'enregistrement |
+| Seuils disque | 500 Mo / 100 Mo | Alerte / refus d'enregistrement. À relire : un enregistrement stéréo 48 kHz pèse 2,17 fois un mono 44,1 kHz (§4.3) |
 | Taille étiquette QR | 45 mm | `?taille=NN` sur `/qr/label` |
 
 ---
@@ -493,7 +559,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 ## 10. Dépendances logicielles
 
 - OS : Raspberry Pi OS Lite (Bookworm), NetworkManager (`nmcli`), `avahi-daemon` (mDNS), systemd.
-- Paquets : `alsa-utils` (aplay/arecord), `rclone`, `python3-pip`.
+- Paquets : `alsa-utils` (aplay/arecord/amixer/alsactl), `rclone` **≥ 1.66** (`bisync` existe depuis 1.58, mais `--conflict-resolve` et `--resync-mode` depuis 1.66 ; Bookworm livre 1.60 par apt — installer via `https://rclone.org/install.sh`), `ffmpeg`, `python3-pip`.
 - Python : `RPi.GPIO` (ou `gpiozero`/`lgpio` selon préférence de l'implémenteur), `Flask`, `qrcode[pil]`, `pydub` (+ `ffmpeg` pour pydub), `werkzeug` (hash mot de passe, inclus avec Flask).
 - Front vendorisé : `jsQR.min.js` (npm, servi en statique).
 - Optionnel post-événement : `whisper.cpp` + modèle `tiny` q5_0.
