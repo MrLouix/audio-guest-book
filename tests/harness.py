@@ -286,6 +286,20 @@ class AudioFactice:
         with self._verrou:
             return [a.nom for a in self.lectures]
 
+    def sequence_lue(self) -> List[str]:
+        """noms_lus() sans les répétitions consécutives d'un même fichier.
+
+        La tonalité est rejouée en boucle tant que rien n'est composé (§1.2) :
+        elle apparaît donc autant de fois que la doublure a eu le temps de la
+        « jouer ». Un scénario qui vérifie un *enchaînement* — tonalité, puis
+        message, puis bip — ne doit pas dépendre de ce décompte.
+        """
+        sequence: List[str] = []
+        for nom in self.noms_lus():
+            if not sequence or sequence[-1] != nom:
+                sequence.append(nom)
+        return sequence
+
     def noms_enregistres(self) -> List[str]:
         with self._verrou:
             return [a.nom for a in self.enregistrements]
@@ -500,7 +514,7 @@ def journal_status():
 _PARAMS_SAUVEGARDES = (
     "AUDIO_DIR", "MESSAGES_DIR", "STATUS_FILE", "MODE_CONFIG_FILE",
     "RING_TRIGGER_FILE", "TONALITE_WAV", "BIP_WAV", "RING_OUT_WAV",
-    "MESSAGE_GENERIQUE_WAV", "AUCUN_MESSAGE_WAV",
+    "MESSAGE_GENERIQUE_WAV", "AUCUN_MESSAGE_WAV", "TONALITE_MAX_SEC",
     "RING_INTERVAL_SEC", "RING_ANSWER_GRACE_SEC", "MAX_RECORD_SEC",
     "STATUS_HEARTBEAT_SEC", "SHORT_RECORDING_THRESHOLD_SEC",
     "RECORDING_HANGUP_CONFIRM_SEC", "RESTITUTION_INTERDIGIT_SEC",
@@ -597,6 +611,11 @@ class Banc:
         config.RING_OUT_WAV = config.AUDIO_DIR / "ring_out.wav"
         config.MESSAGE_GENERIQUE_WAV = config.AUDIO_DIR / "message_generique.wav"
         config.AUCUN_MESSAGE_WAV = config.AUDIO_DIR / "aucun_message.wav"
+        # La tonalité est rejouée en boucle jusqu'à la première impulsion
+        # (§1.2) : sans borne, un scénario qui ne compose jamais ferait tourner
+        # la doublure de lecture pendant toute sa durée. Trois secondes
+        # couvrent largement le temps de réaction d'un test.
+        config.TONALITE_MAX_SEC = 3
         # Par défaut la sonnerie périodique ne part jamais : un scénario qui ne
         # l'étudie pas n'a pas à en déclencher une au bout de RING_INTERVAL_SEC.
         config.RING_INTERVAL_SEC = 10 ** 9

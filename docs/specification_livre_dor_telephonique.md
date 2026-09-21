@@ -16,8 +16,9 @@ Un téléphone à cadran vintage **Socotel S63** est transformé en livre d'or a
 1. **Au repos**, le téléphone sonne périodiquement (sonnerie diffusée par haut-parleur externe) pour attirer l'attention des invités. La sonnerie peut aussi être déclenchée à distance depuis le dashboard.
 2. **Décroché** → la sonnerie s'arrête immédiatement. Deux scénarios selon le contexte du décroché :
    - **Scénario « appel entrant »** : si l'invité décroche **pendant la sonnerie** (ou dans une courte fenêtre de grâce après sa fin, `RING_ANSWER_GRACE_SEC`, défaut 5 s), le système simule un vrai appel : **aucune tonalité, aucun chiffre à composer** — un message des mariés est joué **au hasard** dans l'écouteur, suivi du bip, puis l'enregistrement démarre comme d'habitude (étapes 5–6).
-   - **Scénario « appel sortant » (nominal)** : hors sonnerie, une **tonalité d'invitation à numéroter** (mélange de sinusoïdes 440 Hz + 480 Hz, comme un vrai téléphone) est jouée dans l'écouteur.
-3. *(Scénario sortant uniquement)* L'invité **compose UN chiffre** sur le cadran rotatif → la tonalité s'arrête **dès la première impulsion détectée** (fidèle au comportement d'un vrai téléphone).
+   - **Scénario « appel sortant » (nominal)** : hors sonnerie, une **tonalité d'invitation à numéroter** est jouée dans l'écouteur. Fidèle au réseau français (Socotel/PTT) : un **440 Hz continu et non modulé** — et non le mélange 440 + 480 Hz du réseau nord-américain, dont le battement à 40 Hz s'entend comme une ondulation. Elle est présente dès le décroché et **tenue tant que rien n'est composé** ; le fichier de 30 s est rejoué en boucle, `TONALITE_MAX_SEC` bornant le total (0 = aucune tonalité).
+3. *(Scénario sortant uniquement)* L'invité **compose UN chiffre** sur le cadran rotatif → la tonalité s'arrête **dès la première impulsion détectée**, et non au chiffre complet : c'est la coupure de boucle qui la fait taire. Elle ne repart plus jusqu'au raccroché, y compris entre deux chiffres d'un numéro de restitution (§5.7).
+   - **Aucun bip pendant la composition.** Un cadran rotatif n'émet aucun signal audio : la numérotation décimale est mécanique, elle ouvre et referme la boucle N fois pour le chiffre N (dix pour le 0). Les « bip-bip-bip » sont ceux d'un clavier à fréquences vocales (DTMF), qui n'a rien à voir.
 4. *(Scénario sortant uniquement)* Le **message associé au chiffre composé** est joué dans l'écouteur. Si aucun message n'est attribué à ce chiffre → un **message générique** est joué à la place.
 5. Un **bip** retentit, puis **l'enregistrement démarre** (micro électret caché dans le combiné).
 6. L'invité **raccroche** → l'enregistrement s'arrête, le fichier WAV horodaté est sauvegardé, le système revient à l'état d'attente.
@@ -144,7 +145,7 @@ Deux dossiers, deux rôles distincts :
 | `sonnerie` → `ring_out.wav` | `audio_src/` | line out | 0 dB |
 | `message_generique`, `message_0` … `message_9` | `audio_src/` | casque | −9 dB |
 | `aucun_message` (**optionnel**, §5.7) | `audio_src/` | casque | −9 dB |
-| `tonalite.wav` (440 + 480 Hz) | synthèse | casque | −12 dB |
+| `tonalite.wav` (440 Hz continu, 30 s rejouées en boucle) | synthèse | casque | −12 dB |
 | `bip.wav` (800 Hz, 600 ms, encadré de 250 ms de silence) | synthèse | casque | −6 dB |
 
 **Association rôle → fichier source.** Le fichier qui alimente chaque rôle est choisi depuis le dashboard (§5.2) et enregistré dans `audio_config.json` (contrat §8). Les fichiers gardent ainsi leur nom d'origine. Précédence à la conversion : mapping explicite, puis repli sur l'ancienne convention de nommage `audio_src/<role>.*` — une installation antérieure continue donc de fonctionner sans `audio_config.json`.
@@ -476,7 +477,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 │   └── audio-setup.sh        # réglages du codec (numids amixer) + commutation des sorties
 ├── audio_src/                # sources brutes, noms d'origine (mp3, m4a, wav...) — SYNC BIDIRECTIONNELLE
 ├── audio/                    # tout généré : 48 kHz, 16 bits, stéréo L = R
-│   ├── tonalite.wav          # généré par synthèse (440+480 Hz)
+│   ├── tonalite.wav          # généré par synthèse (440 Hz continu)
 │   ├── bip.wav               # généré par synthèse (800 Hz, 600 ms + silences)
 │   ├── ring_out.wav          # sonnerie (sortie line out)
 │   ├── message_generique.wav # repli
@@ -519,6 +520,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 | `RING_INTERVAL_SEC` | 90 | Intervalle sonnerie en attente. **0 = ne sonne jamais de lui-même** (le déclenchement depuis le dashboard reste actif) |
 | `RING_ANSWER_GRACE_SEC` | 5 | Fenêtre après la fin de la sonnerie pendant laquelle un décroché est traité comme un « appel entrant » (message aléatoire, sans cadran) |
 | `MAX_RECORD_SEC` | 120 | Durée max d'un message invité |
+| `TONALITE_MAX_SEC` | 180 | Durée max de la tonalité d'invitation à numéroter, boucle comprise. **0 = aucune tonalité** ; passé ce délai la ligne devient silencieuse, la numérotation reste possible |
 | `MODE_RESTITUTION` | False | Mode au premier démarrage ; ensuite `mode_config.json` fait foi (bascule via `/mode`, §5.7) |
 | `RESTITUTION_DIGITS_MAX` | 4 | Nombre max de chiffres du numéro de message ; au dernier chiffre la saisie se ferme aussitôt |
 | `RESTITUTION_INTERDIGIT_SEC` | 3.0 | Silence du cadran validant un numéro plus court (« 1 » puis attente) |

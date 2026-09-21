@@ -144,7 +144,9 @@ Puis, sur le matériel, avec quelques messages déjà présents dans `messages/`
 
 - [ ] Mode activé depuis le dashboard (page **Mode**) ; l'accueil affiche « restitution »
       et le bouton « Sonner maintenant » est désactivé.
-- [ ] Décroché : tonalité présente, coupée dès la première impulsion du cadran.
+- [ ] Décroché : tonalité présente **immédiatement**, un 440 Hz continu et **sans ondulation** ; elle tient tant qu'on ne compose rien (laisser le combiné décroché ~40 s : elle ne doit pas s'interrompre au bout de 30 s).
+- [ ] Elle est coupée **dès la première impulsion** du cadran, pas au chiffre complet, et ne repart pas ensuite.
+- [ ] Pendant la rotation : **aucun son** — un cadran rotatif n'émet aucun signal audio, la numérotation est purement mécanique.
 - [ ] `1` puis attente (~3 s) → le **premier** message enregistré est lu.
 - [ ] Quatre chiffres (ex. `9999`) → la lecture démarre **sans attendre**, et un
       cinquième chiffre composé reste sans effet.

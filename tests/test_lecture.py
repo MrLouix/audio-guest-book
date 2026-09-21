@@ -56,7 +56,7 @@ def test_simule(rapport: Rapport) -> None:
         banc.composer(7)
         banc.attendre_etat(livre_dor.STATE_ENREGISTREMENT, timeout=5.0)
         rapport.egal("l'ordre de lecture est tonalité, message, bip",
-                     banc.audio.noms_lus()[:3],
+                     banc.audio.sequence_lue()[:3],
                      ["tonalite.wav", "message_7.wav", "bip.wav"])
         appels = {a.nom: a for a in banc.audio.lectures}
         rapport.verifie("la lecture est protégée par un timeout (§7.2)",

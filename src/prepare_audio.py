@@ -53,6 +53,16 @@ RING_GAIN_DB = 0
 TONALITE_GAIN_DB = -12
 BIP_GAIN_DB = -6
 
+# Tonalité d'invitation à numéroter du réseau français : **440 Hz seul**, et
+# non le mélange 440 + 480 Hz du réseau nord-américain, dont le battement à
+# 40 Hz s'entend comme une ondulation. Sur une ligne PTT, c'était un son
+# parfaitement continu et non modulé (§1.2). Au passage, ce mélange écrêtait :
+# deux sinusoïdes à -6 dB sommées dépassent le plein échelle.
+DIAL_TONE_FREQ_HZ = 440
+# Durée du fichier, pas de la tonalité : livre_dor.py le rejoue en boucle
+# jusqu'à la première impulsion (config.TONALITE_MAX_SEC borne le total).
+# 30 000 ms font exactement 13 200 périodes à 440 Hz — le raccord de boucle
+# tombe donc sur un passage à zéro, sans clic.
 DIAL_TONE_DURATION_MS = 30000
 
 # Bip de répondeur classique : plus long et plus grave que l'ancien
@@ -124,12 +134,14 @@ def _to_dual_mono(segment: AudioSegment, gain_db: float = 0.0,
 
 
 def _generate_dial_tone() -> AudioSegment:
-    """Tonalité d'invitation à numéroter : mélange 440 Hz + 480 Hz (§1.2)."""
-    tone_a = Sine(440, sample_rate=FRAME_RATE).to_audio_segment(
+    """Tonalité d'invitation à numéroter : 440 Hz continu, non modulé (§1.2).
+
+    Une seule sinusoïde, délibérément : deux fréquences voisines battraient à
+    leur différence et donneraient une tonalité ondulante — celle du réseau
+    nord-américain, pas celle d'une ligne PTT.
+    """
+    return Sine(DIAL_TONE_FREQ_HZ, sample_rate=FRAME_RATE).to_audio_segment(
         duration=DIAL_TONE_DURATION_MS, volume=-6)
-    tone_b = Sine(480, sample_rate=FRAME_RATE).to_audio_segment(
-        duration=DIAL_TONE_DURATION_MS, volume=-6)
-    return tone_a.overlay(tone_b)
 
 
 def _generate_beep() -> AudioSegment:

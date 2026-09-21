@@ -15,12 +15,18 @@ contrôle d'espace disque avant enregistrement, tolérance aux micro-coupures
 du crochet pendant l'enregistrement, conservation des enregistrements très
 courts, et rotation des logs applicatifs.
 
+Sprint 14 : tonalité fidèle à un poste à cadran du réseau français (§1.2) —
+un 440 Hz continu, tenu tant que rien n'est composé et coupé net à la première
+impulsion (et non au chiffre complet), porté par `Tonalite`, dans les deux
+modes.
+
 Sprint 13 : mode restitution (§5.7) — après l'événement, le téléphone devient
 un lecteur des messages laissés par les invités. Décroché → tonalité →
 numéro de RESTITUTION_DIGITS_MAX chiffres au plus composé au cadran → lecture
 du message correspondant, les enregistrements étant numérotés 1..N dans
 l'ordre chronologique. Ni sonnerie, ni message des mariés, ni bip, ni
-enregistrement : le mode est en lecture seule sur messages/.
+enregistrement : le mode est en lecture seule sur messages/ — la tonalité,
+elle, est la même qu'en mode mariage.
 """
 
 import argparse
@@ -57,6 +63,11 @@ STATE_RESTITUTION_LECTURE = "restitution_lecture"
 STATE_ERREUR = "erreur"
 
 MAIN_LOOP_POLL_SEC = 0.05
+
+# Scrutation pendant la tonalité : elle doit tomber *avec* la première
+# impulsion, pas un dixième de seconde après. Le coût est nul — un décroché
+# sans numérotation dure quelques secondes.
+TONALITE_POLL_SEC = 0.02
 
 
 def message_path_for_digit(digit: int) -> Path:
@@ -198,6 +209,73 @@ class HangupConfirmer:
         if self._down_since is None:
             self._down_since = now
         return (now - self._down_since) < self.confirm_sec
+
+
+class Tonalite:
+    """Tonalité d'invitation à numéroter, tenue jusqu'à la 1re impulsion (§1.2).
+
+    Sur un poste à cadran du réseau français, c'était le seul son de la ligne
+    avant la communication : un 440 Hz continu et non modulé, présent dès le
+    décroché et tenu tant que rien n'était composé. La numérotation décimale,
+    elle, n'émet aucun signal audio — elle ouvre et referme la boucle N fois
+    pour le chiffre N —, et la tonalité tombait net dès la première coupure,
+    pas au chiffre complet.
+
+    Le fichier, lui, a une fin : `tenir()` est donc appelée à chaque tour de
+    la boucle de numérotation et le rejoue tant que rien n'est parti.
+    TONALITE_MAX_SEC borne le total, pour ne pas enchaîner les sous-processus
+    sans fin sur un combiné simplement posé à côté du téléphone.
+    """
+
+    def __init__(self, inputs: gpio_io.PhoneInputs,
+                 device: Optional[str] = None) -> None:
+        self.inputs = inputs
+        self.device = device
+        self._composition_commencee = False
+        self._fin = time.monotonic() + max(config.TONALITE_MAX_SEC, 0)
+
+    def composition_commencee(self) -> bool:
+        """Drapeau collant : vrai dès la première impulsion, jusqu'au raccroché.
+
+        Collant parce que le compteur d'impulsions du chiffre en cours retombe
+        à zéro dès que le cadran revient au repos : sans ça, la tonalité
+        repartirait entre deux chiffres d'un numéro de restitution.
+        """
+        if not self._composition_commencee and (self.inputs.has_pulses()
+                                                or self.inputs.has_digits()):
+            self._composition_commencee = True
+        return self._composition_commencee
+
+    def tenir(self) -> None:
+        """Rejoue le fichier de tonalité, jusqu'à la première impulsion.
+
+        Bloquant le temps d'une lecture, mais interruptible : `should_continue`
+        coupe à la première impulsion comme au raccroché. Rien à faire si le
+        budget de TONALITE_MAX_SEC est épuisé — la ligne devient alors
+        silencieuse, la numérotation reste possible.
+        """
+        if (self.composition_commencee()
+                or time.monotonic() >= self._fin
+                or not self.inputs.is_hook_up()):
+            return
+
+        def continuer() -> bool:
+            return self.inputs.is_hook_up() and not self.composition_commencee()
+
+        resultat = audio_io.play(
+            config.TONALITE_WAV,
+            should_continue=continuer,
+            poll_interval=TONALITE_POLL_SEC,
+            timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+            device=self.device,
+            output=config.AUDIO_OUTPUT_COMBINE,
+        )
+        if resultat == "error":
+            # Fichier manquant ou aplay en échec : ne pas boucler sur l'erreur,
+            # le reste du parcours doit rester praticable (§7.4).
+            logger.warning("Tonalité non jouée : la ligne reste silencieuse "
+                           "jusqu'à la numérotation.")
+            self._fin = 0.0
 
 
 class GuestBookStateMachine:
@@ -365,32 +443,34 @@ class GuestBookStateMachine:
         self._set_state(STATE_DECROCHE)
         logger.info("Décroché : tonalité")
         self.inputs.reset_dial()
-        audio_io.play(
-            config.TONALITE_WAV,
-            should_continue=lambda: self.inputs.is_hook_up() and not self.inputs.has_pulses(),
-            timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-            output=config.AUDIO_OUTPUT_COMBINE,
-        )
+        tonalite = Tonalite(self.inputs)
+        tonalite.tenir()
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant la tonalité, retour en attente.")
             return
-        # La tonalité s'est arrêtée dès la première impulsion détectée (§1.2).
-        self._run_numerotation()
-
-    def _run_numerotation(self) -> None:
-        self._set_state(STATE_NUMEROTATION)
-        logger.info("Numérotation en cours")
-        digit = None
-        while self.inputs.is_hook_up():
-            digit = self.inputs.pop_digit()
-            if digit is not None:
-                break
-            time.sleep(MAIN_LOOP_POLL_SEC)
-        if not self.inputs.is_hook_up():
-            logger.info("Raccroché pendant la numérotation, retour en attente.")
+        digit = self._run_numerotation(tonalite)
+        if digit is None:
             return
         logger.info("Chiffre composé : %d", digit)
         self._run_lecture_message(digit)
+
+    def _run_numerotation(self, tonalite: Tonalite) -> Optional[int]:
+        """Attend le chiffre composé ; None si le combiné est raccroché avant.
+
+        La tonalité n'est pas finie en entrant ici : elle tient tant que le
+        cadran n'a pas envoyé sa première impulsion (§1.2), et c'est
+        `tonalite.tenir()` qui la prolonge d'un tour à l'autre.
+        """
+        self._set_state(STATE_NUMEROTATION)
+        logger.info("Numérotation en cours")
+        while self.inputs.is_hook_up():
+            tonalite.tenir()
+            digit = self.inputs.pop_digit()
+            if digit is not None:
+                return digit
+            time.sleep(MAIN_LOOP_POLL_SEC)
+        logger.info("Raccroché pendant la numérotation, retour en attente.")
+        return None
 
     def _run_lecture_message(self, digit: int) -> None:
         message_path = message_path_for_digit(digit)
@@ -438,26 +518,30 @@ class GuestBookStateMachine:
 
         logger.info("Décroché (mode restitution) : tonalité, %d message(s) disponible(s)",
                     len(messages))
-        audio_io.play(
-            config.TONALITE_WAV,
-            should_continue=lambda: self.inputs.is_hook_up() and not self.inputs.has_pulses(),
-            timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-            output=config.AUDIO_OUTPUT_COMBINE,
-        )
+        # Même tonalité qu'en mode mariage : le mode restitution ne change que
+        # ce qu'on entend *après* le numéro (§5.7).
+        tonalite = Tonalite(self.inputs)
+        tonalite.tenir()
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant la tonalité (mode restitution), retour en attente.")
             return
-        # La tonalité s'est arrêtée dès la première impulsion détectée (§1.2).
-        self._run_restitution_numerotation(messages)
+        numero = self._run_restitution_numerotation(tonalite)
+        if numero is None:
+            return
+        self._run_restitution_lecture(numero, messages)
 
-    def _run_restitution_numerotation(self, messages: List[Path]) -> None:
+    def _run_restitution_numerotation(self, tonalite: Tonalite) -> Optional[int]:
         """Saisie du numéro : RESTITUTION_DIGITS_MAX chiffres au plus (§5.7).
 
         Le numéro est validé de deux façons : dès le dernier chiffre autorisé —
         aucun chiffre supplémentaire n'est alors accepté — ou après
         RESTITUTION_INTERDIGIT_SEC de silence du cadran (« 1 » puis attente).
         Aucun délai sur le premier chiffre : on attend indéfiniment tant que le
-        combiné reste décroché.
+        combiné reste décroché — la tonalité, elle, tient pendant tout ce
+        temps, et ne tombe qu'à la première impulsion (§1.2).
+
+        Retourne le numéro composé, ou None si rien n'a été composé ou si le
+        combiné a été raccroché.
         """
         self._set_state(STATE_RESTITUTION_NUMEROTATION)
         logger.info("Numérotation en cours (mode restitution)")
@@ -465,6 +549,7 @@ class GuestBookStateMachine:
         last_digit_ts: Optional[float] = None
 
         while self.inputs.is_hook_up():
+            tonalite.tenir()
             digit = self.inputs.pop_digit()
             if digit is not None:
                 digits.append(digit)
@@ -491,13 +576,13 @@ class GuestBookStateMachine:
 
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant la numérotation (mode restitution), retour en attente.")
-            return
+            return None
         if not digits:
             logger.info("Aucun chiffre composé (mode restitution), retour en attente.")
-            return
+            return None
 
         # int() absorbe naturellement les zéros de tête (0 puis 1 -> 1).
-        self._run_restitution_lecture(int("".join(str(d) for d in digits)), messages)
+        return int("".join(str(d) for d in digits))
 
     def _run_restitution_lecture(self, numero: int, messages: List[Path]) -> None:
         """Lit le message n° numero, borné à [1, N] (§5.7).

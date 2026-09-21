@@ -172,6 +172,17 @@ class PhoneInputs:
         with self._lock:
             return self._pulse_count > 0
 
+    def has_digits(self) -> bool:
+        """Un chiffre validé attend-il d'être consommé ? (sans le consommer)
+
+        Complète has_pulses(), qui retombe à faux dès que le cadran revient au
+        repos : les deux réunis disent « quelque chose a été composé depuis le
+        décroché », ce dont la tonalité a besoin pour ne pas repartir entre
+        deux chiffres (§1.2).
+        """
+        with self._lock:
+            return bool(self._digit_queue)
+
     def is_dial_active(self) -> bool:
         """Cadran hors de sa position de repos : un chiffre est en cours de composition.
 

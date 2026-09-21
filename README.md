@@ -84,7 +84,7 @@ python3 src/prepare_audio.py --role sonnerie  # un seul rôle
 python3 src/prepare_audio.py --play-all       # rejoue chaque fichier sur SA sortie
 ```
 
-`tonalite.wav` (440+480 Hz) et `bip.wav` (800 Hz, 600 ms, encadré de silence) sont générés par synthèse, sans fichier source. Un rôle sans source est simplement ignoré : `livre_dor.py` retombe sur `message_generique.wav`. Chaque fichier est écrit via un temporaire puis `os.replace()` — une reconversion déclenchée depuis le dashboard ne peut donc pas faire lire un WAV tronqué à `aplay`.
+`tonalite.wav` (440 Hz continu) et `bip.wav` (800 Hz, 600 ms, encadré de silence) sont générés par synthèse, sans fichier source. Un rôle sans source est simplement ignoré : `livre_dor.py` retombe sur `message_generique.wav`. Chaque fichier est écrit via un temporaire puis `os.replace()` — une reconversion déclenchée depuis le dashboard ne peut donc pas faire lire un WAV tronqué à `aplay`.
 
 Les primitives de lecture/enregistrement bas niveau (`audio_io.py`) peuvent être testées isolément :
 
@@ -101,7 +101,15 @@ python3 src/livre_dor.py          # démarre la machine à états (nécessite un
 ```
 
 Parcours implémenté (§1.2, scénario « appel sortant ») :
-attente → décroché (tonalité 440+480 Hz) → dès la première impulsion, la tonalité s'arrête → numérotation (comptage des impulsions, chiffre validé au retour du cadran au repos, 10 impulsions = chiffre 0) → lecture de `audio/message_N.wav` (repli sur `message_generique.wav` si absent) → bip → enregistrement (`messages/message_AAAA-MM-JJ_HH-MM-SS.wav`, jamais d'écrasement) → retour à l'attente. Toute lecture est interrompue immédiatement au raccroché ; l'enregistrement est plafonné à `MAX_RECORD_SEC`.
+attente → décroché (tonalité) → dès la première impulsion, la tonalité s'arrête → numérotation (comptage des impulsions, chiffre validé au retour du cadran au repos, 10 impulsions = chiffre 0) → lecture de `audio/message_N.wav` (repli sur `message_generique.wav` si absent) → bip → enregistrement (`messages/message_AAAA-MM-JJ_HH-MM-SS.wav`, jamais d'écrasement) → retour à l'attente. Toute lecture est interrompue immédiatement au raccroché ; l'enregistrement est plafonné à `MAX_RECORD_SEC`.
+
+### La tonalité, telle qu'on l'entendait sur un poste à cadran
+
+Les sons de la ligne suivent le fonctionnement d'un poste Socotel/PTT, dans les deux modes (mariage et restitution) :
+
+- **Au décroché, la tonalité d'invitation à numéroter** : un **440 Hz continu et non modulé** — et non le mélange 440 + 480 Hz du réseau nord-américain, dont le battement à 40 Hz s'entend comme une ondulation. Elle est présente immédiatement et **tenue tant que rien n'est composé** : le fichier ne dure que 30 s, il est donc rejoué en boucle (sa durée est un nombre entier de périodes, le raccord tombe sur un passage à zéro et ne s'entend pas). `TONALITE_MAX_SEC` (défaut 180 s) borne le total ; passé ce délai la ligne devient silencieuse, et **0 supprime la tonalité** sans rien changer au reste du parcours.
+- **Elle tombe net à la première impulsion**, pas au premier chiffre complet — c'est la coupure de boucle qui la fait taire. Le drapeau est collant : elle ne repart pas entre deux chiffres d'un numéro de restitution, alors même que le compteur d'impulsions du chiffre est retombé à zéro.
+- **Pendant la composition, plus rien.** Un cadran rotatif ne produit aucun signal audio : la numérotation décimale est mécanique, elle ouvre et referme la boucle N fois pour le chiffre N (dix fois pour le 0). Les « bip-bip-bip » sont ceux d'un clavier à fréquences vocales (DTMF), qui n'a rien à voir.
 
 `gpio_io.py` isole l'accès matériel (RPi.GPIO, callbacks avec anti-rebond `bouncetime`) derrière `PhoneInputs`, un état partagé thread-safe indépendant du matériel — ce qui permet de vérifier toute la logique de la machine à états sans Raspberry Pi (audio et GPIO simulés) avant le déploiement.
 
@@ -298,7 +306,7 @@ python3 tests/run_tous.py               # les huit, avec un bilan final
 |---|---|
 | `test_decroche.py` | Décroché : tonalité, purge du cadran, appel entrant, restitution |
 | `test_raccroche.py` | Raccroché à chaque étape du parcours, anti-rebond du crochet |
-| `test_composition.py` | Cadran rotatif : impulsions → chiffre, numéro multi-chiffres |
+| `test_composition.py` | Cadran rotatif : impulsions → chiffre, numéro multi-chiffres, tonalité continue |
 | `test_lecture.py` | Lecture d'un message : sélection du fichier, `aplay`, interruption |
 | `test_enregistrement.py` | Enregistrement : nom horodaté, `arecord`, espace disque |
 | `test_sonnerie.py` | Sonnerie périodique, `ring_trigger`, fenêtre de grâce |

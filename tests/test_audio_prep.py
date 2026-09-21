@@ -24,6 +24,7 @@ Usage :
 
 import wave
 from pathlib import Path
+from typing import List
 
 import harness                       # règle sys.path : doit précéder les imports de src/
 from harness import Banc, Rapport
@@ -67,6 +68,27 @@ def _lire_wav(chemin: Path) -> dict:
     else:
         infos["pistes_identiques"] = False
     return infos
+
+
+def _piste_gauche(chemin: Path) -> List[int]:
+    """Échantillons signés de la piste gauche d'un WAV 16 bits."""
+    with wave.open(str(chemin), "rb") as fichier:
+        canaux = fichier.getnchannels()
+        frames = fichier.readframes(fichier.getnframes())
+    pas = 2 * canaux
+    return [int.from_bytes(frames[i:i + 2], "little", signed=True)
+            for i in range(0, len(frames) - pas + 1, pas)]
+
+
+def _enveloppe(echantillons: List[int], fenetre: int) -> List[int]:
+    """Amplitude crête par fenêtre de `fenetre` échantillons.
+
+    C'est ce qui distingue une tonalité continue d'une tonalité modulée : deux
+    sinusoïdes voisines battent à leur différence, et leur crête varie d'une
+    fenêtre à l'autre. Une seule sinusoïde garde la même crête partout.
+    """
+    return [max(abs(v) for v in echantillons[i:i + fenetre])
+            for i in range(0, len(echantillons) - fenetre + 1, fenetre)]
 
 
 def test_mapping(rapport: Rapport) -> None:
@@ -162,9 +184,36 @@ def test_conversion(rapport: Rapport) -> None:
                         not hasattr(prepare_audio, "_pan_and_gain"),
                         "prepare_audio._pan_and_gain existe encore")
 
-    rapport.section("4. Bip de répondeur (§1.2)")
+    rapport.section("4. Tonalité d'invitation à numéroter et bip (§1.2)")
     with Banc(machine=False, chiffres_maries=[]):
         prepare_audio.generate_synthesized()
+
+        # Tonalité d'invitation à numéroter du réseau français : 440 Hz seul.
+        # Le mélange 440 + 480 Hz est celui du réseau nord-américain, et son
+        # battement à 40 Hz s'entend comme une ondulation — exactement ce que
+        # la ligne PTT ne faisait pas.
+        rapport.egal("la tonalité est un 440 Hz", prepare_audio.DIAL_TONE_FREQ_HZ, 440)
+        echantillons = _piste_gauche(config.TONALITE_WAV)
+        # Fenêtre de 5 ms : deux périodes pleines de 440 Hz — assez pour que
+        # la crête d'une sinusoïde seule y soit toujours la même, et assez
+        # courte pour tomber dans les creux d'un battement à 40 Hz. Mesuré :
+        # 0 % d'écart pour un 440 Hz seul, 73 % pour le mélange 440 + 480 Hz.
+        fenetre = int(config.AUDIO_RATE_HZ * 0.005)
+        # Le silence de tête, lui, est voulu : il absorbe le « pop » de
+        # l'activation de l'ampli. Il est écarté de la mesure.
+        debut = int(config.AUDIO_RATE_HZ * (prepare_audio.LEAD_SILENCE_MS + 5) / 1000)
+        enveloppe = _enveloppe(echantillons[debut:], fenetre)
+        creux, crete = min(enveloppe), max(enveloppe)
+        rapport.verifie("elle est continue, non modulée (crête constante)",
+                        creux > 0 and (crete - creux) / crete < 0.05,
+                        f"crête entre {creux} et {crete} sur {len(enveloppe)} fenêtres")
+        # Le fichier est rejoué en boucle tant que rien n'est composé : un
+        # nombre entier de périodes fait tomber le raccord sur un passage à
+        # zéro, sans clic audible.
+        periodes = prepare_audio.DIAL_TONE_DURATION_MS * prepare_audio.DIAL_TONE_FREQ_HZ / 1000
+        rapport.verifie("sa durée est un nombre entier de périodes (boucle sans clic)",
+                        float(periodes).is_integer(), f"{periodes} périodes")
+
         infos = _lire_wav(config.BIP_WAV)
         attendu = (prepare_audio.BIP_SILENCE_BEFORE_MS + prepare_audio.BIP_DURATION_MS
                    + prepare_audio.BIP_SILENCE_AFTER_MS)
