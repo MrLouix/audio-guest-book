@@ -77,7 +77,7 @@ def test_simule(rapport: Rapport) -> None:
                         banc.attendre_etat(livre_dor.STATE_ENREGISTREMENT, timeout=5.0),
                         f"état observé : {banc.etat}")
         rapport.verifie("le message est bien joué avant le bip",
-                        banc.audio.noms_lus()[:3] ==
+                        banc.audio.sequence_lue()[:3] ==
                         ["tonalite.wav", "message_3.wav", "bip.wav"],
                         f"fichiers joués : {banc.audio.noms_lus()}")
         time.sleep(0.4)

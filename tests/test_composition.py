@@ -15,7 +15,9 @@ Ce que vérifie ce script, seul et sans matériel :
 5. le chiffre composé sélectionne le bon message, avec repli sur le message
    générique si le chiffre n'a pas de message dédié ;
 6. en mode restitution, la saisie multi-chiffres, sa validation par silence
-   du cadran et le bornage du numéro (§5.7).
+   du cadran et le bornage du numéro (§5.7) ;
+7. la tonalité d'invitation à numéroter, tenue tant que rien n'est parti et
+   coupée dès la première impulsion (§1.2).
 
 Usage :
     python3 tests/test_composition.py          # simulation, aucune dépendance
@@ -299,6 +301,38 @@ def test_simule(rapport: Rapport) -> None:
         time.sleep(0.4 + 3 * harness.STABILISATION_SEC)
         rapport.egal("le numéro 0 lit le premier message",
                      banc.messages_invites_lus(), [banc.noms_messages[0]])
+    rapport.section("10. La tonalité d'attente tient jusqu'à la 1re impulsion (§1.2)")
+    # Sur une ligne PTT, la tonalité arrivait au décroché et restait là tant
+    # qu'on ne composait rien. Le fichier, lui, a une fin : il est donc rejoué
+    # jusqu'à la première coupure de boucle.
+    with Banc() as banc:
+        banc.decrocher(stabiliser=False)
+        rapport.verifie("elle démarre dès le décroché",
+                        banc.attendre_lecture("tonalite.wav"),
+                        f"fichiers joués : {banc.audio.noms_lus()}")
+        rapport.verifie("elle est retenue tant que rien n'est composé",
+                        banc.audio.attendre_nb_lectures("tonalite.wav", 3),
+                        f"lectures de la tonalité : "
+                        f"{len(banc.audio.lectures_de('tonalite.wav'))}")
+        rapport.egal("et la ligne ne fait rien entendre d'autre",
+                     sorted(set(banc.audio.noms_lus())), ["tonalite.wav"])
+
+    with Banc(restitution=True, messages=20, RESTITUTION_INTERDIGIT_SEC=0.6) as banc:
+        banc.decrocher(stabiliser=False)
+        banc.attendre_lecture("tonalite.wav")
+        banc.composer(1)
+        time.sleep(0.15)
+        tonalites = len(banc.audio.lectures_de("tonalite.wav"))
+        time.sleep(0.3)
+        banc.composer(2)
+        # Le compteur d'impulsions du chiffre retombe à zéro au retour du
+        # cadran au repos : sans drapeau collant, la tonalité repartirait
+        # dans ce creux, au beau milieu du numéro.
+        rapport.egal("elle ne repart pas entre deux chiffres d'un même numéro",
+                     len(banc.audio.lectures_de("tonalite.wav")), tonalites)
+        time.sleep(0.6 + 3 * harness.STABILISATION_SEC)
+        rapport.egal("et « 12 » lit bien le 12e message",
+                     banc.messages_invites_lus(), [banc.noms_messages[11]])
 
 
 def test_reel(rapport: Rapport) -> None:

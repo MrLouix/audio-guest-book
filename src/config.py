@@ -267,6 +267,25 @@ RING_INTERVAL_SEC = _env_int("RING_INTERVAL_SEC", 90)
 RING_ANSWER_GRACE_SEC = _env_int("RING_ANSWER_GRACE_SEC", 5)
 MAX_RECORD_SEC = _env_int("MAX_RECORD_SEC", 120)
 
+# --- Tonalité d'un poste à cadran du réseau français (§1.2) --------------
+#
+# Sur un poste Socotel/PTT, le décroché ouvrait la boucle vers le central, qui
+# renvoyait aussitôt la **tonalité d'invitation à numéroter** : un 440 Hz
+# continu, tenu tant que rien n'était composé, et coupé net dès la première
+# impulsion envoyée par le cadran. C'est le seul son que la ligne produisait
+# avant la communication : la numérotation décimale n'émet aucun signal audio,
+# elle ouvre et referme la boucle N fois.
+
+# Durée maximale de la tonalité, toutes répétitions du fichier confondues. Le
+# fichier tonalite.wav dure DIAL_TONE_DURATION_MS ; il est rejoué en boucle
+# pour que la tonalité soit réellement continue tant que le combiné reste
+# décroché sans qu'on compose. Cette borne évite une boucle de sous-processus
+# sans fin si un décroché n'est jamais suivi d'une numérotation ; passé ce
+# délai la ligne devient silencieuse, comme un central qui « oublie » un
+# abonné décroché. **0 (ou négatif) supprime la tonalité** sans rien changer
+# au reste du parcours, sur le modèle de RING_INTERVAL_SEC.
+TONALITE_MAX_SEC = _env_int("TONALITE_MAX_SEC", 180)
+
 # --- Mode restitution (§5.7) ----------------------------------------------
 
 # Valeur par défaut au premier démarrage uniquement : la source de vérité à
@@ -414,6 +433,9 @@ MODIFIABLE_PARAMS = {
     # défaut suit SOUND_CARD, ce qu'une valeur figée ici casserait.
     "RESTITUTION_DIGITS_MAX": {"type": "int", "default": 4, "label": "Mode restitution : nombre max de chiffres du numéro"},
     "RESTITUTION_INTERDIGIT_SEC": {"type": "float", "default": 3.0, "label": "Mode restitution : silence du cadran validant le numéro (secondes)"},
+    # Tonalité d'invitation à numéroter (§1.2).
+    "TONALITE_MAX_SEC": {"type": "int", "default": 180, "min": 0,
+                          "label": "Durée max de la tonalité (secondes, 0 = aucune tonalité)"},
 }
 
 # Paramètres nécessitant un redémarrage du service après modification.

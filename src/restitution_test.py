@@ -57,7 +57,8 @@ class FakeAudio:
         self.interrupted: List[Path] = []
         self._lock = threading.Lock()
 
-    def play(self, path, should_continue, poll_interval=0.1, timeout_sec=None, device=None) -> str:
+    def play(self, path, should_continue, poll_interval=0.1, timeout_sec=None,
+             device=None, output=None) -> str:
         with self._lock:
             self.played.append(Path(path))
         deadline = time.monotonic() + PLAY_DURATION_SEC
@@ -106,6 +107,7 @@ class Scenario:
             "STATUS_HEARTBEAT_SEC": config.STATUS_HEARTBEAT_SEC,
             "play": audio_io.play,
             "record": audio_io.record,
+            "TONALITE_MAX_SEC": config.TONALITE_MAX_SEC,
         }
         config.MESSAGES_DIR = tmp / "messages"
         config.MESSAGES_DIR.mkdir()
@@ -119,6 +121,9 @@ class Scenario:
             config.STATUS_HEARTBEAT_SEC = self.heartbeat_sec
         audio_io.play = self.audio.play
         audio_io.record = self.audio.record
+        # La tonalité est rejouée tant que rien n'est composé (§1.2) : bornée
+        # court, elle ne fait pas traîner un scénario qui ne compose jamais.
+        config.TONALITE_MAX_SEC = 3
         mode_io.write_mode(self.restitution)
 
         # Enregistrements factices, créés dans le désordre pour que le test
@@ -151,6 +156,7 @@ class Scenario:
         config.STATUS_HEARTBEAT_SEC = self._saved["STATUS_HEARTBEAT_SEC"]
         audio_io.play = self._saved["play"]
         audio_io.record = self._saved["record"]
+        config.TONALITE_MAX_SEC = self._saved["TONALITE_MAX_SEC"]
         mode_io.invalidate_cache()
         self._tmpdir.cleanup()
 
@@ -277,8 +283,13 @@ def scenario_raccroche_pendant_lecture() -> None:
     with Scenario(message_count=5) as sc:
         sc.lift()
         sc.dial(2)
-        # Raccroché pendant que la doublure joue encore le message.
-        time.sleep(TEST_INTERDIGIT_SEC + SETTLE_SEC)
+        # Raccroché pendant que la doublure joue encore le message. Attendre
+        # que la lecture ait réellement commencé, plutôt que de miser sur un
+        # délai fixe, dont la marge tenait à la cadence de la boucle de
+        # numérotation.
+        echeance = time.monotonic() + 3.0
+        while time.monotonic() < echeance and not sc.guest_messages_played():
+            time.sleep(0.01)
         sc.inputs.set_hook(False)
         time.sleep(3 * SETTLE_SEC)
         interrupted = [p.name for p in sc.audio.interrupted]
