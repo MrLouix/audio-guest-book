@@ -130,10 +130,12 @@ class PhoneInputs:
         with self._lock:
             was_active = self._dial_active
             self._dial_active = active
-            logger.debug(f"dial_active: {was_active} -> {active}, pulse_count={self._pulse_count}")
+            logger.debug("cadran %s -> %s (compteur : %d impulsion(s))",
+                         "actif" if was_active else "repos",
+                         "actif" if active else "repos", self._pulse_count)
             if active and not was_active:
                 self._pulse_count = 0
-                logger.debug("RESET pulse_count to 0")
+                logger.debug("début de rotation : compteur remis à zéro")
             elif was_active and not active:
                 if self._pulse_count == 0:
                     # Un aller-retour du cadran sans la moindre impulsion n'est
@@ -146,16 +148,21 @@ class PhoneInputs:
                     return
                 digit = self._pulse_count % 10
                 self._digit_queue.append(digit)
-                logger.debug(f"VALIDATED digit: {digit} (from {self._pulse_count} pulses)")
+                logger.debug("chiffre validé : %d (%d impulsion(s) comptée(s))",
+                             digit, self._pulse_count)
                 self._pulse_count = 0
 
     def register_pulse(self) -> None:
         with self._lock:
             if self._dial_active:
                 self._pulse_count += 1
-                logger.debug(f"PULSE detected, pulse_count={self._pulse_count}, dial_active={self._dial_active}")
+                logger.debug("impulsion comptée (%d depuis le début de la rotation)",
+                             self._pulse_count)
             else:
-                logger.debug(f"PULSE IGNORED (dial not active), pulse_count={self._pulse_count}")
+                # Cadran au repos : impulsion parasite (contact qui grésille,
+                # cadran effleuré). Comptée nulle part, mais visible ici — c'est
+                # la trace qui explique un chiffre perdu ou un « 0 » fantôme.
+                logger.debug("impulsion ignorée : le cadran est au repos")
 
     def reset_dial(self) -> None:
         """Purge tout comptage/chiffre en attente (ex. avant une nouvelle tonalité)."""
@@ -271,10 +278,16 @@ def _boucle_echantillonnage(inputs: PhoneInputs, contacts: List[_Contact],
     # Dernier niveau brut lu par contact, pour repérer un front sans attendre
     # que le filtre se prononce : c'est lui qui relance la cadence rapide.
     bruts: List[Optional[bool]] = [None] * len(lignes)
-
+    # Instant de la dernière bascule confirmée, par contact : sa différence
+    # avec la suivante donne la durée de l'état qui vient de finir. C'est la
+    # mesure qui règle PULSE_MIN_ACTIF_SEC et PULSE_MIN_REPOS_SEC — largeur
+    # d'impulsion et repos entre deux — sans avoir à sortir l'oscilloscope de
+    # tests/scope_impulsions.py, service arrêté.
     # Le service démarre en cadence rapide : le téléphone peut très bien être
     # déjà décroché, et la première seconde ne coûte rien.
-    rapide_jusqu_a = horloge() + activite_sec
+    demarrage = horloge()
+    bascules: List[float] = [demarrage] * len(lignes)
+    rapide_jusqu_a = demarrage + activite_sec
     while not arrete():
         maintenant = horloge()
         for rang, (nom, pin, niveau_actif, echantillon) in enumerate(lignes):
@@ -288,6 +301,11 @@ def _boucle_echantillonnage(inputs: PhoneInputs, contacts: List[_Contact],
                 rapide_jusqu_a = maintenant + activite_sec
             stable = echantillon(maintenant, brut)
             if stable is not None:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("%s -> %s (état précédent tenu %.0f ms)", nom,
+                                 "actif" if stable else "repos",
+                                 (maintenant - bascules[rang]) * 1000)
+                bascules[rang] = maintenant
                 appliquer(inputs, nom, stable)
         # wait() plutôt que sleep() : l'arrêt est pris en compte tout de suite.
         attendre(periode_rapide if maintenant < rapide_jusqu_a else periode_repos)

@@ -191,7 +191,8 @@ Le système est composé de **4 unités logicielles** indépendantes communiquan
 - Enregistrement `arecord` arrêté au raccroché ou à `MAX_RECORD_SEC`.
 - **Sonnerie périodique** en attente : joue le fichier sonnerie toutes les `RING_INTERVAL_SEC` (défaut 90 s), interrompue immédiatement au décroché. **`RING_INTERVAL_SEC` à 0 (ou négatif) la désactive** : plus aucune sonnerie spontanée, le reste du parcours inchangé et le déclenchement à distance toujours actif ; l'état `attente` porte alors le détail « sonnerie périodique désactivée » pour distinguer la coupure volontaire d'une panne. Vérifie aussi à chaque itération l'existence du fichier drapeau `ring_trigger` (déclenchement à distance depuis le dashboard) : s'il existe → sonner immédiatement puis supprimer le fichier.
 - Écriture continue de **`status.json`** (état courant + horodatage) pour le dashboard.
-- Journalisation dans `logs/livre_dor.log`.
+- Journalisation dans `logs/livre_dor.log`, au niveau fixé par `LOG_LEVEL` (`INFO` en exploitation, `DEBUG` en mise en service) ou par `--verbeux` le temps d'un lancement à la main. `DEBUG` ouvre le détail du cadran — durée de chaque état stable des trois contacts, impulsions comptées et ignorées, chiffre validé — et la commutation des sorties du codec, sans qu'il faille arrêter le service ni éditer un fichier sur le Pi.
+- Chaque lecture audio journalise son issue (`completed` / `interrupted` / `error`) et sa durée, faute de quoi rien ne distingue une tonalité coupée par une impulsion d'une tonalité coupée par un raccroché. Ce qu'`aplay` et `arecord` écrivent sur leur sortie d'erreur est repris quel que soit le résultat.
 - **Mode `--test`** : affiche en direct l'état des 3 broches GPIO pour valider le câblage et les sens logiques (décrocher, tourner le cadran, observer).
 
 ### 5.2 Dashboard web (Flask) `dashboard_app.py`
@@ -520,6 +521,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 | `RING_INTERVAL_SEC` | 90 | Intervalle sonnerie en attente. **0 = ne sonne jamais de lui-même** (le déclenchement depuis le dashboard reste actif) |
 | `RING_ANSWER_GRACE_SEC` | 5 | Fenêtre après la fin de la sonnerie pendant laquelle un décroché est traité comme un « appel entrant » (message aléatoire, sans cadran) |
 | `MAX_RECORD_SEC` | 120 | Durée max d'un message invité |
+| `LOG_LEVEL` | `INFO` | Niveau de journalisation. `DEBUG` ouvre le détail du cadran et des sorties audio : c'est le mode de mise en service (§7.3) |
 | `TONALITE_MAX_SEC` | 180 | Durée max de la tonalité d'invitation à numéroter, boucle comprise. **0 = aucune tonalité** ; passé ce délai la ligne devient silencieuse, la numérotation reste possible |
 | `MODE_RESTITUTION` | False | Mode au premier démarrage ; ensuite `mode_config.json` fait foi (bascule via `/mode`, §5.7) |
 | `RESTITUTION_DIGITS_MAX` | 4 | Nombre max de chiffres du numéro de message ; au dernier chiffre la saisie se ferme aussitôt |

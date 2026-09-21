@@ -27,7 +27,7 @@ python3 tests/run_tous.py               # toutes, avec un bilan final
 | `test_audio_prep.py` | Choix des fichiers sources, conversion 48 kHz dual-mono, commutation des sorties, synchro bidirectionnelle |
 | `test_sonnerie.py` | Sonnerie périodique, `ring_trigger`, fenêtre de grâce |
 | `test_mode.py` | Bascule mariage / restitution à chaud (`mode_config.json`) |
-| `test_status.py` | `status.json`, battement de cœur et décisions du watchdog |
+| `test_status.py` | `status.json`, battement de cœur, journaux de mise en service et décisions du watchdog |
 
 `harness.py` n'est pas un test : c'est la boîte à outils commune (rapport
 terminal, téléphone simulé, doublures audio et ALSA).

@@ -21,6 +21,18 @@ La plupart des points nécessitent le Raspberry Pi, le téléphone câblé et un
 - [ ] `python3 tests/scope_impulsions.py --niveaux`, cadran immobile : la broche d'impulsions est au niveau **opposé** à `PULSE_ACTIF_LEVEL`. Si elle est déjà sur le niveau actif, le contact est court-circuité ou la paire de fils est la mauvaise — inutile d'aller plus loin.
 - [ ] `python3 tests/scope_impulsions.py --reel --numero 6` (composer un 6) : le balayage affiche un **palier** de valeurs justes. `PULSE_MIN_REPOS_SEC` réglé au centre de ce palier, et non sur une valeur isolée qui tombe juste par hasard.
 
+## 2bis. Journaux en mode mise en service
+
+À faire **avant** tout le reste : sans ce réglage, le détail du cadran et des
+sorties audio reste invisible, et chaque anomalie des étapes suivantes se
+diagnostique à l'aveugle.
+
+- [ ] `LOG_LEVEL` passé à `DEBUG` (page `/settings` du dashboard), puis `sudo systemctl restart livre-dor`. Pour un lancement à la main, `python3 src/livre_dor.py --verbeux` suffit et ne touche pas à la configuration.
+- [ ] Au démarrage, `tail -f logs/livre_dor.log` montre le récapitulatif : `Journalisation au niveau DEBUG`, puis la ligne `Audio : carte ..., sonnerie sur ..., combiné sur ...` et la ligne `GPIO échantillonnés à ...`. **Vérifier que la carte et les sorties annoncées sont bien celles câblées.**
+- [ ] Une rotation du cadran produit le détail attendu : `impulsions -> actif (état précédent tenu N ms)`, `impulsion comptée (k ...)`, `chiffre validé : N`. Les durées affichées servent à régler `PULSE_MIN_ACTIF_SEC` et `PULSE_MIN_REPOS_SEC` sans arrêter le service.
+- [ ] Aucune ligne `impulsion ignorée : le cadran est au repos` alors que personne ne touche au téléphone. Si elle apparaît, le contact d'impulsions grésille au repos : reprendre l'étape 2 avant d'aller plus loin.
+- [ ] **À la fin de la mise en service**, `LOG_LEVEL` repassé à `INFO` et service redémarré.
+
 ## 3. Mode `--test` **(auto : outil fourni)**
 
 - [ ] `python3 src/livre_dor.py --test` lancé ; décrocher → l'affichage bascule bien sur « décroché ».
@@ -145,7 +157,7 @@ Puis, sur le matériel, avec quelques messages déjà présents dans `messages/`
 - [ ] Mode activé depuis le dashboard (page **Mode**) ; l'accueil affiche « restitution »
       et le bouton « Sonner maintenant » est désactivé.
 - [ ] Décroché : tonalité présente **immédiatement**, un 440 Hz continu et **sans ondulation** ; elle tient tant qu'on ne compose rien (laisser le combiné décroché ~40 s : elle ne doit pas s'interrompre au bout de 30 s).
-- [ ] Elle est coupée **dès la première impulsion** du cadran, pas au chiffre complet, et ne repart pas ensuite.
+- [ ] Elle est coupée **dès la première impulsion** du cadran, pas au chiffre complet, et ne repart pas ensuite. Le journal le confirme : `Lecture tonalite.wav : interrupted en N s`. Si elle se coupe sans qu'on ait touché au cadran, chercher les `impulsion ignorée` / `impulsion comptée` juste avant.
 - [ ] Pendant la rotation : **aucun son** — un cadran rotatif n'émet aucun signal audio, la numérotation est purement mécanique.
 - [ ] `1` puis attente (~3 s) → le **premier** message enregistré est lu.
 - [ ] Quatre chiffres (ex. `9999`) → la lecture démarre **sans attendre**, et un

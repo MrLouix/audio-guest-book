@@ -100,6 +100,17 @@ DASHBOARD_CONFIG_FILE = BASE_DIR / "dashboard_config.json"
 SECRET_KEY_FILE = BASE_DIR / "secret_key.txt"
 ACTIVE_PORT_FILE = BASE_DIR / "active_port.txt"
 
+# Niveau de journalisation du service (§7.3). « DEBUG » ouvre le détail du
+# cadran — chaque impulsion comptée, chaque chiffre validé, chaque rotation
+# sans impulsion — et celui de la commutation des sorties du codec : c'est le
+# mode de **mise en service**, celui qui permet de comprendre pourquoi un « 3 »
+# ressort en « 5 » ou pourquoi un écouteur reste muet, sans éditer de fichier
+# sur le Pi. « INFO » est le mode d'exploitation : le parcours seul.
+#
+# Le surcoût en écriture reste borné : le détail n'est produit que lorsqu'on
+# manipule le téléphone, et la rotation des journaux (5 x 1 Mo) est inchangée.
+LOG_LEVEL = _env("LOG_LEVEL", "INFO")
+
 LIVRE_DOR_LOG = LOGS_DIR / "livre_dor.log"
 RESEAU_LOG = LOGS_DIR / "reseau.log"
 RCLONE_LOG = LOGS_DIR / "rclone.log"
@@ -433,6 +444,11 @@ MODIFIABLE_PARAMS = {
     # défaut suit SOUND_CARD, ce qu'une valeur figée ici casserait.
     "RESTITUTION_DIGITS_MAX": {"type": "int", "default": 4, "label": "Mode restitution : nombre max de chiffres du numéro"},
     "RESTITUTION_INTERDIGIT_SEC": {"type": "float", "default": 3.0, "label": "Mode restitution : silence du cadran validant le numéro (secondes)"},
+    # Journalisation (§7.3) : « DEBUG » pour la mise en service, « INFO » pour
+    # l'exploitation. Modifiable depuis le dashboard, pour ne pas avoir à
+    # ouvrir une session SSH le jour où le cadran se met à mal compter.
+    "LOG_LEVEL": {"type": "str", "default": "INFO", "choices": ["INFO", "DEBUG"],
+                   "label": "Niveau de journalisation"},
     # Tonalité d'invitation à numéroter (§1.2).
     "TONALITE_MAX_SEC": {"type": "int", "default": 180, "min": 0,
                           "label": "Durée max de la tonalité (secondes, 0 = aucune tonalité)"},
