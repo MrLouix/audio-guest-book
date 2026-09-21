@@ -111,6 +111,40 @@ Les sons de la ligne suivent le fonctionnement d'un poste Socotel/PTT, dans les 
 - **Elle tombe net à la première impulsion**, pas au premier chiffre complet — c'est la coupure de boucle qui la fait taire. Le drapeau est collant : elle ne repart pas entre deux chiffres d'un numéro de restitution, alors même que le compteur d'impulsions du chiffre est retombé à zéro.
 - **Pendant la composition, plus rien.** Un cadran rotatif ne produit aucun signal audio : la numérotation décimale est mécanique, elle ouvre et referme la boucle N fois pour le chiffre N (dix fois pour le 0). Les « bip-bip-bip » sont ceux d'un clavier à fréquences vocales (DTMF), qui n'a rien à voir.
 
+### Deverminer les premiers essais sur le téléphone
+
+Tout le parcours est journalisé au niveau **INFO** : décroché, chiffre composé, fichier lu, début et fin d'enregistrement, raccroché à chaque étape. S'y ajoute, pour chaque lecture audio, son **issue et sa durée** — `Lecture tonalite.wav : interrupted en 4.2 s`. C'est cette ligne qui distingue une tonalité coupée par une impulsion d'une tonalité coupée par un raccroché, ou d'un fichier allé au bout : `audio_io.play()` ne rend ce résultat qu'à son appelant, qui n'en faisait rien. Ce qu'`aplay` et `arecord` écrivent sur leur sortie d'erreur est repris **quel que soit le résultat**, et non plus seulement sur un code de retour non nul : une lecture interrompue est le cas courant du parcours, et c'est précisément là qu'ALSA signale un périphérique occupé ou un format refusé.
+
+Le niveau **DEBUG** ouvre le détail du matériel, qui est ce qu'il faut pour un premier essai :
+
+```
+DEBUG impulsions -> actif (état précédent tenu 118 ms)
+DEBUG impulsion comptée (1 depuis le début de la rotation)
+DEBUG impulsions -> repos (état précédent tenu 62 ms)
+DEBUG impulsion ignorée : le cadran est au repos
+DEBUG chiffre validé : 3 (3 impulsion(s) comptée(s))
+DEBUG Sortie commutée sur headphone.
+```
+
+Les durées d'état sont celles qui règlent `PULSE_MIN_ACTIF_SEC` et `PULSE_MIN_REPOS_SEC` — largeur d'impulsion et repos entre deux — sans arrêter le service. « impulsion ignorée » explique un chiffre perdu ; « rotation sans impulsion » explique un cadran effleuré.
+
+Deux façons de l'activer :
+
+```bash
+python3 src/livre_dor.py --verbeux     # lancement à la main, sans toucher à la config
+```
+
+ou `LOG_LEVEL = DEBUG` dans `/settings` puis `sudo systemctl restart livre-dor` — c'est la voie à suivre pour un service géré par systemd, qui démarre sans arguments. Le surcoût en écriture reste borné : le détail n'est produit que lorsqu'on manipule le téléphone, et la rotation 5 × 1 Mo est inchangée. **Repasser à INFO** une fois la mise en service terminée.
+
+Au démarrage, le service récapitule ce qu'il va réellement utiliser — c'est le premier endroit où regarder devant un « aucun son » :
+
+```
+INFO Audio : carte plughw:1,0, sonnerie sur lineout, combiné sur headphone, 48000 Hz 2 canaux ; tonalité bornée à 180 s.
+INFO GPIO échantillonnés à 1000 Hz en activité, 50 Hz au repos (crochet=17 actif LOW, ...)
+```
+
+Restent, hors service, les outils dédiés au cadran : `livre_dor.py --test` (les 3 GPIO en direct), `tests/debug_pulses.py`, `tests/scope_impulsions.py` qui rejoue une capture réelle dans exactement le filtre du service, et `tests/test_composition.py --reel`.
+
 `gpio_io.py` isole l'accès matériel (RPi.GPIO, callbacks avec anti-rebond `bouncetime`) derrière `PhoneInputs`, un état partagé thread-safe indépendant du matériel — ce qui permet de vérifier toute la logique de la machine à états sans Raspberry Pi (audio et GPIO simulés) avant le déploiement.
 
 ## Sonnerie & scénario « appel entrant » (Sprint 3)
@@ -124,7 +158,7 @@ En attente, `livre_dor.py` sonne (`audio/ring_out.wav`) toutes les `RING_INTERVA
 - **Espace disque** (`disk_space_state`) : sous `DISK_WARNING_MB` (500 Mo), l'enregistrement est tenté quand même (statut `erreur` signalé) ; sous `DISK_CRITICAL_MB` (100 Mo), l'enregistrement est refusé.
 - **Micro-coupures du crochet pendant l'enregistrement** : `HangupConfirmer` exige que le raccroché reste stable au moins `RECORDING_HANGUP_CONFIRM_SEC` avant d'arrêter l'enregistrement, pour ne pas tronquer un message sur un faux contact.
 - **Enregistrements très courts** (< `SHORT_RECORDING_THRESHOLD_SEC`) conservés, jamais supprimés, seulement journalisés.
-- **Logs** : rotation automatique (`RotatingFileHandler`, 5 × 1 Mo) sur `logs/livre_dor.log`, en plus de la console.
+- **Logs** : rotation automatique (`RotatingFileHandler`, 5 × 1 Mo) sur `logs/livre_dor.log`, en plus de la console. Le niveau se règle par `LOG_LEVEL` (depuis `/settings`, redémarrage du service requis) ou, le temps d'un lancement à la main, par `python3 src/livre_dor.py --verbeux` — voir ci-dessous.
 - **Exception globale** : toute exception non prévue dans la machine à états est journalisée (traceback complet), `status.json` bascule en `erreur`, puis l'exception se propage pour que systemd relance le service (Sprint 10) — `GPIO.cleanup()` reste garanti par le bloc `finally`.
 
 ## Dashboard web (Sprint 5)
@@ -311,7 +345,7 @@ python3 tests/run_tous.py               # les huit, avec un bilan final
 | `test_enregistrement.py` | Enregistrement : nom horodaté, `arecord`, espace disque |
 | `test_sonnerie.py` | Sonnerie périodique, `ring_trigger`, fenêtre de grâce |
 | `test_mode.py` | Bascule mariage / restitution à chaud (`mode_config.json`) |
-| `test_status.py` | `status.json`, battement de cœur et décisions du watchdog |
+| `test_status.py` | `status.json`, battement de cœur, journaux de mise en service et décisions du watchdog |
 
 Aucune dépendance à installer (ni `pytest`, ni `flask`, ni `pydub`, ni `RPi.GPIO`) : les scripts appellent directement les fonctions de `src/` et lisent les paramètres déjà configurés (variable d'environnement, puis `custom_config.json` du dashboard, puis défaut de `config.py`).
 

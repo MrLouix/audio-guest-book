@@ -233,6 +233,7 @@ class Tonalite:
         self.device = device
         self._composition_commencee = False
         self._fin = time.monotonic() + max(config.TONALITE_MAX_SEC, 0)
+        self._silence_signale = False
 
     def composition_commencee(self) -> bool:
         """Drapeau collant : vrai dès la première impulsion, jusqu'au raccroché.
@@ -254,9 +255,17 @@ class Tonalite:
         budget de TONALITE_MAX_SEC est épuisé — la ligne devient alors
         silencieuse, la numérotation reste possible.
         """
-        if (self.composition_commencee()
-                or time.monotonic() >= self._fin
-                or not self.inputs.is_hook_up()):
+        if self.composition_commencee() or not self.inputs.is_hook_up():
+            return
+        if time.monotonic() >= self._fin:
+            # Sans cette trace, un combiné décroché depuis trois minutes
+            # devient muet sans que rien ne dise pourquoi — et le silence
+            # ressemble à une panne de carte son.
+            if not self._silence_signale:
+                self._silence_signale = True
+                logger.info("Tonalité arrêtée après %d s sans numérotation "
+                            "(TONALITE_MAX_SEC) : ligne silencieuse jusqu'au raccroché.",
+                            config.TONALITE_MAX_SEC)
             return
 
         def continuer() -> bool:
@@ -768,13 +777,29 @@ def _wait_for_sound_card(poll_sec: float = 2.0) -> None:
     logger.info("Carte son %s détectée.", config.SOUND_CARD)
 
 
-def setup_logging() -> None:
+def niveau_log(nom: Optional[str] = None) -> int:
+    """Niveau logging à partir de son nom ; INFO si la valeur est incomprise.
+
+    Tolérant volontairement (§7.4) : ce réglage vient de custom_config.json,
+    que le dashboard écrit mais qu'une main humaine peut aussi avoir édité. Un
+    « Debug » ou un « debug » doit marcher, et une faute de frappe ne doit pas
+    empêcher le service de démarrer — elle le laisse au niveau d'exploitation.
+    """
+    nom = config.LOG_LEVEL if nom is None else nom
+    niveau = logging.getLevelName(str(nom).strip().upper())
+    if not isinstance(niveau, int):
+        logger.warning("Niveau de journalisation inconnu (%r) : INFO retenu.", nom)
+        return logging.INFO
+    return niveau
+
+
+def setup_logging(niveau: Optional[int] = None) -> None:
     """Console + fichier avec rotation (5 x 1 Mo) sur logs/livre_dor.log (§7.3)."""
     config.ensure_directories()
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 
     root = logging.getLogger()
-    root.setLevel(logging.INFO)
+    root.setLevel(niveau_log() if niveau is None else niveau)
 
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
@@ -791,17 +816,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test", action="store_true",
                          help="Mode test GPIO (affichage temps réel des 3 broches, §7.6).")
+    parser.add_argument("--verbeux", "-v", action="store_true",
+                         help="Journalise le détail du cadran et des sorties audio "
+                              "(équivaut à LOG_LEVEL=DEBUG, le temps d'un lancement à la main).")
     args = parser.parse_args()
 
     config.ensure_directories()
 
     if args.test:
         # Mode diagnostic hors ligne : pas de logs fichier ni de status.json.
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+        logging.basicConfig(level=logging.DEBUG if args.verbeux else logging.INFO,
+                            format="%(asctime)s %(levelname)s %(message)s")
         run_test_mode()
         return
 
-    setup_logging()
+    # --verbeux l'emporte sur la config : il sert à un lancement à la main,
+    # sans toucher au réglage que systemd relira au prochain démarrage.
+    setup_logging(logging.DEBUG if args.verbeux else None)
+    logger.info("Journalisation au niveau %s.",
+                logging.getLevelName(logging.getLogger().level))
     mode_io.ensure_config_exists()
     logger.info("Mode de fonctionnement : %s", mode_io.mode_label())
     _wait_for_sound_card()
@@ -815,6 +848,14 @@ def main() -> None:
                        config.AUDIO_SETUP_SCRIPT, config.AUDIO_SETUP_SCRIPT)
     _check_required_audio_files()
     _check_audio_format()
+    # Récapitulatif de ce que le service va réellement utiliser. Un « aucun
+    # son » se diagnostique d'abord ici : carte, sorties et format effectifs,
+    # qui viennent de custom_config.json autant que des valeurs par défaut.
+    logger.info("Audio : carte %s, sonnerie sur %s, combiné sur %s, %d Hz %d canaux ; "
+                "tonalité bornée à %d s.",
+                config.SOUND_CARD, config.AUDIO_OUTPUT_SONNERIE,
+                config.AUDIO_OUTPUT_COMBINE, config.AUDIO_RATE_HZ,
+                config.AUDIO_CHANNELS, config.TONALITE_MAX_SEC)
 
     inputs = gpio_io.PhoneInputs()
     gpio_io.setup(inputs)

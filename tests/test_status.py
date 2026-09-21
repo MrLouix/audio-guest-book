@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test unitaire de la PUBLICATION D'ÉTAT (status.json) et du WATCHDOG (§7.1, §7.2, §8).
+"""Test unitaire de la PUBLICATION D'ÉTAT, des JOURNAUX et du WATCHDOG (§7.1, §7.2, §7.3, §8).
 
 status.json est le seul lien entre la machine à états et le reste du système :
 le dashboard y lit ce que fait le téléphone (§5.2), et le watchdog y lit s'il
@@ -13,7 +13,11 @@ Ce que vérifie ce script, seul et sans matériel :
 2. la tolérance à un fichier absent ou corrompu (§7.4) ;
 3. le battement de cœur en attente et combiné décroché — sans lui, le
    watchdog redémarrerait le service en boucle (§7.1) ;
-4. la décision du watchdog : service en échec, status.json périmé, ou rien.
+4. la décision du watchdog : service en échec, status.json périmé, ou rien ;
+5. les journaux de mise en service (§7.3) : niveau réglable, issue de chaque
+   lecture audio, messages d'ALSA, silence de la tonalité et détail du cadran.
+   Ce sont les seules traces disponibles lors des premiers essais sur le
+   téléphone, où rien n'est observable autrement.
 
 Usage :
     python3 tests/test_status.py          # simulation, aucune dépendance
@@ -22,12 +26,14 @@ Usage :
 
 import datetime
 import json
+import logging
 import subprocess
 import time
 
 import harness                       # règle sys.path : doit précéder les imports de src/
-from harness import Banc, Rapport
+from harness import Banc, PopenFactice, Rapport
 
+import audio_io                      # noqa: E402
 import config                        # noqa: E402
 import livre_dor                     # noqa: E402
 import status_io                     # noqa: E402
@@ -186,6 +192,106 @@ def test_simule(rapport: Rapport) -> None:
                             "livre-dor.service", "dashboard.service",
                             "wifi-or-ap.service", "rclone-sync.service"},
                         f"surveillés : {watchdog.MANAGED_SERVICES}")
+
+
+    rapport.section("7. Niveau de journalisation réglable (§7.3)")
+    # Sans réglage, tout le détail du cadran reste en DEBUG donc injoignable :
+    # il fallait éditer livre_dor.py sur le Pi pour deverminer un chiffre mal
+    # compté.
+    rapport.egal("« DEBUG » est reconnu", livre_dor.niveau_log("DEBUG"), logging.DEBUG)
+    rapport.egal("la casse est indifférente", livre_dor.niveau_log("debug"), logging.DEBUG)
+    rapport.egal("« INFO » reste le mode d'exploitation",
+                 livre_dor.niveau_log("INFO"), logging.INFO)
+    rapport.egal("une valeur incomprise retombe sur INFO sans lever (§7.4)",
+                 livre_dor.niveau_log("peut-être"), logging.INFO)
+    rapport.verifie("le niveau est réglable depuis le dashboard",
+                    config.MODIFIABLE_PARAMS.get("LOG_LEVEL", {}).get("choices")
+                    == ["INFO", "DEBUG"],
+                    f"paramètre : {config.MODIFIABLE_PARAMS.get('LOG_LEVEL')}")
+
+    with Banc(machine=False, LOG_LEVEL="DEBUG") as banc:
+        racine = logging.getLogger()
+        handlers, niveau = list(racine.handlers), racine.level
+        try:
+            livre_dor.setup_logging()
+            rapport.egal("setup_logging() suit LOG_LEVEL", racine.level, logging.DEBUG)
+            livre_dor.setup_logging(logging.INFO)
+            rapport.egal("et un niveau explicite (--verbeux) l'emporte",
+                         racine.level, logging.INFO)
+        finally:
+            racine.handlers[:] = handlers
+            racine.setLevel(niveau)
+
+    rapport.section("8. Issue de chaque lecture audio (§7.3)")
+    # audio_io.play() ne rend son résultat qu'à son appelant, qui n'en fait
+    # rien : sans cette trace, le journal ne dit pas si la tonalité a été
+    # coupée par une impulsion, par un raccroché, ou si elle est allée au bout.
+    with Banc(machine=False, doublure_audio=False) as banc:
+        cible = config.MESSAGE_GENERIQUE_WAV
+
+        popen = PopenFactice(duree=60.0)
+        with harness.journal_logs(nom="audio_io") as journal:
+            with harness.remplacer(audio_io.subprocess, "Popen", popen):
+                audio_io.play(cible, should_continue=lambda: False, poll_interval=0.02)
+        rapport.verifie("une lecture interrompue est journalisée avec son issue",
+                        any("message_generique.wav" in m and "interrupted" in m
+                            for m in journal),
+                        f"journal : {journal}")
+
+        popen = PopenFactice(duree=0.1)
+        with harness.journal_logs(nom="audio_io") as journal:
+            with harness.remplacer(audio_io.subprocess, "Popen", popen):
+                audio_io.play(cible, should_continue=lambda: True, poll_interval=0.02)
+        rapport.verifie("une lecture menée à terme aussi, avec sa durée",
+                        any("completed" in m and " s" in m for m in journal),
+                        f"journal : {journal}")
+
+        # Le cas qui était perdu : stderr n'était lu que sur un code de retour
+        # non nul, donc jamais sur une interruption — soit le cas courant du
+        # parcours, et celui où ALSA signale un périphérique occupé.
+        popen = PopenFactice(duree=60.0, stderr=b"aplay: device or resource busy")
+        with harness.journal_logs(nom="audio_io") as journal:
+            with harness.remplacer(audio_io.subprocess, "Popen", popen):
+                audio_io.play(cible, should_continue=lambda: False, poll_interval=0.02)
+        rapport.verifie("ce qu'ALSA écrit sur une lecture interrompue est repris",
+                        any("device or resource busy" in m for m in journal),
+                        f"journal : {journal}")
+
+        popen = PopenFactice(duree=60.0, stderr=b"arecord: device busy")
+        with harness.journal_logs(nom="audio_io") as journal:
+            with harness.remplacer(audio_io.subprocess, "Popen", popen):
+                audio_io.record(config.MESSAGES_DIR / "essai.wav", max_duration_sec=5,
+                                should_continue=lambda: False, poll_interval=0.02)
+        rapport.verifie("et sur un enregistrement interrompu de même",
+                        any("device busy" in m for m in journal),
+                        f"journal : {journal}")
+
+    rapport.section("9. Silence de la tonalité et détail du cadran (§7.3, §1.2)")
+    # Passé TONALITE_MAX_SEC la ligne devient muette : sans trace, le silence
+    # ressemble à une panne de carte son.
+    with Banc(machine=False, TONALITE_MAX_SEC=0) as banc:
+        banc.inputs.set_hook(True)
+        tonalite = livre_dor.Tonalite(banc.inputs)
+        with harness.journal_logs(nom="livre_dor") as journal:
+            tonalite.tenir()
+            tonalite.tenir()
+        silences = [m for m in journal if "TONALITE_MAX_SEC" in m]
+        rapport.egal("l'extinction de la tonalité est journalisée une seule fois",
+                     len(silences), 1)
+        rapport.egal("et aucune lecture n'est lancée pour autant",
+                     banc.audio.noms_lus(), [])
+
+    with Banc(machine=False) as banc:
+        with harness.journal_logs(nom="gpio_io") as journal:
+            banc.composer(3)
+        rapport.verifie("en DEBUG, le chiffre validé et ses impulsions sont tracés",
+                        any("chiffre validé : 3" in m for m in journal),
+                        f"journal : {journal}")
+        with harness.journal_logs(nom="gpio_io") as journal:
+            banc.inputs.register_pulse()        # cadran au repos
+        rapport.verifie("une impulsion parasite hors rotation est tracée",
+                        any("impulsion ignorée" in m for m in journal),
+                        f"journal : {journal}")
 
 
 def test_reel(rapport: Rapport) -> None:

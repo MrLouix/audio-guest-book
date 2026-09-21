@@ -88,11 +88,29 @@ def play(path: Path, should_continue: Callable[[], bool],
             break
         time.sleep(poll_interval)
 
-    if result == "completed" and proc.returncode != 0:
-        stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
-        logger.error("aplay a échoué (code %s) sur %s : %s", proc.returncode, path, stderr.strip())
-        result = "error"
+    # stderr est lu quel que soit le résultat, et non seulement sur un code de
+    # retour non nul : une lecture interrompue est le cas le plus fréquent du
+    # parcours, et c'est précisément là qu'ALSA signale un périphérique occupé,
+    # un format refusé ou une sous-alimentation. Laisser le tube non lu perdait
+    # ces messages — et pouvait, à la longue, le remplir.
+    stderr = ""
+    if proc.stderr is not None:
+        try:
+            stderr = proc.stderr.read().decode(errors="replace").strip()
+        except (OSError, ValueError):
+            stderr = ""
 
+    if result == "completed" and proc.returncode != 0:
+        logger.error("aplay a échoué (code %s) sur %s : %s", proc.returncode, path, stderr)
+        result = "error"
+    elif stderr:
+        logger.warning("aplay (%s) sur %s a écrit : %s", result, path.name, stderr)
+
+    # Une ligne par lecture, avec son issue et sa durée : c'est ce qui dit si
+    # la tonalité a été coupée par une impulsion, par un raccroché, ou si elle
+    # est allée au bout de son fichier — que le reste du parcours ne journalise
+    # pas, puisqu'il ne voit qu'un retour de fonction.
+    logger.info("Lecture %s : %s en %.1f s", path.name, result, time.monotonic() - start)
     return result
 
 
@@ -138,10 +156,20 @@ def record(path: Path, max_duration_sec: int, should_continue: Callable[[], bool
             break
         time.sleep(poll_interval)
 
+    # Même raison que dans play() : un enregistrement s'arrête presque toujours
+    # sur un raccroché, donc sur « interrupted ».
+    stderr = ""
+    if proc.stderr is not None:
+        try:
+            stderr = proc.stderr.read().decode(errors="replace").strip()
+        except (OSError, ValueError):
+            stderr = ""
+
     if result == "completed" and proc.returncode != 0:
-        stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
-        logger.error("arecord a échoué (code %s) sur %s : %s", proc.returncode, path, stderr.strip())
+        logger.error("arecord a échoué (code %s) sur %s : %s", proc.returncode, path, stderr)
         result = "error"
+    elif stderr:
+        logger.warning("arecord (%s) sur %s a écrit : %s", result, path.name, stderr)
 
     return result
 

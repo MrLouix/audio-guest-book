@@ -508,6 +508,42 @@ def journal_status():
         status_io.write_status = original
 
 
+@contextlib.contextmanager
+def journal_logs(niveau: int = logging.DEBUG, nom: str = ""):
+    """Capture les messages journalisés pendant le bloc (§7.3).
+
+    Renvoie une liste de chaînes déjà formatées, dans l'ordre. Le pendant de
+    journal_status() pour les journaux : une trace de mise en service ne laisse
+    aucune autre empreinte observable, et c'est pourtant tout ce qu'on aura
+    sous la main le jour des premiers essais sur le téléphone.
+
+    configurer_logs() met la racine à CRITICAL pendant les tests : le niveau
+    est donc abaissé le temps du bloc, puis rendu tel quel.
+    """
+    messages: List[str] = []
+
+    class _Collecteur(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            messages.append(self.format(record))
+
+    collecteur = _Collecteur()
+    collecteur.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+    cible = logging.getLogger(nom) if nom else logging.getLogger()
+    ancien_niveau, ancienne_propagation = cible.level, cible.propagate
+    cible.setLevel(niveau)
+    # Propagation coupée : sans ça, les messages capturés remonteraient aussi
+    # au gestionnaire de console posé par configurer_logs() et s'afficheraient
+    # au milieu du rapport, alors qu'ils sont ici des données de test.
+    cible.propagate = False
+    cible.addHandler(collecteur)
+    try:
+        yield messages
+    finally:
+        cible.removeHandler(collecteur)
+        cible.setLevel(ancien_niveau)
+        cible.propagate = ancienne_propagation
+
+
 # --- Banc d'essai : téléphone simulé + arborescence temporaire ----------
 
 # Paramètres de config.py sauvegardés/restaurés autour de chaque scénario.
@@ -517,7 +553,7 @@ _PARAMS_SAUVEGARDES = (
     "MESSAGE_GENERIQUE_WAV", "AUCUN_MESSAGE_WAV", "TONALITE_MAX_SEC",
     "RING_INTERVAL_SEC", "RING_ANSWER_GRACE_SEC", "MAX_RECORD_SEC",
     "STATUS_HEARTBEAT_SEC", "SHORT_RECORDING_THRESHOLD_SEC",
-    "RECORDING_HANGUP_CONFIRM_SEC", "RESTITUTION_INTERDIGIT_SEC",
+    "RECORDING_HANGUP_CONFIRM_SEC", "RESTITUTION_INTERDIGIT_SEC", "LOG_LEVEL",
     "RESTITUTION_DIGITS_MAX", "RESTITUTION_SOUND_CARD", "MODE_RELOAD_SEC",
     "DISK_WARNING_MB", "DISK_CRITICAL_MB", "AUDIO_PLAY_TIMEOUT_SEC",
     "WATCHDOG_STALE_AFTER_SEC", "SOUND_CARD",
