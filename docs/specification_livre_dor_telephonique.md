@@ -522,6 +522,8 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 | `OFFNORMAL_ACTIF_LEVEL` | à vérifier | Sens logique du contact off-normal |
 | `SOUND_CARD` / `CARTE_SON` | `plughw:1,0` | À confirmer via `aplay -l` / `arecord -l` |
 | `RING_INTERVAL_SEC` | 90 | Intervalle sonnerie en attente. **0 = ne sonne jamais de lui-même** (le déclenchement depuis le dashboard reste actif) |
+| `RING_COUNT` | 5 | Répétitions de `ring_out.wav` par sonnerie ; un décroché coupe la boucle à tout moment |
+| `RING_PAUSE_SEC` | 2.0 | Silence entre deux répétitions, compté comme « pendant la sonnerie » |
 | `RING_ANSWER_GRACE_SEC` | 5 | Fenêtre après la fin de la sonnerie pendant laquelle un décroché est traité comme un « appel entrant » (message aléatoire, sans cadran) |
 | `MAX_RECORD_SEC` | 120 | Durée max d'un message invité |
 | `LOG_LEVEL` | `INFO` | Niveau de journalisation. `DEBUG` ouvre le détail du cadran et des sorties audio : c'est le mode de mise en service (§7.3) |

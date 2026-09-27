@@ -554,7 +554,8 @@ _PARAMS_SAUVEGARDES = (
     "AUDIO_DIR", "MESSAGES_DIR", "STATUS_FILE", "MODE_CONFIG_FILE",
     "RING_TRIGGER_FILE", "TONALITE_WAV", "BIP_WAV", "RING_OUT_WAV",
     "MESSAGE_GENERIQUE_WAV", "AUCUN_MESSAGE_WAV", "TONALITE_MAX_SEC",
-    "RING_INTERVAL_SEC", "RING_ANSWER_GRACE_SEC", "MAX_RECORD_SEC",
+    "RING_INTERVAL_SEC", "RING_COUNT", "RING_PAUSE_SEC",
+    "RING_ANSWER_GRACE_SEC", "MAX_RECORD_SEC",
     "STATUS_HEARTBEAT_SEC", "SHORT_RECORDING_THRESHOLD_SEC",
     "RECORDING_HANGUP_CONFIRM_SEC", "RESTITUTION_INTERDIGIT_SEC", "LOG_LEVEL",
     "RESTITUTION_DIGITS_MAX", "RESTITUTION_SOUND_CARD", "MODE_RELOAD_SEC",
@@ -667,6 +668,10 @@ class Banc:
         # Par défaut la sonnerie périodique ne part jamais : un scénario qui ne
         # l'étudie pas n'a pas à en déclencher une au bout de RING_INTERVAL_SEC.
         config.RING_INTERVAL_SEC = 10 ** 9
+        # Une seule répétition par sonnerie : les scénarios mesurent la fin de
+        # « la » sonnerie ; la boucle a son propre scénario (test_sonnerie.py).
+        config.RING_COUNT = 1
+        config.RING_PAUSE_SEC = 0.0
         for nom, valeur in self.parametres.items():
             if nom not in _PARAMS_SAUVEGARDES:
                 raise ValueError(f"Paramètre de config non sauvegardé : {nom}")

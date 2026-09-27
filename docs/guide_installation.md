@@ -115,8 +115,12 @@ python3 src/restitution_test.py
 ### Dépendances logicielles (§10)
 
 - OS : Raspberry Pi OS Lite (Bookworm), NetworkManager (`nmcli`), `avahi-daemon` (mDNS), systemd.
-- Paquets système : `alsa-utils`, `rclone`, `ffmpeg`, `python3-venv` (tous installés par `scripts/install.sh`).
-- Python (venv, `requirements.txt`) : `RPi.GPIO`, `Flask`, `qrcode[pil]`, `pydub`, `werkzeug`.
+- Paquets système : `alsa-utils`, `rclone`, `ffmpeg`, `sox`, `python3-venv` (tous installés par `scripts/install.sh`).
+- Python (venv, `requirements.txt`) : `RPi.GPIO`, `Flask`, `qrcode[pil]`, `pydub`, `numpy`, `werkzeug`.
+  Après une mise à jour du dépôt, réinstaller les dépendances dans le venv
+  (`.venv/bin/pip install -r requirements.txt`) : sinon le traitement des messages
+  échoue avec « numpy non importable ». Le venv à mettre à jour est celui du service
+  (`.venv/`, voir `ExecStart` dans `systemctl cat livre-dor`).
 - Front vendorisé : `jsQR.min.js` (déjà présent dans `static/`, aucune installation requise).
 - Optionnel post-événement : `whisper.cpp` + modèle `tiny-q5_0` (`scripts/install_whisper.sh`).
 
@@ -156,6 +160,8 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 | `PULSE_MIN_REPOS_SEC` | 0.025 | Repos franc qui clôt l'impulsion. **Le réglage décisif sur un contact usé** : plus long que la plus longue micro-coupure du grésillement, plus court que le plus court repos réel. `python3 tests/scope_impulsions.py --reel` balaie cette valeur et affiche le palier — réglez au centre |
 | `HOOK_CONFIRM_SEC` / `OFFNORMAL_CONFIRM_SEC` | suivent `HOOK_DEBOUNCE_SEC` / `DIAL_DEBOUNCE_SEC` | Durée de maintien confirmant un changement d'état du crochet et du contact off-normal |
 | `RING_INTERVAL_SEC` | 90 | Intervalle de la sonnerie périodique. **0 = le téléphone ne sonne jamais tout seul** ; le bouton « Sonner maintenant » du dashboard fonctionne toujours |
+| `RING_COUNT` | 5 | Nombre de fois que `ring_out.wav` est rejoué à chaque sonnerie |
+| `RING_PAUSE_SEC` | 2.0 | Silence ajouté entre deux répétitions (en plus de celui du fichier) : règle la cadence de la sonnerie |
 | `RING_ANSWER_GRACE_SEC` | 5 | Fenêtre « appel entrant » après la sonnerie |
 | `MAX_RECORD_SEC` | 120 | Durée max d'un message invité |
 | `AUDIO_PLAY_TIMEOUT_SEC` | 180 | Filet de sécurité contre un `aplay` bloqué |

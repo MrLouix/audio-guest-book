@@ -87,6 +87,34 @@ def test_simule(rapport: Rapport) -> None:
                             f"{intervalle:.2f}s entre deux sonneries pour "
                             f"RING_INTERVAL_SEC={config.RING_INTERVAL_SEC}s")
 
+    rapport.section("2bis. Sonnerie en boucle (RING_COUNT, RING_PAUSE_SEC)")
+    with Banc(RING_COUNT=3, RING_PAUSE_SEC=0.4) as banc:
+        banc.declencher_sonnerie_a_distance()
+        rapport.verifie("la piste est rejouée RING_COUNT fois",
+                        banc.audio.attendre_nb_lectures("ring_out.wav", 3, timeout=4.0),
+                        f"sonneries : {len(banc.audio.lectures_de('ring_out.wav'))}")
+        rapport.verifie("puis le téléphone revient en attente",
+                        banc.attendre_etat(livre_dor.STATE_ATTENTE, timeout=1.5),
+                        f"état observé : {banc.etat}")
+        time.sleep(0.6)
+        sonneries = banc.audio.lectures_de("ring_out.wav")
+        rapport.egal("pas une répétition de plus", len(sonneries), 3)
+        silences = [b.debut - a.fin for a, b in zip(sonneries, sonneries[1:])]
+        rapport.verifie("le silence configuré sépare deux répétitions",
+                        all(0.35 <= s <= 0.7 for s in silences),
+                        f"silences mesurés : {[round(s, 2) for s in silences]}")
+
+    with Banc(RING_COUNT=5, RING_PAUSE_SEC=1.0, RING_ANSWER_GRACE_SEC=5) as banc:
+        banc.declencher_sonnerie_a_distance()
+        banc.audio.attendre_fin("ring_out.wav")
+        time.sleep(0.2)                       # dans le silence entre deux sonneries
+        banc.decrocher(stabiliser=False)
+        rapport.verifie("décrocher pendant un silence donne un appel entrant",
+                        banc.attendre_etat(livre_dor.STATE_APPEL_REPONDU, timeout=2.0),
+                        f"état observé : {banc.etat}")
+        rapport.egal("la boucle s'arrête au décroché",
+                     len(banc.audio.lectures_de("ring_out.wav")), 1)
+
     rapport.section("3. Sonnerie déclenchée à distance depuis le dashboard (§5.2)")
     with Banc() as banc:
         banc.declencher_sonnerie_a_distance()

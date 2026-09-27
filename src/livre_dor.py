@@ -393,17 +393,38 @@ class GuestBookStateMachine:
                 last_heartbeat = time.monotonic()
             time.sleep(MAIN_LOOP_POLL_SEC)
 
+    def _sonnerie_continue(self) -> bool:
+        return not self.inputs.is_hook_up() and not self._stop.is_set()
+
     def _run_sonnerie(self) -> None:
+        """Rejoue ring_out.wav RING_COUNT fois, RING_PAUSE_SEC de silence entre deux.
+
+        Un décroché coupe la boucle à tout moment, silences compris : le
+        drapeau « sonnerie récente » reste actif sur toute la durée, et la
+        boucle d'attente enchaîne alors sur l'appel répondu (§1.2).
+        """
+        repetitions = max(config.RING_COUNT, 1)
+        pause = max(config.RING_PAUSE_SEC, 0.0)
         self._set_state(STATE_SONNERIE)
-        logger.info("Sonnerie")
+        logger.info("Sonnerie (%d fois, %.1fs de silence entre deux)", repetitions, pause)
         self._ring_active = True
         try:
-            audio_io.play(
-                config.RING_OUT_WAV,
-                should_continue=lambda: not self.inputs.is_hook_up(),
-                timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                output=config.AUDIO_OUTPUT_SONNERIE,
-            )
+            for i in range(repetitions):
+                resultat = audio_io.play(
+                    config.RING_OUT_WAV,
+                    should_continue=self._sonnerie_continue,
+                    timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+                    output=config.AUDIO_OUTPUT_SONNERIE,
+                )
+                # Une erreur (fichier absent, aplay en échec) se répéterait à
+                # l'identique : inutile d'enchaîner les tentatives.
+                if resultat != "completed" or i == repetitions - 1:
+                    break
+                fin_pause = time.monotonic() + pause
+                while time.monotonic() < fin_pause and self._sonnerie_continue():
+                    time.sleep(MAIN_LOOP_POLL_SEC)
+                if not self._sonnerie_continue():
+                    break
         finally:
             self._ring_active = False
             self._last_ring_end_ts = time.monotonic()

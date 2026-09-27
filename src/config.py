@@ -311,6 +311,13 @@ OFFNORMAL_CONFIRM_SEC = _env_float("OFFNORMAL_CONFIRM_SEC", DIAL_DEBOUNCE_SEC)
 # reste du parcours est inchangé — le bouton « Sonner maintenant » du dashboard
 # fonctionne toujours, et un décroché ouvre le parcours normal (§5.1).
 RING_INTERVAL_SEC = _env_int("RING_INTERVAL_SEC", 0)
+# Une sonnerie rejoue ring_out.wav RING_COUNT fois, séparées par RING_PAUSE_SEC
+# de silence ajouté au silence déjà présent dans le fichier : c'est ce qui règle
+# la cadence « dring… dring… ». Un décroché coupe la boucle à tout moment, y
+# compris pendant un silence (qui compte comme « pendant la sonnerie »).
+# RING_INTERVAL_SEC se mesure depuis la fin de la dernière répétition.
+RING_COUNT = _env_int("RING_COUNT", 5)
+RING_PAUSE_SEC = _env_float("RING_PAUSE_SEC", 2.0)
 RING_ANSWER_GRACE_SEC = _env_int("RING_ANSWER_GRACE_SEC", 5)
 MAX_RECORD_SEC = _env_int("MAX_RECORD_SEC", 120)
 
@@ -453,6 +460,10 @@ def ensure_directories() -> None:
 MODIFIABLE_PARAMS = {
     "RING_INTERVAL_SEC": {"type": "int", "default": 90, "min": 0,
                           "label": "Intervalle de sonnerie (secondes, 0 = ne sonne jamais)"},
+    "RING_COUNT": {"type": "int", "default": 5, "min": 1,
+                   "label": "Nombre de sonneries par appel"},
+    "RING_PAUSE_SEC": {"type": "float", "default": 2.0, "min": 0,
+                       "label": "Silence entre deux sonneries (secondes)"},
     "RING_ANSWER_GRACE_SEC": {"type": "int", "default": 5, "label": "Fenêtre de grâce pour répondre (secondes)"},
     "MAX_RECORD_SEC": {"type": "int", "default": 120, "label": "Durée max d'enregistrement (secondes)"},
     "SHORT_RECORDING_THRESHOLD_SEC": {"type": "float", "default": 2.0, "label": "Seuil enregistrement court (secondes)"},
