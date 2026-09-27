@@ -9,11 +9,14 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib_systemd.sh
+source "$PROJECT_DIR/scripts/lib_systemd.sh"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Ce script doit être exécuté avec sudo/root." >&2
     exit 1
 fi
+resolve_run_user
 
 UNITS=(
     livre-dor.service
@@ -24,13 +27,14 @@ UNITS=(
     wifi-or-ap.timer
 )
 
-echo "== Symlink des unités systemd =="
+echo "== Symlink des unités systemd (utilisateur ${RUN_USER}, dépôt ${PROJECT_DIR}) =="
 for unit in "${UNITS[@]}"; do
-    ln -sf "$PROJECT_DIR/systemd/$unit" "/etc/systemd/system/$unit"
+    install_unit "$unit"
 done
 
 echo "== Activation =="
 systemctl daemon-reload
+systemctl reset-failed livre-dor.service dashboard.service 2>/dev/null || true
 systemctl enable --now livre-dor.service dashboard.service \
     livre-dor-watchdog.timer wifi-or-ap.timer
 

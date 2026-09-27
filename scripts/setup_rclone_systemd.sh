@@ -13,17 +13,19 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUN_USER="${LIVRE_DOR_USER:-pi}"
 SYSTEMCTL_BIN="$(command -v systemctl || echo /usr/bin/systemctl)"
+# shellcheck source=lib_systemd.sh
+source "$PROJECT_DIR/scripts/lib_systemd.sh"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Ce script doit être exécuté avec sudo/root." >&2
     exit 1
 fi
+resolve_run_user
 
 echo "== Symlink des unités systemd =="
-ln -sf "$PROJECT_DIR/systemd/rclone-sync.service" /etc/systemd/system/rclone-sync.service
-ln -sf "$PROJECT_DIR/systemd/rclone-sync.timer" /etc/systemd/system/rclone-sync.timer
+install_unit rclone-sync.service
+install_unit rclone-sync.timer
 
 echo "== Règle sudoers ciblée (${RUN_USER}) =="
 SUDOERS_FILE=/etc/sudoers.d/livredor-rclone

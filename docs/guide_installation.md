@@ -60,7 +60,7 @@ du combiné et l'écouteur secondaire entendent la même chose, au même niveau.
 
 ## 3. Installation logicielle
 
-Sur le Raspberry Pi (Raspberry Pi OS Lite, Bookworm), après avoir cloné ce dépôt dans `/home/pi/livre_dor/` :
+Sur le Raspberry Pi (Raspberry Pi OS Lite, Bookworm), après avoir cloné ce dépôt dans `/home/pi/livre_dor/` (un autre utilisateur ou chemin fonctionne aussi : les scripts `setup_*systemd.sh` adaptent les unités via un drop-in, pour le propriétaire du dépôt ou `LIVRE_DOR_USER=<nom> sudo -E …`) :
 
 ```bash
 cd /home/pi/livre_dor
