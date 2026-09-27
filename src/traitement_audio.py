@@ -53,8 +53,10 @@ import config
 
 try:
     import numpy as np
-except ImportError:  # poste de développement sans numpy : traiter() échoue proprement
+    _NUMPY_ERREUR = None
+except ImportError as exc:  # poste de développement sans numpy : traiter() échoue proprement
     np = None
+    _NUMPY_ERREUR = exc  # distingue « non installé » de « bibliothèque système manquante »
 
 logger = logging.getLogger(__name__)
 
@@ -305,7 +307,10 @@ def traiter(path: Path) -> bool:
     """Traite un message en place, brut conservé dans brut/ ; jamais d'exception."""
     path = Path(path)
     if np is None:
-        logger.error("Traitement de %s impossible : numpy absent.", path.name)
+        logger.error(
+            "Traitement de %s impossible : numpy non importable (%s, python %s).",
+            path.name, _NUMPY_ERREUR, sys.executable,
+        )
         return False
     if shutil.which("sox") is None:
         logger.error("Traitement de %s impossible : sox absent (apt install sox).", path.name)
