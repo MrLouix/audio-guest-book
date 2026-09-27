@@ -1,7 +1,8 @@
 #!/bin/bash
 #
 # IQaudio Codec Zero (DA7213) — Pi Zero 2 W "livredor"
-# Micro ADA1063 sur Aux gauche -> capture mono dupliquee en stereo
+# Micro electret sur le jack MIC (Mic 1, bias interne du DA7213)
+#   -> capture mono dupliquee en stereo, a enregistrer en 16 kHz
 # Sortie selectionnable : casque (defaut) / line out / les deux
 #
 # Usage :
@@ -28,11 +29,23 @@
 # Numero de carte : variable d'environnement ALSA_CARD (defaut 1), pour
 # rester aligne sur config.SOUND_CARD sans dupliquer la valeur.
 #
-# Reglages issus de la session du 19/09/2026 :
-#   - numid=78 (AUX Jack Switch) indispensable, sinon pas d'horloge I2S
-#   - numid=3 a 49 : optimum trimmer ADA1063 (butee horaire) / preampli codec
-#     Plancher mesure -42 dBFS, crete parole ~0,29 -> ecart 31 dB
+# Reglages issus du banc du 22 au 25/09/2026 (voir docs/banc_audio/) :
+#   - numid=76 (MIC Jack Switch) indispensable : chemin DAPM complet
+#   - numid=79 (Mic 1 Amp Source MUX) sur MIC_P (1) : Differential (0)
+#     perd 22 dB de signal, MIC_N (2) ne capte rien
+#   - gain total 42 dB (Mic 1 +36, PGA +6) : le hum 50 Hz suit le gain au dB
+#     pres (il entre sur la ligne micro), monter le gain n'ameliore donc pas
+#     le SNR et les claquements saturaient a 54 dB
+#   - HPF du codec garde on (anti-DC) : coupure max Fs/3000, inutile contre
+#     le 50 Hz, traite en logiciel par src/traitement_audio.py
 #   - ALC (numid=60) imperativement off : sature l'entree en l'absence de signal
+#   - le micro MEMS embarque est coupe des qu'une fiche est dans le jack MIC
+#
+# Echelles dB :
+#   Mic 1 Volume (numid=1) : dB = -6   + v * 6.0    (v 0-7)
+#   Mixin PGA    (numid=4) : dB = -4.5 + v * 1.5    (v 0-15)
+#   ADC / DAC  (numid=5/6) : dB = -78  + (v-8)*0.75 -> 0 dB = 112
+#   Lineout      (numid=8) : dB = -48  + v * 1.0    -> 0 dB = 48
 #
 
 set -u
@@ -80,32 +93,34 @@ check_card() {
 # -------------------------------------------------------------- chaine micro
 
 setup_input() {
-    echo "Entree  : Aux L (ADA1063)"
+    echo "Entree  : jack MIC (electret, Mic 1)"
 
-    set_ctl 78 on           # AUX Jack Switch — alimente le chemin DAPM
-    set_ctl 25 on,on        # Aux Switch
-    set_ctl 3  49,49        # Aux Volume            +6 dB
-    set_ctl 81 on           # Mixin Left  <- Aux Left
+    set_ctl 76 on           # MIC Jack Switch — alimente le chemin DAPM
+    set_ctl 23 on           # Mic 1 Switch
+    set_ctl 79 1            # Mic 1 Amp Source MUX -> MIC_P
+    set_ctl 1  7            # Mic 1 Volume         +36 dB (max)
+    set_ctl 82 on           # Mixin Left  <- Mic 1
+    set_ctl 87 on           # Mixin Right <- Mic 1
     set_ctl 26 on,on        # Mixin PGA Switch
-    set_ctl 4  6,6          # Mixin PGA Volume      +4,5 dB
+    set_ctl 4  7,7          # Mixin PGA Volume      +6 dB (total 42 dB)
     set_ctl 27 on,on        # ADC Switch
     set_ctl 5  112,112      # ADC Volume             0 dB
-    set_ctl 15 on           # ADC HPF Switch
+    set_ctl 15 on           # ADC HPF Switch (anti-DC)
     set_ctl 16 0            # ADC HPF Cutoff Fs/24000
+    set_ctl 17 off          # ADC Voice Mode — aucun gain mesurable
     set_ctl 60 off,off      # ALC off — sinon saturation du plancher
 }
 
 disable_unused_inputs() {
-    set_ctl 23 off          # Mic 1
-    set_ctl 24 off          # Mic 2
-    set_ctl 77 off          # Onboard MIC
-    set_ctl 76 off          # MIC Jack Switch
-    set_ctl 59 off,off      # DMIC
-    set_ctl 82 off          # Mixin Left  Mic 1
-    set_ctl 83 off          # Mixin Left  Mic 2
+    set_ctl 78 off          # AUX Jack Switch
+    set_ctl 25 off,off      # Aux Switch
+    set_ctl 81 off          # Mixin Left  <- Aux Left
     set_ctl 85 off          # Mixin Right <- Aux Right
+    set_ctl 77 off          # Onboard MIC (MEMS)
+    set_ctl 24 off          # Mic 2
+    set_ctl 59 off,off      # DMIC
+    set_ctl 83 off          # Mixin Left  Mic 2
     set_ctl 86 off          # Mixin Right Mic 2
-    set_ctl 87 off          # Mixin Right Mic 1
     set_ctl 84 off          # Mixin L <- Mixin R
     set_ctl 88 off          # Mixin R <- Mixin L
 }
@@ -165,12 +180,14 @@ show_status() {
     echo "IQaudio Codec Zero — carte $CARD"
     echo
     echo "Entree"
-    printf "  %-22s %s\n" "AUX Jack Switch"   "$(get_ctl 78)"
-    printf "  %-22s %s\n" "Aux Switch"        "$(get_ctl 25)"
-    printf "  %-22s %s\n" "Aux Volume"        "$(get_ctl 3)"
+    printf "  %-22s %s\n" "MIC Jack Switch"   "$(get_ctl 76)"
+    printf "  %-22s %s\n" "Mic 1 Switch"      "$(get_ctl 23)"
+    printf "  %-22s %s\n" "Mic 1 MUX (1=P)"   "$(get_ctl 79)"
+    printf "  %-22s %s\n" "Mic 1 Volume"      "$(get_ctl 1)"
     printf "  %-22s %s\n" "Mixin PGA Volume"  "$(get_ctl 4)"
     printf "  %-22s %s\n" "ADC Volume"        "$(get_ctl 5)"
     printf "  %-22s %s\n" "ADC HPF"           "$(get_ctl 15)"
+    printf "  %-22s %s\n" "ADC Voice Mode"    "$(get_ctl 17)"
     printf "  %-22s %s\n" "ALC Switch"        "$(get_ctl 60)"
     echo
     echo "Routage"

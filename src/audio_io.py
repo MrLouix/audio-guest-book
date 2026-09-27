@@ -116,13 +116,12 @@ def play(path: Path, should_continue: Callable[[], bool],
 
 def record(path: Path, max_duration_sec: int, should_continue: Callable[[], bool],
            poll_interval: float = POLL_INTERVAL_SEC) -> str:
-    """Enregistre directement vers path (WAV stéréo 48 kHz, 16 bits).
+    """Enregistre directement vers path (WAV stéréo 16 kHz, 16 bits).
 
-    48 kHz, et non 44,1 : c'est la cadence exigée par RNNoise, et le full
-    duplex impose que capture et lecture partagent cadence et format (§4.3).
-    Le micro est sur l'entrée Aux gauche, dupliquée sur les deux canaux DAI
-    par scripts/audio-setup.sh (numids 89 et 90) — les deux pistes portent
-    donc le même signal.
+    16 kHz : c'est là que le plancher de bruit du micro électret est le plus
+    bas (voir config.RECORD_RATE_HZ). Le micro est sur le jack MIC (Mic 1),
+    dupliqué sur les deux canaux DAI par scripts/audio-setup.sh (numids 89
+    et 90) — les deux pistes portent donc le même signal.
 
     should_continue() est interrogé toutes les poll_interval secondes ; dès
     qu'il renvoie False (raccroché), l'enregistrement est arrêté immédiatement

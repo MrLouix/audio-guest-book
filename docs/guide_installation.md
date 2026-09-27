@@ -35,7 +35,7 @@ La capsule carbone d'origine et le circuit hybride du téléphone ne sont **pas*
   [Cadran: impulsions] ── GPIO22 (BCM, phys. 15)  + GND
 
   IQaudio Codec Zero (HAT, carte 1)
-     ├── AUX IN (gauche) ◄── Micro ADA1063 (dans la cavité du combiné)
+     ├── JACK MIC ◄── Micro électret (dans la cavité du combiné)
      ├── LINE OUT ──► Entrée PAM8403 ──► Haut-parleur MONO de sonnerie
      │                 (le haut-parleur lit la piste GAUCHE)
      └── CASQUE (jack 3,5 mm, stéréo)
@@ -52,7 +52,7 @@ du combiné et l'écouteur secondaire entendent la même chose, au même niveau.
 
 1. **Crochet** → GPIO17 + GND, pull-up interne (`PUD_UP`). ⚠️ Vérifier au multimètre si le contact est normalement ouvert ou fermé au repos, et ajuster `HOOK_ACTIVE_STATE` en conséquence (voir §4 ci-dessous).
 2. **Cadran, contact off-normal** → GPIO27 + GND. **Contact d'impulsions** → GPIO22 + GND. Même vérification multimètre pour `OFFNORMAL_ACTIF_LEVEL`.
-3. **Micro ADA1063** → entrée **Aux gauche** du Codec Zero directement (jamais via le circuit hybride ou la capsule carbone d'origine).
+3. **Micro électret** → **jack MIC** du Codec Zero (Mic 1, polarisé par le bias interne du DA7213), directement — jamais via le circuit hybride ou la capsule carbone d'origine. Le micro MEMS embarqué est coupé dès qu'une fiche est dans le jack. Réglages : `scripts/audio-setup.sh`, mesures : `docs/banc_audio/`.
 4. **Line out** → entrée du PAM8403 puis haut-parleur mono de sonnerie (volume réglé au potentiomètre, voir §5). **Sortie casque** : canal gauche vers l'écouteur du combiné, canal droit vers l'écouteur secondaire (volumes modérés, identiques).
 5. **Alimentation** : Pi sur bloc 5 V ≥ 2,5 A ; PAM8403 alimenté depuis les broches 5V/GND du Pi.
 
@@ -173,7 +173,11 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 | `MODE_RELOAD_SEC` | 1.0 | Durée de validité du mode en mémoire avant relecture de `mode_config.json`. Plus haut = moins d'appels système, bascule un peu moins réactive |
 | `RESTITUTION_SOUND_CARD` | = `SOUND_CARD` | Périphérique ALSA de lecture des messages des invités. Échappatoire de routage : définir un périphérique ALSA `route` et le pointer ici, sans modification de code |
 | `AUDIO_OUTPUT_SONNERIE` / `AUDIO_OUTPUT_COMBINE` | `lineout` / `headphone` | Sortie du codec pour la sonnerie et pour les écouteurs (§4.1). Modifiables depuis `/settings` |
-| `AUDIO_RATE_HZ` / `AUDIO_CHANNELS` | 48000 / 2 | Format commun lecture et capture (RNNoise, full duplex) |
+| `AUDIO_RATE_HZ` / `AUDIO_CHANNELS` | 48000 / 2 | Format de lecture (fichiers de `audio/`) |
+| `RECORD_RATE_HZ` / `RECORD_CHANNELS` | 16000 / 2 | Format de capture : 16 kHz = plancher de bruit le plus bas du micro électret |
+| `TRAITEMENT_ACTIF` | `True` | Traitement de chaque message après enregistrement (brut conservé dans `messages/brut/`) |
+| `TRAITEMENT_NR` / `TRAITEMENT_NOTCH` / `TRAITEMENT_EXPANDEUR` | 0.25 / `True` / `True` | Force du débruitage, coupe-bandes 50/100/150 Hz (inutiles sur alimentation bruyante large bande), expandeur des pauses |
+| `TRAITEMENT_PROFIL_DEBUT_SEC` | 0.5 | Début de la recherche du silence servant de profil de bruit (la 1re demi-seconde porte la charge du bias) |
 | `RCLONE_SOURCES_FOLDER` | `MariageGuestBookSources` | Dossier Drive de `audio_src/`, synchronisé **dans les deux sens**. Doit être distinct de celui des enregistrements |
 
 ### Dashboard & authentification

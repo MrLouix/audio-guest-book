@@ -37,6 +37,7 @@ import config                        # noqa: E402
 import gpio_io                        # noqa: E402
 import livre_dor                     # noqa: E402
 import mode_io                        # noqa: E402
+import traitement_audio               # noqa: E402
 
 _Usage = collections.namedtuple("_Usage", "total used free")
 
@@ -90,6 +91,17 @@ def test_simule(rapport: Rapport) -> None:
         if banc.audio.enregistrements:
             rapport.egal("la durée maximale MAX_RECORD_SEC est transmise",
                          banc.audio.enregistrements[0].max_duration_sec, 90)
+
+    rapport.section("2bis. Traitement du message après enregistrement")
+    with Banc() as banc:
+        banc.machine._run_enregistrement(should_continue=lambda: False)
+        crees = banc.enregistrements_crees()
+        rapport.egal("le traitement du message est lancé en arrière-plan",
+                     banc.traitements, crees)
+    with Banc(TRAITEMENT_ACTIF=False) as banc:
+        banc.machine._run_enregistrement(should_continue=lambda: False)
+        rapport.egal("TRAITEMENT_ACTIF=False : aucun traitement lancé",
+                     banc.traitements, [])
 
     rapport.section("3. Enregistrement du scénario « appel entrant » (§1.2)")
     with Banc(RING_ANSWER_GRACE_SEC=10) as banc:
@@ -211,14 +223,11 @@ def test_simule(rapport: Rapport) -> None:
         rapport.egal("la commande est arecord", commande[0], "arecord")
         rapport.verifie("la carte son configurée est utilisée",
                         ["-D", config.SOUND_CARD] == commande[1:3], f"commande : {commande}")
-        rapport.verifie("le format est bien WAV stéréo 48 kHz 16 bits (§4.3)",
+        rapport.verifie("le format est bien WAV stéréo 16 kHz 16 bits (§4.3)",
                         ["-f", "S16_LE"] == commande[3:5]
                         and ["-c", "2"] == commande[5:7]
-                        and ["-r", "48000"] == commande[7:9],
+                        and ["-r", "16000"] == commande[7:9],
                         f"commande : {commande}")
-        rapport.verifie("capture et lecture partagent la cadence (prérequis full duplex)",
-                        config.RECORD_RATE_HZ == config.AUDIO_RATE_HZ == 48000,
-                        f"capture : {config.RECORD_RATE_HZ} Hz, lecture : {config.AUDIO_RATE_HZ} Hz")
         rapport.verifie("la durée maximale est passée en filet de sécurité",
                         ["-d", "120"] == commande[9:11], f"commande : {commande}")
         rapport.egal("le fichier cible est le dernier argument",
@@ -326,7 +335,16 @@ def test_reel(rapport: Rapport, secondes: int) -> None:
                                 duree >= config.SHORT_RECORDING_THRESHOLD_SEC,
                                 f"durée : {duree:.1f}s")
 
-                rapport.section("3. Relecture de l'enregistrement")
+                rapport.section("3. Traitement du message")
+                if traitement_audio.np is None or shutil.which("sox") is None:
+                    rapport.ignore("traitement du message", "sox ou numpy absent")
+                else:
+                    rapport.verifie("le traitement réussit",
+                                    traitement_audio.traiter(cible))
+                    rapport.verifie("le brut est conservé dans brut/",
+                                    traitement_audio.brut_path(cible).exists())
+
+                rapport.section("4. Relecture de l'enregistrement traité")
                 print(f"\n  {harness.GRAS}>>> Écoutez : votre message est rejoué."
                       f"{harness.RAZ}")
                 relecture = audio_io.play(cible, should_continue=lambda: True,

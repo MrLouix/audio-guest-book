@@ -1,9 +1,11 @@
 # Dépendances Python du livre d'or téléphonique (§10 de la spécification)
-# Le pré-traitement audio (pydub) nécessite en plus le paquet système ffmpeg.
+# Le pré-traitement audio (pydub) nécessite en plus le paquet système ffmpeg,
+# le traitement des messages (numpy) le paquet système sox.
 
 RPi.GPIO
 Flask
 qrcode[pil]
 pydub
+numpy
 werkzeug
 audioop-lts; python_version >= "3.13"

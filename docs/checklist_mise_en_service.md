@@ -70,15 +70,21 @@ python3 tests/run_tous.py --reel     # ou un script à la fois, ci-dessous
 - [ ] `python3 src/prepare_audio.py --play-all` : chaque fichier sort sur la bonne destination.
 - [ ] Volume du haut-parleur réglé au potentiomètre PAM8403 à un niveau approprié (ni inaudible, ni agressif).
 
-## 4bis. Capture (prérequis RNNoise et full duplex)
+## 4bis. Capture (micro électret sur le jack MIC, 16 kHz)
 
 - [ ] Enregistrer 5 s (`python3 src/audio_io.py record /tmp/essai.wav --duration 5`) en parlant dans le combiné.
-- [ ] `soxi /tmp/essai.wav` → **48 000 Hz, 2 canaux, 16 bits**.
+- [ ] `./scripts/audio-setup.sh status` : MIC Jack Switch `on`, Mic 1 MUX `1` (MIC_P), ALC `off,off`.
+- [ ] `soxi /tmp/essai.wav` → **16 000 Hz, 2 canaux, 16 bits**.
 - [ ] **Les deux pistes portent du signal** (`ffmpeg -i /tmp/essai.wav -af astats -f null -` :
-      comparer les niveaux RMS des deux canaux). Le micro est sur l'entrée Aux gauche,
+      comparer les niveaux RMS des deux canaux). Le micro est sur le jack MIC (Mic 1),
       dupliquée sur les deux canaux DAI par `audio-setup.sh` — si la piste droite ressort
       muette, le second écouteur n'entendra rien en mode restitution.
 - [ ] Parole clairement audible, sans saturation ni souffle excessif (ALC bien désactivé).
+- [ ] Après un appel complet : `messages/brut/<nom>.wav` (brut) **et** `messages/<nom>.wav` (traité)
+      existent, et `logs/livre_dor.log` contient la ligne « Message traité : … ». À l'écoute :
+      plus de ronflement 50 Hz ni de clics, souffle de fond nettement réduit, voix intacte.
+- [ ] Sur un message sans pause (parlé d'un bout à l'autre), le journal indique
+      « noisered sauté » : attendu, le débruitage retirerait de la voix.
 
 ## 4ter. Choix des fichiers audio depuis le dashboard
 
@@ -171,15 +177,15 @@ Puis, sur le matériel, avec quelques messages déjà présents dans `messages/`
       haut-parleur de sonnerie (la lecture est commutée sur la sortie casque, §4.1).
       Si le second écouteur reste muet sur les enregistrements récents, reprendre
       le point 4bis ; `RESTITUTION_SOUND_CARD` reste l'échappatoire de routage.
-- [ ] Les enregistrements antérieurs au passage en 48 kHz (mono 44,1 kHz) restent lisibles.
+- [ ] Les enregistrements antérieurs (mono 44,1 kHz, stéréo 48 kHz) restent lisibles.
 - [ ] Retour en mode mariage depuis le dashboard : le parcours d'origine
       (message des mariés, bip, enregistrement) fonctionne de nouveau.
 
 ## 10. Espace disque et stockage
 
 - [ ] Espace disque disponible vérifié (`df -h`), largement au-dessus du seuil d'alerte (500 Mo).
-      **Attention** : un enregistrement stéréo 48 kHz pèse 11,5 Mo/min, soit 2,17 fois
-      l'ancien format mono 44,1 kHz. Compter ~4,6 Go pour 200 messages de 2 min.
+      Un enregistrement stéréo 16 kHz pèse 3,8 Mo/min, **doublé** par la copie brute
+      conservée dans `messages/brut/`. Compter ~3,1 Go pour 200 messages de 2 min.
 - [ ] `logs/livre_dor.log`, `logs/reseau.log`, `logs/rclone.log` tous non vides et lisibles.
 
 ## 11. Sécurité

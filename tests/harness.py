@@ -19,6 +19,8 @@ Principe des tests simulés, repris de src/restitution_test.py :
 - `alsa_io.select_output` / `setup_card` sont eux aussi doublés : sans ça,
   chaque lecture tenterait de lancer scripts/audio-setup.sh, qui échouerait
   faute de carte et de `amixer` ;
+- `traitement_audio.lancer_en_arriere_plan` est doublé : chaque
+  enregistrement simulé lancerait sinon un processus sox en arrière-plan ;
 - toute l'arborescence de données (audio/, audio_src/, messages/, logs/,
   status.json, mode_config.json, audio_config.json, rclone_config.json,
   ring_trigger) est redirigée vers un dossier temporaire, supprimé à la fin :
@@ -53,6 +55,7 @@ import gpio_io     # noqa: E402
 import livre_dor   # noqa: E402
 import mode_io     # noqa: E402
 import status_io   # noqa: E402
+import traitement_audio  # noqa: E402
 
 # --- Réglages temporels des scénarios simulés ---------------------------
 
@@ -567,6 +570,9 @@ _PARAMS_SAUVEGARDES = (
     "AUDIO_RATE_HZ", "AUDIO_CHANNELS", "AUDIO_SAMPLE_FORMAT",
     "RECORD_RATE_HZ", "RECORD_CHANNELS",
     "AUDIO_OUTPUT_SONNERIE", "AUDIO_OUTPUT_COMBINE", "AUDIO_SETUP_SCRIPT",
+    # Traitement des messages après enregistrement.
+    "TRAITEMENT_ACTIF", "TRAITEMENT_NR", "TRAITEMENT_NOTCH",
+    "TRAITEMENT_EXPANDEUR", "TRAITEMENT_PROFIL_DEBUT_SEC",
 )
 
 # Horodatage de référence des enregistrements d'invités factices.
@@ -617,6 +623,9 @@ class Banc:
         self.inputs = gpio_io.PhoneInputs()
         self.machine: Optional[livre_dor.GuestBookStateMachine] = None
         self.noms_messages: List[str] = []
+        # Messages dont le traitement a été demandé : la doublure les note au
+        # lieu de lancer un processus sox par enregistrement simulé.
+        self.traitements: List[Path] = []
 
     # --- Cycle de vie ---------------------------------------------------
 
@@ -630,6 +639,8 @@ class Banc:
         alsa_io.select_output = self.alsa.select_output
         alsa_io.setup_card = self.alsa.setup_card
         alsa_io.invalidate_cache()
+        self._lancer_traitement = traitement_audio.lancer_en_arriere_plan
+        traitement_audio.lancer_en_arriere_plan = self.traitements.append
 
         config.AUDIO_DIR = self._dossier / "audio"
         config.AUDIO_SRC_DIR = self._dossier / "audio_src"
@@ -709,6 +720,7 @@ class Banc:
         audio_io.play, audio_io.record = self._play, self._record
         alsa_io.select_output, alsa_io.setup_card = self._alsa_select, self._alsa_setup
         alsa_io.invalidate_cache()
+        traitement_audio.lancer_en_arriere_plan = self._lancer_traitement
         for nom, valeur in self._sauvegarde.items():
             setattr(config, nom, valeur)
         mode_io.invalidate_cache()

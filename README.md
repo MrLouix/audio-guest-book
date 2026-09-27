@@ -72,7 +72,11 @@ Deux dossiers, deux rôles :
 - **`audio_src/`** — les fichiers sources bruts, tels que déposés (mp3, m4a, wav…), **avec leur nom d'origine**. C'est le seul des deux qui est synchronisé avec Google Drive : on peut y déposer une sonnerie ou un message depuis un smartphone.
 - **`audio/`** — les WAV convertis, prêts à être joués. Entièrement généré, jamais synchronisé, jamais édité à la main.
 
-La conversion produit du **48 kHz, 16 bits (S16_LE), stéréo L = R**. 48 kHz parce que c'est la cadence exigée par RNNoise, et parce que le full duplex impose que lecture et capture partagent cadence et format — `arecord` enregistre donc lui aussi en 48 kHz stéréo.
+La conversion produit du **48 kHz, 16 bits (S16_LE), stéréo L = R**. La capture, elle, se fait en **16 kHz** stéréo L = R : c'est là que le plancher de bruit du micro électret est le plus bas (−5,4 dB mesurés au banc), et le parcours ne lit ni n'enregistre jamais en même temps.
+
+### Traitement des messages
+
+À chaque raccroché, `src/traitement_audio.py` traite le message en arrière-plan (priorité basse, la machine est aussitôt prête pour l'invité suivant) avec la chaîne validée au banc (`docs/banc_audio/JOURNAL.md`) : suppression des saturations et des clics électriques, passe-haut 80 Hz et coupe-bandes 50/100/150 Hz contre le hum secteur, `sox noisered` 0,25 sur un profil pris dans un silence du message, expandeur doux sur les pauses. Le brut est conservé dans `messages/brut/` (et synchronisé sur le Drive avec le reste) ; `messages/<nom>.wav` est remplacé atomiquement par la version traitée. Un échec laisse le brut en place. Réglages : `TRAITEMENT_ACTIF`, `TRAITEMENT_NR`, `TRAITEMENT_NOTCH`, `TRAITEMENT_EXPANDEUR`, `TRAITEMENT_PROFIL_DEBUT_SEC`. Retraiter à la main : `python3 src/traitement_audio.py messages/<nom>.wav`, ou `--en-attente` pour tous les messages pas encore traités.
 
 Le fichier qui joue chaque rôle (sonnerie, message générique, message 0 à 9, annonce « aucun message ») se choisit **dans le dashboard**, page Paramètres, par liste déroulante sur le contenu de `audio_src/` — aucun renommage nécessaire. Le choix est enregistré dans `audio_config.json` ; un rôle sans choix explicite retombe sur l'ancienne convention de nommage (`audio_src/sonnerie.*`), ce qui laisse fonctionner une installation antérieure telle quelle.
 
@@ -325,7 +329,7 @@ Le mariage passé, le téléphone devient un **lecteur des messages laissés par
 
 **Empreinte sur le Raspberry Pi** (mesurée) : le mode est en **lecture seule** sur `messages/` — parcourir les messages n'écrit rien. En attente il n'écrit **aucun octet** sur la carte SD, et `mode_config.json` est servi par le page cache (`read_bytes = 0`). RSS stable à 15,7 Mo sur 150 appels enchaînés, sans fuite de descripteur ni de thread. Un appel complet coûte 28 Ko (7 écritures de `status.json`). À comparer aux ~10 Mo écrits par message de 2 min en mode mariage.
 
-**Point de vigilance matériel** : le micro est câblé sur l'entrée **Aux gauche**, dupliquée sur les deux canaux DAI par `scripts/audio-setup.sh` (numids 89 et 90) — les deux pistes d'un enregistrement portent donc le même signal. À vérifier sur la première prise réelle : si la piste droite ressortait muette, le second écouteur n'entendrait rien en mode restitution. La lecture, elle, est toujours commutée sur la sortie casque, jamais sur le haut-parleur de sonnerie. `RESTITUTION_SOUND_CARD` reste disponible comme échappatoire de routage ALSA, sans modification de code.
+**Point de vigilance matériel** : le micro électret est câblé sur le **jack MIC** (Mic 1), dupliqué sur les deux canaux DAI par `scripts/audio-setup.sh` (numids 89 et 90) — les deux pistes d'un enregistrement portent donc le même signal. À vérifier sur la première prise réelle : si la piste droite ressortait muette, le second écouteur n'entendrait rien en mode restitution. La lecture, elle, est toujours commutée sur la sortie casque, jamais sur le haut-parleur de sonnerie. `RESTITUTION_SOUND_CARD` reste disponible comme échappatoire de routage ALSA, sans modification de code.
 
 ## Tests unitaires par fonction (`tests/`)
 

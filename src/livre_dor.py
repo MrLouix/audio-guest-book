@@ -48,6 +48,7 @@ import config
 import gpio_io
 import mode_io
 import status_io
+import traitement_audio
 
 logger = logging.getLogger(__name__)
 
@@ -693,6 +694,11 @@ class GuestBookStateMachine:
             if duration < config.SHORT_RECORDING_THRESHOLD_SEC:
                 logger.warning("Enregistrement très court conservé (%.1fs < %.0fs), non supprimé : %s",
                                 duration, config.SHORT_RECORDING_THRESHOLD_SEC, path.name)
+            # Traitement (declip, clics, 50 Hz, bruit de fond) dans un processus
+            # séparé, brut conservé dans messages/brut/ : la machine retourne
+            # aussitôt en attente, un invité suivant peut décrocher.
+            if config.TRAITEMENT_ACTIF and duration > 0:
+                traitement_audio.lancer_en_arriere_plan(path)
         # Retour à l'attente : la boucle run_forever() relance _run_attente().
 
 

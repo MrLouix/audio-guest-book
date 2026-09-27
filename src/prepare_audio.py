@@ -11,8 +11,8 @@ Pourquoi ce format :
   un écouteur par côté (combiné à gauche, écouteur secondaire à droite). Les
   deux doivent recevoir le même signal au même niveau. Il n'y a donc plus
   aucun panning : c'est le codec qui sélectionne la sortie (cf. `alsa_io`) ;
-- **48 kHz** parce que c'est la cadence exigée par RNNoise, et que le full
-  duplex impose que lecture et capture partagent cadence et format (§4.3).
+- **48 kHz** : format de lecture du projet (config.AUDIO_RATE_HZ). La capture
+  des messages, elle, est en 16 kHz (§4.3).
 
 Contenu généré :
 

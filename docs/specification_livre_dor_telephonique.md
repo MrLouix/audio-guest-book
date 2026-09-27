@@ -37,7 +37,7 @@ Règles transverses du parcours :
 |---|---|---|---|
 | 1 | Téléphone Socotel S63 | Boîtier, combiné, crochet, cadran | Acheté 19 € |
 | 2 | Raspberry Pi Zero 2 W | Cerveau du montage | 512 Mo RAM, quad-core 1 GHz, WiFi + Bluetooth intégrés |
-| 3 | Carte microSD (≥ 32 Go, classe A1) | OS + enregistrements | Prévoir marge : 1 h de WAV **stéréo 48 kHz** ≈ 690 Mo (§4.3) |
+| 3 | Carte microSD (≥ 32 Go, classe A1) | OS + enregistrements | Prévoir marge : 1 h de WAV **stéréo 16 kHz** ≈ 230 Mo, doublé par la copie brute (§4.3) |
 | 4 | Carte son USB stéréo (entrée mic + sortie casque) | Toute l'entrée/sortie audio | Le Pi Zero n'a pas d'audio analogique natif |
 | 5 | Adaptateur micro-USB OTG | Brancher la carte son sur le Pi Zero | |
 | 6 | Micro électret (~2 €) | Capture de la voix des invités | Caché dans la cavité du combiné |
@@ -122,7 +122,7 @@ Règles transverses du parcours :
 - Périphérique ALSA du Codec Zero, identifié une fois avec `aplay -l` et `arecord -l`. Valeur type : **`plughw:1,0`** (paramètre `SOUND_CARD` / `CARTE_SON`).
 - Lecture via `aplay`, enregistrement via `arecord` (paquet `alsa-utils`) pilotés en sous-processus.
 
-**Configuration et commutation du codec.** Tous les réglages du DA7213 (entrée micro ADA1063 sur Aux gauche, ALC impérativement désactivé, routage DAI/DAC, sélection de sortie) vivent dans **`scripts/audio-setup.sh`**, sous forme de `amixer cset numid=…`. Ils n'y sont **jamais dupliqués côté Python** : un numid n'est qu'un index dans l'énumération des contrôles ALSA, qui peut glisser d'une version de driver à l'autre, et deux copies finiraient par diverger.
+**Configuration et commutation du codec.** Tous les réglages du DA7213 (micro électret sur le jack MIC, ALC impérativement désactivé, routage DAI/DAC, sélection de sortie) vivent dans **`scripts/audio-setup.sh`**, sous forme de `amixer cset numid=…`. Ils n'y sont **jamais dupliqués côté Python** : un numid n'est qu'un index dans l'énumération des contrôles ALSA, qui peut glisser d'une version de driver à l'autre, et deux copies finiraient par diverger.
 
 - `audio-setup.sh {headphone|lineout|both}` : configuration complète. Lancée une fois au démarrage de `livre_dor.py`, juste après l'attente de la carte son, et une fois à l'installation **sous root** pour figer `asound.state` (`alsactl store`) — le service tourne sous un utilisateur non privilégié et ne peut pas l'écrire.
 - `audio-setup.sh switch-{headphone|lineout|both}` : **commutation rapide**, uniquement les numids de sortie (28/29/75/7/8), sans toucher à l'entrée ni au routage, sans `alsactl store`. Quelques dizaines de millisecondes, appelées avant chaque lecture.
@@ -138,7 +138,7 @@ Deux dossiers, deux rôles distincts :
 - **`audio_src/`** — fichiers sources bruts, tels que déposés (mp3, m4a, wav…), **avec leur nom d'origine**. Seul dossier synchronisé avec le Drive, et **dans les deux sens** (§5.4), pour pouvoir y déposer un son depuis un smartphone.
 - **`audio/`** — WAV convertis, prêts à être joués. Entièrement généré par `prepare_audio.py`, jamais synchronisé, jamais édité à la main.
 
-**Format cible : 48 000 Hz, 16 bits (S16_LE), stéréo avec les deux pistes identiques.** Stéréo L = R parce que le line out n'a qu'un haut-parleur mono lisant la piste gauche et que la sortie casque alimente un écouteur par canal : les deux doivent recevoir le même signal au même niveau. 48 kHz parce que c'est la cadence exigée par RNNoise et que le full duplex impose que lecture et capture partagent cadence et format (§4.3).
+**Format cible : 48 000 Hz, 16 bits (S16_LE), stéréo avec les deux pistes identiques.** Stéréo L = R parce que le line out n'a qu'un haut-parleur mono lisant la piste gauche et que la sortie casque alimente un écouteur par canal : les deux doivent recevoir le même signal au même niveau. La capture, elle, se fait en 16 kHz (§4.3) : le parcours ne lit ni n'enregistre jamais en même temps, rien n'impose une cadence commune.
 
 | Rôle | Source | Sortie | Gain |
 |---|---|---|---|
@@ -162,8 +162,9 @@ Au démarrage, `livre_dor.py` lit l'en-tête de chaque WAV de `audio/` et **aver
 
 ### 4.3 Enregistrements
 
-- Format : **WAV**, stéréo, 48 kHz, 16 bits — mêmes cadence et format que la lecture, prérequis du full duplex et de RNNoise. Le micro est sur l'entrée Aux gauche, dupliquée sur les deux canaux DAI par `audio-setup.sh` (numids 89 et 90) : les deux pistes portent le même signal.
-- Coût disque : 11,5 Mo/min (contre 5,3 en mono 44,1 kHz). Un message de 2 min ≈ 23 Mo ; 200 messages ≈ 4,6 Go. À prendre en compte dans le dimensionnement de la carte SD (§2) et les seuils `DISK_WARNING_MB` / `DISK_CRITICAL_MB`.
+- Format : **WAV**, stéréo, **16 kHz**, 16 bits. 16 kHz parce que le plancher de bruit du micro électret y est 5,4 dB plus bas qu'en 44,1 kHz (mesure du banc, `docs/banc_audio/`), et que 8 kHz de bande suffisent à la voix. RNNoise, qui justifiait 48 kHz, a été rejeté au banc (il détruit les transitoires). Le micro électret est sur le jack MIC (Mic 1, MUX MIC_P, gain total 42 dB), dupliqué sur les deux canaux DAI par `audio-setup.sh` (numids 89 et 90) : les deux pistes portent le même signal.
+- **Traitement après enregistrement** (`src/traitement_audio.py`, lancé en arrière-plan et en priorité basse au raccroché) : suppression des saturations et des clics électriques courts, passe-haut 80 Hz + coupe-bandes 50/100/150 Hz, `sox noisered` 0,25 avec un profil pris sur la fenêtre de 1,5 s la plus calme et sans clic (sauté si le message n'a pas de silence exploitable), expandeur doux sur les pauses. Le brut est copié dans `messages/brut/`, puis `messages/<nom>.wav` est remplacé atomiquement par la version traitée ; en cas d'échec le brut reste en place. Restitution, transcription et synchronisation voient donc le message traité sans changement.
+- Coût disque : 3,8 Mo/min, doublé par la copie brute. Un message de 2 min ≈ 7,7 Mo avec son brut ; 200 messages ≈ 1,5 Go. À prendre en compte dans le dimensionnement de la carte SD (§2) et les seuils `DISK_WARNING_MB` / `DISK_CRITICAL_MB`.
 - Nommage : horodaté, ex. `message_YYYY-MM-DD_HH-MM-SS.wav`, éventuellement suffixé du chiffre composé.
 - Dossier : `/home/pi/livre_dor/messages/` (cf. arborescence §8).
 
@@ -257,7 +258,7 @@ Exécuté toutes les ~30 s par un couple `.service`/`.timer` systemd.
 
 | Dossier local | Sens | Commande | Justification |
 |---|---|---|---|
-| `messages/` | montant seul | **`rclone copy`** (jamais `sync`) | Les enregistrements des invités sont le livrable : aucune action côté Drive ne doit pouvoir les effacer. N'ajoute que les nouveaux fichiers, compare taille/date, pas de re-upload. |
+| `messages/` | montant seul | **`rclone copy`** (jamais `sync`) | Les enregistrements des invités sont le livrable : aucune action côté Drive ne doit pouvoir les effacer. N'ajoute que les nouveaux fichiers, compare taille/date. Un message synchronisé avant la fin de son traitement (quelques secondes) est renvoyé une fois sous sa version traitée ; `messages/brut/` monte avec le reste. |
 | `audio_src/` | **bidirectionnel** | **`rclone bisync`** | Permet de déposer une sonnerie ou un message des mariés depuis un smartphone et de le retrouver sur le Pi, et inversement. |
 
 - Les deux dossiers Drive doivent être **distincts et non imbriqués** ; le dashboard refuse toute autre configuration, sinon les enregistrements deviendraient de fait bidirectionnels.
@@ -364,11 +365,11 @@ verrait le fichier périmé et redémarrerait le service en boucle.
 **Audio — point de vigilance :** la lecture des enregistrements est commutée sur
 la sortie casque comme le reste du parcours (§4.1) : rien ne sort du
 haut-parleur de sonnerie. Les enregistrements sont stéréo (§4.3), le micro
-étant câblé sur l'entrée Aux gauche puis dupliqué sur les deux canaux DAI par
+étant câblé sur le jack MIC puis dupliqué sur les deux canaux DAI par
 `audio-setup.sh` (numids 89 et 90) — **à vérifier sur la première prise
 réelle** : si la piste droite ressortait muette, le second écouteur n'entendrait
-rien ici. Les enregistrements antérieurs au passage en 48 kHz restent en mono
-44,1 kHz et restent lisibles tels quels via `plughw`, qui rééchantillonne et
+rien ici. Les enregistrements antérieurs (mono 44,1 kHz, stéréo 48 kHz) restent
+lisibles tels quels via `plughw`, qui rééchantillonne et
 duplique. `RESTITUTION_SOUND_CARD` (§9) reste l'échappatoire de routage ALSA, sans
 modification de code. La conversion des WAV à la volée est **écartée** : elle
 ajouterait ffmpeg/pydub au chemin critique d'exécution, que les primitives audio
@@ -456,7 +457,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
   4ter. Contrôler le format des WAV générés : 48 000 Hz, 2 canaux, 16 bits, pistes identiques (§4.2).
   5. Composer chaque chiffre → vérifier le bon message + fallback.
   5bis. Déclencher la sonnerie (dashboard) et décrocher pendant/juste après → vérifier qu'un message aléatoire est joué **sans tonalité ni cadran**, puis bip + enregistrement ; répéter pour vérifier la variation des messages.
-  6. Enregistrer un message test → vérifier le WAV (48 kHz, stéréo, **les deux pistes portent du signal**) et sa synchro Drive.
+  6. Enregistrer un message test → vérifier le WAV (16 kHz, stéréo, **les deux pistes portent du signal**), sa copie brute dans `messages/brut/` et sa synchro Drive.
   6bis. Déposer un son depuis un smartphone dans le dossier Drive des sources → vérifier qu'il arrive dans `audio_src/` et apparaît dans les listes déroulantes de `/settings`, puis l'affecter à un rôle et contrôler la conversion (§4.2, §5.4).
   7. Débrancher le wifi → vérifier l'apparition de l'AP « Livre-dor-Mariage » et l'accès `192.168.4.1:5000` puis `livredor.local:5000`.
   7bis. Test « wifi zombie » : connecter le Pi à un réseau puis l'éloigner (ou couper la passerelle de ce réseau) → vérifier qu'après ~90 s le Pi bascule seul en AP, que le SSID fautif reste blacklisté ~10 min, et que le dashboard redevient accessible via l'AP.
@@ -470,6 +471,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 /home/pi/livre_dor/
 ├── livre_dor.py              # script principal (machine à états)
 ├── prepare_audio.py          # pré-traitement stéréo (usage unique)
+├── traitement_audio.py       # traitement des messages après enregistrement (§4.3)
 ├── dashboard_app.py          # serveur Flask
 ├── wifi_or_ap.sh             # bascule réseau
 ├── static/
@@ -485,6 +487,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 │   ├── aucun_message.wav     # optionnel (annonce du mode restitution, §5.7)
 │   └── message_N.wav         # un par chiffre attribué (N = 0..9)
 ├── messages/                 # enregistrements des invités (WAV horodatés)
+│   └── brut/                 # copies brutes, avant traitement (§4.3)
 ├── logs/
 │   ├── livre_dor.log         # rotation 5 × 1 Mo
 │   ├── reseau.log
@@ -529,10 +532,13 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 | `RESTITUTION_SOUND_CARD` | = `SOUND_CARD` | Périphérique ALSA de lecture des messages invités (échappatoire mono → écouteur seul, §5.7) |
 | `AUDIO_OUTPUT_SONNERIE` | `lineout` | Sortie du codec pour la sonnerie (haut-parleur mono, §4.1) |
 | `AUDIO_OUTPUT_COMBINE` | `headphone` | Sortie du codec pour le combiné et l'écouteur secondaire |
-| `AUDIO_RATE_HZ` | 48000 | Cadence commune lecture/capture (RNNoise, full duplex) |
+| `AUDIO_RATE_HZ` | 48000 | Cadence de lecture (fichiers de `audio/`) |
 | `AUDIO_CHANNELS` | 2 | Stéréo L = R : une piste par écouteur, la gauche pour le line out |
-| `RECORD_RATE_HZ` / `RECORD_CHANNELS` | = lecture | Format d'enregistrement. **Hors paramètres du dashboard** : en changer pendant l'événement scinderait le corpus |
+| `RECORD_RATE_HZ` / `RECORD_CHANNELS` | 16000 / 2 | Format d'enregistrement (plancher de bruit le plus bas du micro électret). **Hors paramètres du dashboard** : en changer pendant l'événement scinderait le corpus |
 | `AUDIO_SETUP_SCRIPT` | `scripts/audio-setup.sh` | Réglages du codec ; source unique des numids `amixer` |
+| `TRAITEMENT_ACTIF` | `True` | Traitement de chaque message après enregistrement (§4.3) |
+| `TRAITEMENT_NR` / `TRAITEMENT_NOTCH` / `TRAITEMENT_EXPANDEUR` | 0,25 / `True` / `True` | Force du débruitage, coupe-bandes 50/100/150 Hz, expandeur des pauses. **Hors paramètres du dashboard** |
+| `TRAITEMENT_PROFIL_DEBUT_SEC` | 0,5 | Début de la recherche du silence de profil (la 1re demi-seconde porte la charge du bias) |
 | `AUDIO_SWITCH_TIMEOUT_SEC` / `AUDIO_SETUP_TIMEOUT_SEC` | 3,0 / 15,0 | Garde-fous sur les appels au script |
 | `RCLONE_SOURCES_FOLDER` | `MariageGuestBookSources` | Dossier Drive de `audio_src/` (bidirectionnel). **Doit être distinct de `RCLONE_FOLDER`** |
 | `RCLONE_BISYNC_TIMEOUT_SEC` | 300 | Timeout d'un passage de `bisync` |
@@ -555,7 +561,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 | Dossier Drive | `MariageGuestBook` | Modifiable via dashboard |
 | Intervalle sync | 5 min | Modifiable via dashboard |
 | Mot de passe dashboard | à définir à l'installation | Stocké haché ; protège toutes les routes |
-| Seuils disque | 500 Mo / 100 Mo | Alerte / refus d'enregistrement. À relire : un enregistrement stéréo 48 kHz pèse 2,17 fois un mono 44,1 kHz (§4.3) |
+| Seuils disque | 500 Mo / 100 Mo | Alerte / refus d'enregistrement. Un message pèse 3,8 Mo/min, doublé par sa copie brute (§4.3) |
 | Taille étiquette QR | 45 mm | `?taille=NN` sur `/qr/label` |
 
 ---

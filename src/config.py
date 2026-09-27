@@ -153,20 +153,48 @@ AUDIO_OUTPUT_COMBINE = _env("AUDIO_OUTPUT_COMBINE", "headphone")
 AUDIO_SWITCH_TIMEOUT_SEC = _env_float("AUDIO_SWITCH_TIMEOUT_SEC", 3.0)
 AUDIO_SETUP_TIMEOUT_SEC = _env_float("AUDIO_SETUP_TIMEOUT_SEC", 15.0)
 
-# --- Format audio commun (§4.2, §4.3) -----------------------------------
+# --- Formats audio (§4.2, §4.3) ------------------------------------------
 
-# 48 kHz : cadence requise par RNNoise, et prérequis du full duplex — la
-# lecture et la capture doivent partager cadence et format.
+# Format de lecture : celui des fichiers générés dans audio/. La capture a son
+# propre format (RECORD_RATE_HZ, ci-dessous).
 AUDIO_RATE_HZ = _env_int("AUDIO_RATE_HZ", 48000)
 # Stéréo avec les deux pistes identiques : le line out mono lit la piste
 # gauche, le casque alimente un écouteur par côté, au même niveau.
 AUDIO_CHANNELS = _env_int("AUDIO_CHANNELS", 2)
 AUDIO_SAMPLE_FORMAT = _env("AUDIO_SAMPLE_FORMAT", "S16_LE")
 
-# Par défaut identiques à la lecture. Volontairement hors MODIFIABLE_PARAMS :
-# changer le format en plein événement scinderait le corpus d'enregistrements.
-RECORD_RATE_HZ = _env_int("RECORD_RATE_HZ", AUDIO_RATE_HZ)
+# Capture en 16 kHz, et non à la cadence de lecture : mesuré au banc le
+# 22/09/2026, le plancher de bruit du micro électret y est 5,4 dB plus bas
+# qu'en 44,1 kHz, et 8 kHz de bande suffisent à la voix. Les deux raisons
+# qui imposaient 48 kHz ne tiennent plus : RNNoise a été rejeté (il détruit
+# les transitoires), et le parcours ne lit ni n'enregistre jamais en même
+# temps — le full duplex n'est pas utilisé.
+# Stéréo L = R conservé : la restitution joue les messages dans les deux
+# écouteurs. Volontairement hors MODIFIABLE_PARAMS : changer le format en
+# plein événement scinderait le corpus d'enregistrements.
+RECORD_RATE_HZ = _env_int("RECORD_RATE_HZ", 16000)
 RECORD_CHANNELS = _env_int("RECORD_CHANNELS", AUDIO_CHANNELS)
+
+# --- Traitement des messages après enregistrement ------------------------
+
+# Chaîne validée au banc le 25/09/2026 (docs/banc_audio/JOURNAL.md), appliquée
+# en arrière-plan par src/traitement_audio.py à chaque message : declip ->
+# despike -> coupe-bandes 50/100/150 Hz -> noisered -> expandeur doux. Le brut
+# est conservé dans messages/brut/. Hors MODIFIABLE_PARAMS, comme le format.
+TRAITEMENT_ACTIF = _env("TRAITEMENT_ACTIF", "True") == "True"
+# Force de sox noisered : 0.25 retenu à l'oreille (0.35 gagne du SNR mais
+# coûte ~8 dB de voix).
+TRAITEMENT_NR = _env_float("TRAITEMENT_NR", 0.25)
+# Coupe-bandes 50/100/150 Hz contre le hum secteur. Sans intérêt si le bruit
+# est large bande (alimentation USB bruyante, piles) : ils coûtent alors
+# 2 à 5 dB de voix pour rien.
+TRAITEMENT_NOTCH = _env("TRAITEMENT_NOTCH", "True") == "True"
+# Expandeur doux sur les pauses : supprime le « scintillement » (bruit musical)
+# que laisse noisered, sans toucher la voix (> -60 dB).
+TRAITEMENT_EXPANDEUR = _env("TRAITEMENT_EXPANDEUR", "True") == "True"
+# Début de la recherche de la fenêtre de silence servant de profil de bruit :
+# la première demi-seconde porte la charge du bias de l'électret.
+TRAITEMENT_PROFIL_DEBUT_SEC = _env_float("TRAITEMENT_PROFIL_DEBUT_SEC", 0.5)
 
 # Intervalle de rafraîchissement de status.json en état attente, pour que le
 # watchdog (§7.1) ne le voie jamais périmé lors des longues idles.
