@@ -573,6 +573,7 @@ _PARAMS_SAUVEGARDES = (
     # Traitement des messages après enregistrement.
     "TRAITEMENT_ACTIF", "TRAITEMENT_NR", "TRAITEMENT_NOTCH",
     "TRAITEMENT_EXPANDEUR", "TRAITEMENT_PROFIL_DEBUT_SEC",
+    "TRAITEMENT_NORMALISATION", "TRAITEMENT_NIVEAU_VOIX_DBFS", "TRAITEMENT_GAIN_MAX_DB",
 )
 
 # Horodatage de référence des enregistrements d'invités factices.

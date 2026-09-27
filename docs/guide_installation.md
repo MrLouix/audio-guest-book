@@ -177,6 +177,7 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 | `RECORD_RATE_HZ` / `RECORD_CHANNELS` | 16000 / 2 | Format de capture : 16 kHz = plancher de bruit le plus bas du micro électret |
 | `TRAITEMENT_ACTIF` | `True` | Traitement de chaque message après enregistrement (brut conservé dans `messages/brut/`) |
 | `TRAITEMENT_NR` / `TRAITEMENT_NOTCH` / `TRAITEMENT_EXPANDEUR` | 0.25 / `True` / `True` | Force du débruitage, coupe-bandes 50/100/150 Hz (inutiles sur alimentation bruyante large bande), expandeur des pauses |
+| `TRAITEMENT_NORMALISATION` / `TRAITEMENT_NIVEAU_VOIX_DBFS` / `TRAITEMENT_GAIN_MAX_DB` | `True` / -20 / 30 | Niveau final de la voix (dBFS) et gain maximal ; limiteur contre les claquements |
 | `TRAITEMENT_PROFIL_DEBUT_SEC` | 0.5 | Début de la recherche du silence servant de profil de bruit (la 1re demi-seconde porte la charge du bias) |
 | `RCLONE_SOURCES_FOLDER` | `MariageGuestBookSources` | Dossier Drive de `audio_src/`, synchronisé **dans les deux sens**. Doit être distinct de celui des enregistrements |
 

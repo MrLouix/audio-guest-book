@@ -13,7 +13,8 @@ tonale, clics courts, zone saturée au démarrage) :
 5. le choix de la fenêtre de profil : message court ou parlé d'un bout à
    l'autre -> noisered sauté, sans échec ;
 6. les échecs sans perte : sox absent, fichier illisible -> brut intact ;
-7. la liste des messages en attente et le lancement en arrière-plan.
+7. la liste des messages en attente et le lancement en arrière-plan ;
+8. la normalisation : voix faible ramenée à la cible, sans écrêtage.
 
 Les vérifications qui demandent sox et numpy sont ignorées, et non mises en
 échec, si la dépendance manque.
@@ -37,13 +38,14 @@ np = traitement_audio.np
 SR = 16000
 
 
-def _message(chemin: Path, secondes: float = 12.0, parole_continue: bool = False) -> None:
+def _message(chemin: Path, secondes: float = 12.0, parole_continue: bool = False,
+             amplitude_voix: float = 0.1, claquement: bool = False) -> None:
     """Message synthétique au format d'enregistrement (16 kHz, stéréo L = R)."""
     rng = np.random.default_rng(1)
     t = np.arange(int(secondes * SR)) / SR
     d = rng.normal(0, 0.001, len(t))                     # plancher ~ -60 dBFS
     d += 0.01 * np.sin(2 * np.pi * 50 * t)               # hum 50 Hz ~ -43 dBFS
-    voix = 0.1 * (np.sin(2 * np.pi * 300 * t) + 0.5 * np.sin(2 * np.pi * 800 * t))
+    voix = amplitude_voix * (np.sin(2 * np.pi * 300 * t) + 0.5 * np.sin(2 * np.pi * 800 * t))
     if parole_continue:
         d += voix
     else:
@@ -53,6 +55,8 @@ def _message(chemin: Path, secondes: float = 12.0, parole_continue: bool = False
             if instant < secondes:
                 d[int(instant * SR)] += 0.4
         d[int(0.1 * SR):int(0.1 * SR) + 50] = 0.99       # saturation au démarrage
+    if claquement:                                       # raccroché : choc bref et fort
+        d[int((secondes - 0.5) * SR):int((secondes - 0.45) * SR)] += 0.5
     traitement_audio.ecrire(chemin, d, SR)
 
 
@@ -178,6 +182,34 @@ def test_attente(rapport: Rapport, dossier: Path) -> None:
                         traitement_audio.brut_path(dossier / "sans_sox.wav").exists())
 
 
+def test_normalisation(rapport: Rapport, dossier: Path) -> None:
+    rapport.section("8. Normalisation du niveau de la voix")
+    faible = dossier / "faible.wav"
+    _message(faible, amplitude_voix=0.01, claquement=True)   # voix vers -40 dBFS
+    rapport.verifie("le traitement réussit", traitement_audio.traiter(faible))
+    x = _canaux(faible)[2][:, 0] / 32768
+    niveau = np.percentile(traitement_audio.niveaux_blocs(x, SR // 50), 95)
+    cible = config.TRAITEMENT_NIVEAU_VOIX_DBFS
+    rapport.verifie(f"voix ramenée vers {cible:.0f} dBFS (± 3 dB)", abs(niveau - cible) <= 3,
+                    f"niveau : {niveau:.1f} dBFS")
+    rapport.verifie("aucun échantillon écrêté malgré le claquement",
+                    np.abs(x).max() < 0.999, f"pic : {np.abs(x).max():.3f}")
+
+    muet = np.zeros(SR)
+    rapport.egal("gain plafonné sur un message sans voix",
+                 traitement_audio.gain_normalisation(muet + 1e-6, SR),
+                 config.TRAITEMENT_GAIN_MAX_DB)
+
+    brut = dossier / "sans_norm.wav"
+    _message(brut, amplitude_voix=0.01)
+    with harness.remplacer(config, "TRAITEMENT_NORMALISATION", False):
+        traitement_audio.traiter(brut)
+    x = _canaux(brut)[2][:, 0] / 32768
+    niveau = np.percentile(traitement_audio.niveaux_blocs(x, SR // 50), 95)
+    rapport.verifie("TRAITEMENT_NORMALISATION=False : niveau laissé tel quel",
+                    niveau < cible - 10, f"niveau : {niveau:.1f} dBFS")
+
+
 def main() -> None:
     parser = harness.parseur(__doc__, reel=False)
     parser.parse_args()
@@ -192,6 +224,7 @@ def main() -> None:
         test_profil(rapport, dossier)
         test_echecs(rapport, dossier)
         test_attente(rapport, dossier)
+        test_normalisation(rapport, dossier)
     finally:
         shutil.rmtree(dossier, ignore_errors=True)
     rapport.conclure()

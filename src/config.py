@@ -195,6 +195,14 @@ TRAITEMENT_EXPANDEUR = _env("TRAITEMENT_EXPANDEUR", "True") == "True"
 # Début de la recherche de la fenêtre de silence servant de profil de bruit :
 # la première demi-seconde porte la charge du bias de l'électret.
 TRAITEMENT_PROFIL_DEBUT_SEC = _env_float("TRAITEMENT_PROFIL_DEBUT_SEC", 0.5)
+# Normalisation finale : le débruitage coûte 8 à 10 dB de voix, qui sortirait
+# vers -46 dBFS, trop faible à la réécoute. Le niveau de la voix (95e centile
+# des blocs de 20 ms) est ramené à cette cible, avec un limiteur contre les
+# claquements résiduels. Gain plafonné (TRAITEMENT_GAIN_MAX_DB) pour ne pas
+# remonter le bruit d'un message sans voix.
+TRAITEMENT_NORMALISATION = _env("TRAITEMENT_NORMALISATION", "True") == "True"
+TRAITEMENT_NIVEAU_VOIX_DBFS = _env_float("TRAITEMENT_NIVEAU_VOIX_DBFS", -20.0)
+TRAITEMENT_GAIN_MAX_DB = _env_float("TRAITEMENT_GAIN_MAX_DB", 30.0)
 
 # Intervalle de rafraîchissement de status.json en état attente, pour que le
 # watchdog (§7.1) ne le voie jamais périmé lors des longues idles.

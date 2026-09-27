@@ -13,7 +13,10 @@ le micro électret du jack MIC :
 4. **sox noisered** (0,25), avec un profil pris sur la fenêtre de 1,5 s la
    plus calme et sans clic ;
 5. **expandeur doux** (mcompand) : abaisse les pauses pour effacer le
-   « scintillement » que laisse noisered, sans toucher la voix.
+   « scintillement » que laisse noisered, sans toucher la voix ;
+6. **normalisation** : le niveau de la voix est ramené à -20 dBFS (gain
+   plafonné, limiteur contre les claquements). Ajoutée après le banc : sans
+   elle, la voix débruitée sortait vers -46 dBFS, trop faible à la réécoute.
 
 Rejetés au banc : RNNoise (détruit les transitoires), afftdn (inefficace sur
 le 50 Hz), peigne de coupe-bandes harmoniques et passe-bas 4 kHz (perte de
@@ -67,10 +70,12 @@ SEUIL_SATURATION = 0.95
 SATURATION_MARGE_MS = 5.0
 BLOC_MS = 20.0
 PROFIL_DUREE_SEC = 1.5
-# Écart minimal entre la parole (90e centile des blocs) et la fenêtre de
+# Écart minimal entre la parole (95e centile des blocs) et la fenêtre de
 # profil : en deçà, la fenêtre « la plus calme » contient de la voix, et
-# noisered la retirerait avec le bruit.
-PROFIL_ECART_MIN_DB = 10.0
+# noisered la retirerait avec le bruit. Volontairement bas : sur le jack MIC
+# la voix ne dépasse le bruit brut que de 7 à 9 dB (banc du 25/09, premiers
+# messages du 28/09), et c'est précisément là que noisered est indispensable.
+PROFIL_ECART_MIN_DB = 6.0
 
 EXPANDEUR = "0.001,0.12 -82,-105,-60,-60,-40,-40,-20,-20"
 NOTCH_FREQUENCES = (50, 100, 150)
@@ -171,11 +176,14 @@ def niveaux_blocs(d: "np.ndarray", taille: int) -> "np.ndarray":
 
 def fenetre_profil(d: "np.ndarray", evenements: List[Tuple[int, int]], sr: int,
                    debut_sec: float) -> Optional[float]:
-    """Début (s) de la fenêtre de 1,5 s la plus calme, sans clic, après debut_sec.
+    """Début (s) de la fenêtre de 1,5 s la plus calme après debut_sec.
 
-    None si le message est trop court, ou si même la fenêtre la plus calme
-    n'est pas nettement sous le niveau de parole (message parlé d'un bout à
-    l'autre) : mieux vaut alors ne pas débruiter que retirer de la voix.
+    Une fenêtre sans clic est préférée ; s'il n'y en a aucune (micro qui
+    craque souvent), la plus calme est retenue quand même — le signal reçu
+    est déjà despiké. None si le message est trop court, ou si même la
+    fenêtre la plus calme n'est pas nettement sous le niveau de parole
+    (message parlé d'un bout à l'autre) : mieux vaut alors ne pas débruiter
+    que retirer de la voix.
     """
     taille = _echantillons(BLOC_MS, sr)
     db = niveaux_blocs(d, taille)
@@ -188,17 +196,34 @@ def fenetre_profil(d: "np.ndarray", evenements: List[Tuple[int, int]], sr: int,
     for a, b in evenements:
         avec_clic[max(0, a // taille - 1): min(len(db), b // taille + 2)] = True
 
-    meilleur = None
+    meilleur = meilleur_avec_clic = None
     for i in range(premier, len(db) - largeur + 1):
+        m = db[i:i + largeur].mean()
         if not avec_clic[i:i + largeur].any():
-            m = db[i:i + largeur].mean()
             if meilleur is None or m < meilleur[0]:
                 meilleur = (m, i)
+        elif meilleur_avec_clic is None or m < meilleur_avec_clic[0]:
+            meilleur_avec_clic = (m, i)
+    meilleur = meilleur or meilleur_avec_clic
     if meilleur is None:
         return None
-    if np.percentile(db[premier:], 90) - meilleur[0] < PROFIL_ECART_MIN_DB:
+    if np.percentile(db[premier:], 95) - meilleur[0] < PROFIL_ECART_MIN_DB:
         return None
     return meilleur[1] * BLOC_MS / 1000
+
+
+def gain_normalisation(d: "np.ndarray", sr: int) -> Optional[float]:
+    """Gain (dB) qui amène la voix à TRAITEMENT_NIVEAU_VOIX_DBFS, plafonné.
+
+    Niveau de la voix = 95e centile des blocs de 20 ms : robuste aux
+    claquements brefs, et les pauses (abaissées par l'expandeur) ne comptent
+    pas. None si le signal est vide.
+    """
+    db = niveaux_blocs(d, _echantillons(BLOC_MS, sr))
+    if len(db) == 0:
+        return None
+    gain = config.TRAITEMENT_NIVEAU_VOIX_DBFS - float(np.percentile(db, 95))
+    return min(gain, config.TRAITEMENT_GAIN_MAX_DB)
 
 
 # --- sox ---------------------------------------------------------------------
@@ -256,10 +281,22 @@ def _chaine(source: Path, sortie: Path, tmp: Path) -> str:
         _sox(str(f_courant), str(f_exp), "mcompand", EXPANDEUR)
         f_courant = f_exp
 
+    norm_txt = ""
+    if config.TRAITEMENT_NORMALISATION:
+        x, _ = charger(f_courant)
+        gain = gain_normalisation(x[debut:len(d)], sr)
+        if gain is not None:
+            f_norm = tmp / "normalisation.wav"
+            # -l : limiteur de sox, les crêtes (claquement du raccroché)
+            # sont écrasées au lieu d'écrêter.
+            _sox(str(f_courant), str(f_norm), "gain", "-l", f"{gain:.1f}")
+            f_courant = f_norm
+            norm_txt = f", gain {gain:+.1f} dB"
+
     resultat, _ = charger(f_courant)
     resultat = np.concatenate([resultat, np.zeros(max(0, len(d) - len(resultat)))])[:len(d)]
     ecrire(sortie, resultat, sr)
-    return (f"{n_sat} zone(s) saturée(s), {len(evenements)} clic(s), {profil_txt}"
+    return (f"{n_sat} zone(s) saturée(s), {len(evenements)} clic(s), {profil_txt}{norm_txt}"
             f"{'' if config.TRAITEMENT_NOTCH else ', sans coupe-bandes'}"
             f"{'' if config.TRAITEMENT_EXPANDEUR else ', sans expandeur'}")
 

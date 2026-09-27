@@ -16,6 +16,9 @@ Ce qui en est tiré dans le code :
 - `scripts/audio-setup.sh` — réglages du codec (voie A, gain 42 dB) ;
 - `src/config.py` — capture en 16 kHz, paramètres `TRAITEMENT_*` ;
 - `src/traitement_audio.py` — port de `pipeline_v2.py` (sans les mesures),
-  appliqué à chaque message. Deux écarts volontaires avec le banc : les clics
-  sont supprimés dès 0,5 s (et non 2 s), et la fin du message n'est plus
-  amputée des 64 ms que `sox noisered` retire.
+  appliqué à chaque message. Écarts volontaires avec le banc : les clics
+  sont supprimés dès 0,5 s (et non 2 s) ; la fin du message n'est plus
+  amputée des 64 ms que `sox noisered` retire ; le profil de bruit est pris
+  même si aucune fenêtre n'est sans clic ; une normalisation finale ramène la
+  voix à -20 dBFS (premiers messages du 28/09 : voix débruitée vers
+  -46 dBFS, bruit de fond brut 9 dB au-dessus de celui du banc).
