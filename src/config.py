@@ -274,7 +274,7 @@ OFFNORMAL_CONFIRM_SEC = _env_float("OFFNORMAL_CONFIRM_SEC", DIAL_DEBOUNCE_SEC)
 # sonnerie périodique** : le téléphone ne sonne plus de lui-même, mais tout le
 # reste du parcours est inchangé — le bouton « Sonner maintenant » du dashboard
 # fonctionne toujours, et un décroché ouvre le parcours normal (§5.1).
-RING_INTERVAL_SEC = _env_int("RING_INTERVAL_SEC", 90)
+RING_INTERVAL_SEC = _env_int("RING_INTERVAL_SEC", 0)
 RING_ANSWER_GRACE_SEC = _env_int("RING_ANSWER_GRACE_SEC", 5)
 MAX_RECORD_SEC = _env_int("MAX_RECORD_SEC", 120)
 
@@ -421,7 +421,7 @@ MODIFIABLE_PARAMS = {
     "MAX_RECORD_SEC": {"type": "int", "default": 120, "label": "Durée max d'enregistrement (secondes)"},
     "SHORT_RECORDING_THRESHOLD_SEC": {"type": "float", "default": 2.0, "label": "Seuil enregistrement court (secondes)"},
     "AUDIO_PLAY_TIMEOUT_SEC": {"type": "int", "default": 180, "label": "Timeout lecture audio (secondes)"},
-    "SOUND_CARD": {"type": "str", "default": "plughw:1,0", "label": "Carte son ALSA"},
+    "SOUND_CARD": {"type": "str", "default": "hw:1,0", "label": "Carte son ALSA"},
     # Sorties du codec : seul moyen de re-tester un câblage depuis le
     # dashboard, sans SSH (§4.1).
     "AUDIO_OUTPUT_SONNERIE": {"type": "str", "default": "lineout",

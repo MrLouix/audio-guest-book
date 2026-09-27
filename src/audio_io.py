@@ -175,7 +175,7 @@ def record(path: Path, max_duration_sec: int, should_continue: Callable[[], bool
 
 
 def card_index(sound_card: Optional[str] = None) -> Optional[str]:
-    """Index de carte ALSA extrait de « plughw:1,0 » -> « 1 » ; None si illisible.
+    """Index de carte ALSA extrait de « hw:1,0 » -> « 1 » ; None si illisible.
 
     Utilisé par sound_card_available() et par alsa_io, qui le passe à
     scripts/audio-setup.sh : le numéro de carte reste ainsi dérivé de
