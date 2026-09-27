@@ -139,7 +139,7 @@ output_headphone() {
     set_ctl 29 off          # Lineout off
     set_ctl 75 on           # HP Jack Switch
     set_ctl 28 on,on        # Headphone on
-    set_ctl 7  57,57        # Headphone Volume       0 dB
+    set_ctl 7  63,63        # Headphone Volume       0 dB
     echo "Sortie  : casque"
 }
 
@@ -153,7 +153,7 @@ output_lineout() {
 output_both() {
     set_ctl 75 on           # HP Jack Switch
     set_ctl 28 on,on        # Headphone on
-    set_ctl 7  57,57        # Headphone Volume       0 dB
+    set_ctl 7  63,63        # Headphone Volume       0 dB
     set_ctl 29 on           # Lineout on
     set_ctl 8  48           # Lineout Volume         0 dB
     echo "Sortie  : casque + line out"

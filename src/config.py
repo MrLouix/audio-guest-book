@@ -131,7 +131,7 @@ def message_wav(digit: int) -> Path:
 
 # --- Audio / ALSA (§4.1, §9) --------------------------------------------
 
-SOUND_CARD = _env("SOUND_CARD", "plughw:1,0")
+SOUND_CARD = _env("SOUND_CARD", "hw:1,0")
 
 # Filet de sécurité contre un sous-processus aplay bloqué (§7.2).
 AUDIO_PLAY_TIMEOUT_SEC = _env_int("AUDIO_PLAY_TIMEOUT_SEC", 180)
