@@ -199,7 +199,7 @@ def sound_card_available(sound_card: Optional[str] = None) -> bool:
         ).stdout
     except (subprocess.SubprocessError, OSError):
         return False
-    return f"card {index}:" in output
+    return f"card {index}:" in output or f"carte {index} :" in output
 
 
 def _cli() -> None:

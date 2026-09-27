@@ -6,3 +6,4 @@ Flask
 qrcode[pil]
 pydub
 werkzeug
+audioop-lts; python_version >= "3.13"
