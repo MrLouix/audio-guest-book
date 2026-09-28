@@ -32,7 +32,6 @@ elle, est la même qu'en mode mariage.
 import argparse
 import datetime
 import logging
-import logging.handlers
 import random
 import re
 import shutil
@@ -45,6 +44,7 @@ from typing import Callable, List, Optional
 import alsa_io
 import audio_io
 import config
+import fichiers
 import gpio_io
 import mode_io
 import status_io
@@ -52,16 +52,18 @@ import traitement_audio
 
 logger = logging.getLogger(__name__)
 
-STATE_ATTENTE = "attente"
-STATE_SONNERIE = "sonnerie"
-STATE_DECROCHE = "decroche"
-STATE_NUMEROTATION = "numerotation"
-STATE_LECTURE_MESSAGE = "lecture_message"
-STATE_APPEL_REPONDU = "appel_repondu"
-STATE_ENREGISTREMENT = "enregistrement"
-STATE_RESTITUTION_NUMEROTATION = "restitution_numerotation"
-STATE_RESTITUTION_LECTURE = "restitution_lecture"
-STATE_ERREUR = "erreur"
+# Les états publiés dans status.json ; définis par status_io, qui porte le
+# contrat du fichier partagé avec le dashboard et le watchdog.
+STATE_ATTENTE = status_io.ETAT_ATTENTE
+STATE_SONNERIE = status_io.ETAT_SONNERIE
+STATE_DECROCHE = status_io.ETAT_DECROCHE
+STATE_NUMEROTATION = status_io.ETAT_NUMEROTATION
+STATE_LECTURE_MESSAGE = status_io.ETAT_LECTURE_MESSAGE
+STATE_APPEL_REPONDU = status_io.ETAT_APPEL_REPONDU
+STATE_ENREGISTREMENT = status_io.ETAT_ENREGISTREMENT
+STATE_RESTITUTION_NUMEROTATION = status_io.ETAT_RESTITUTION_NUMEROTATION
+STATE_RESTITUTION_LECTURE = status_io.ETAT_RESTITUTION_LECTURE
+STATE_ERREUR = status_io.ETAT_ERREUR
 
 MAIN_LOOP_POLL_SEC = 0.05
 
@@ -69,6 +71,25 @@ MAIN_LOOP_POLL_SEC = 0.05
 # impulsion, pas un dixième de seconde après. Le coût est nul — un décroché
 # sans numérotation dure quelques secondes.
 TONALITE_POLL_SEC = 0.02
+
+# Scrutation du raccroché pendant l'enregistrement : c'est elle qui décide de
+# la fin du message, donc de ce qui est coupé.
+RECORD_POLL_SEC = 0.02
+
+
+def jouer_combine(path: Path, should_continue: Callable[[], bool], **options) -> str:
+    """Joue `path` dans le combiné et l'écouteur secondaire, à leur volume (§4.1).
+
+    Toutes les lectures du parcours sauf la sonnerie passent par ici : sortie
+    AUDIO_OUTPUT_COMBINE, volume VOLUME_COMBINE et garde-fou
+    AUDIO_PLAY_TIMEOUT_SEC sont relus à chaque appel (réglables à chaud).
+    `options` complète l'appel (device, poll_interval).
+    """
+    return audio_io.play(path, should_continue=should_continue,
+                         timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
+                         output=config.AUDIO_OUTPUT_COMBINE,
+                         volume=config.VOLUME_COMBINE,
+                         **options)
 
 
 def message_path_for_digit(digit: int) -> Path:
@@ -127,13 +148,8 @@ def recorded_messages() -> List[Path]:
     Lecture seule : ce mode ne crée, ne modifie et ne supprime jamais rien
     dans messages/.
     """
-    try:
-        entries = list(config.MESSAGES_DIR.iterdir())
-    except OSError:
-        # Dossier absent ou illisible : aucun message, jamais d'exception (§7.4).
-        return []
-    wavs = [p for p in entries if p.is_file() and p.suffix.lower() == ".wav"]
-    return sorted(wavs, key=_recording_sort_key)
+    # Dossier absent ou illisible : aucun message, jamais d'exception (§7.4).
+    return sorted(fichiers.fichiers_wav(config.MESSAGES_DIR), key=_recording_sort_key)
 
 
 def restitution_absence_wav() -> Path:
@@ -145,24 +161,36 @@ def restitution_absence_wav() -> Path:
 
 def available_random_messages() -> List[Path]:
     """Tous les messages des mariés pouvant être tirés au hasard (§1.2) : message_N.wav + message_generique.wav."""
-    candidates = [config.message_wav(d) for d in range(10) if config.message_wav(d).exists()]
+    candidates = [p for p in map(config.message_wav, range(10)) if p.exists()]
     if config.MESSAGE_GENERIQUE_WAV.exists():
         candidates.append(config.MESSAGE_GENERIQUE_WAV)
     return candidates
 
 
+# Un ring_trigger non supprimable n'est signalé qu'une fois : la boucle
+# d'attente le retente à 20 Hz.
+_ring_trigger_erreur_signalee = False
+
+
 def consume_ring_trigger() -> bool:
     """Consomme le fichier drapeau ring_trigger s'il existe (déclenchement à distance, §5.1, §8).
 
-    Traitement atomique : tester l'existence puis supprimer, en tolérant une
-    suppression concurrente (ex. par un autre processus) sans lever d'erreur.
+    La suppression fait office de test : un seul appel système, et une
+    suppression concurrente (par un autre processus) ne lève pas d'erreur.
     """
-    if not config.RING_TRIGGER_FILE.exists():
-        return False
+    global _ring_trigger_erreur_signalee
     try:
         config.RING_TRIGGER_FILE.unlink()
     except FileNotFoundError:
         return False
+    except OSError as exc:
+        # Fichier présent mais non supprimable (droits) : le considérer
+        # consommé ferait sonner en boucle. Il est ignoré, et signalé une fois.
+        if not _ring_trigger_erreur_signalee:
+            _ring_trigger_erreur_signalee = True
+            logger.error("Impossible de consommer %s : %s", config.RING_TRIGGER_FILE, exc)
+        return False
+    _ring_trigger_erreur_signalee = False
     return True
 
 
@@ -272,15 +300,8 @@ class Tonalite:
         def continuer() -> bool:
             return self.inputs.is_hook_up() and not self.composition_commencee()
 
-        resultat = audio_io.play(
-            config.TONALITE_WAV,
-            should_continue=continuer,
-            poll_interval=TONALITE_POLL_SEC,
-            timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-            device=self.device,
-            output=config.AUDIO_OUTPUT_COMBINE,
-            volume=config.VOLUME_COMBINE,
-        )
+        resultat = jouer_combine(config.TONALITE_WAV, continuer,
+                                 poll_interval=TONALITE_POLL_SEC, device=self.device)
         if resultat == "error":
             # Fichier manquant ou aplay en échec : ne pas boucler sur l'erreur,
             # le reste du parcours doit rester praticable (§7.4).
@@ -314,6 +335,21 @@ class GuestBookStateMachine:
     def _set_state(self, state: str, detail: Optional[str] = None) -> None:
         self.state = state
         status_io.write_status(state, detail)
+
+    @staticmethod
+    def _battement(dernier: float, state: str,
+                   detail: Callable[[], Optional[str]]) -> float:
+        """Republie status.json si STATUS_HEARTBEAT_SEC est écoulé ; retourne l'instant du dernier battement.
+
+        Indispensable dans toute attente sans limite de durée : sans lui, le
+        watchdog (§7.1) verrait status.json périmé au bout de
+        WATCHDOG_STALE_AFTER_SEC et redémarrerait le service en boucle.
+        """
+        maintenant = time.monotonic()
+        if (maintenant - dernier) < config.STATUS_HEARTBEAT_SEC:
+            return dernier
+        status_io.write_status(state, detail=detail())
+        return maintenant
 
     def run_forever(self) -> None:
         logger.info("Machine à états démarrée, état initial : %s", self.state)
@@ -397,9 +433,8 @@ class GuestBookStateMachine:
                     self._set_state(STATE_ATTENTE, detail=self._attente_detail())
                     last_heartbeat = time.monotonic()
                     continue
-            if (time.monotonic() - last_heartbeat) >= config.STATUS_HEARTBEAT_SEC:
-                status_io.write_status(STATE_ATTENTE, detail=self._attente_detail())
-                last_heartbeat = time.monotonic()
+            last_heartbeat = self._battement(last_heartbeat, STATE_ATTENTE,
+                                             self._attente_detail)
             time.sleep(MAIN_LOOP_POLL_SEC)
 
     def _sonnerie_continue(self) -> bool:
@@ -464,32 +499,25 @@ class GuestBookStateMachine:
         message_path = self._pick_random_message()
         logger.info("Message tiré au hasard : %s", message_path.name)
         self._set_state(STATE_APPEL_REPONDU, detail=message_path.name)
-        audio_io.play(message_path, should_continue=self._hook_up_ignoring_dial,
-                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                      output=config.AUDIO_OUTPUT_COMBINE,
-                      volume=config.VOLUME_COMBINE)
-        if not self.inputs.is_hook_up():
-            logger.info("Raccroché pendant le message (appel répondu), retour en attente.")
-            return
+        self._message_bip_enregistrement(message_path, self._hook_up_ignoring_dial,
+                                         contexte=" (appel répondu)",
+                                         pendant_enregistrement=self._hook_up_ignoring_dial)
 
-        audio_io.play(config.BIP_WAV, should_continue=self._hook_up_ignoring_dial,
-                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                      output=config.AUDIO_OUTPUT_COMBINE,
-                      volume=config.VOLUME_COMBINE)
+    def _decrocher_avec_tonalite(self, contexte: str = "") -> Optional[Tonalite]:
+        """Lance la tonalité du décroché (§1.2) ; None si le combiné est raccroché pendant."""
+        tonalite = Tonalite(self.inputs)
+        tonalite.tenir()
         if not self.inputs.is_hook_up():
-            logger.info("Raccroché pendant le bip (appel répondu), retour en attente.")
-            return
-
-        self._run_enregistrement(should_continue=self._hook_up_ignoring_dial)
+            logger.info("Raccroché pendant la tonalité%s, retour en attente.", contexte)
+            return None
+        return tonalite
 
     def _run_decroche(self) -> None:
         self._set_state(STATE_DECROCHE)
         logger.info("Décroché : tonalité")
         self.inputs.reset_dial()
-        tonalite = Tonalite(self.inputs)
-        tonalite.tenir()
-        if not self.inputs.is_hook_up():
-            logger.info("Raccroché pendant la tonalité, retour en attente.")
+        tonalite = self._decrocher_avec_tonalite()
+        if tonalite is None:
             return
         digit = self._run_numerotation(tonalite)
         if digit is None:
@@ -519,23 +547,25 @@ class GuestBookStateMachine:
         message_path = message_path_for_digit(digit)
         self._set_state(STATE_LECTURE_MESSAGE, detail=message_path.name)
         logger.info("Lecture du message : %s", message_path.name)
-        audio_io.play(message_path, should_continue=self.inputs.is_hook_up,
-                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                      output=config.AUDIO_OUTPUT_COMBINE,
-                      volume=config.VOLUME_COMBINE)
-        if not self.inputs.is_hook_up():
-            logger.info("Raccroché pendant le message, retour en attente.")
-            return
+        self._message_bip_enregistrement(message_path, self.inputs.is_hook_up)
 
-        audio_io.play(config.BIP_WAV, should_continue=self.inputs.is_hook_up,
-                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                      output=config.AUDIO_OUTPUT_COMBINE,
-                      volume=config.VOLUME_COMBINE)
-        if not self.inputs.is_hook_up():
-            logger.info("Raccroché pendant le bip, retour en attente.")
-            return
+    def _message_bip_enregistrement(
+            self, message_path: Path, should_continue: Callable[[], bool],
+            contexte: str = "",
+            pendant_enregistrement: Optional[Callable[[], bool]] = None) -> None:
+        """Fin commune des deux parcours du mode mariage : message, bip, enregistrement (§1.2).
 
-        self._run_enregistrement()
+        `should_continue` interrompt le message et le bip ;
+        `pendant_enregistrement` s'ajoute, pendant l'enregistrement, à la
+        tolérance aux micro-coupures du crochet (HangupConfirmer) — il ne la
+        remplace pas.
+        """
+        for quoi, chemin in (("le message", message_path), ("le bip", config.BIP_WAV)):
+            jouer_combine(chemin, should_continue)
+            if not self.inputs.is_hook_up():
+                logger.info("Raccroché pendant %s%s, retour en attente.", quoi, contexte)
+                return
+        self._run_enregistrement(should_continue=pendant_enregistrement)
 
     # --- Mode restitution (§5.7) -----------------------------------------
 
@@ -554,11 +584,7 @@ class GuestBookStateMachine:
         if not messages:
             logger.warning("Mode restitution : aucun message dans %s.", config.MESSAGES_DIR)
             self._set_state(STATE_RESTITUTION_LECTURE, detail="aucun message disponible")
-            audio_io.play(restitution_absence_wav(),
-                          should_continue=self._hook_up_ignoring_dial,
-                          timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                          output=config.AUDIO_OUTPUT_COMBINE,
-                          volume=config.VOLUME_COMBINE)
+            jouer_combine(restitution_absence_wav(), self._hook_up_ignoring_dial)
             self._wait_for_hangup()
             return
 
@@ -566,10 +592,8 @@ class GuestBookStateMachine:
                     len(messages))
         # Même tonalité qu'en mode mariage : le mode restitution ne change que
         # ce qu'on entend *après* le numéro (§5.7).
-        tonalite = Tonalite(self.inputs)
-        tonalite.tenir()
-        if not self.inputs.is_hook_up():
-            logger.info("Raccroché pendant la tonalité (mode restitution), retour en attente.")
+        tonalite = self._decrocher_avec_tonalite(" (mode restitution)")
+        if tonalite is None:
             return
         numero = self._run_restitution_numerotation(tonalite)
         if numero is None:
@@ -600,7 +624,7 @@ class GuestBookStateMachine:
             if digit is not None:
                 digits.append(digit)
                 last_digit_ts = time.monotonic()
-                numero_partiel = "".join(str(d) for d in digits)
+                numero_partiel = "".join(map(str, digits))
                 logger.info("Mode restitution, chiffre %d/%d composé : numéro %s",
                             len(digits), config.RESTITUTION_DIGITS_MAX, numero_partiel)
                 self._set_state(STATE_RESTITUTION_NUMEROTATION, detail=numero_partiel)
@@ -628,7 +652,7 @@ class GuestBookStateMachine:
             return None
 
         # int() absorbe naturellement les zéros de tête (0 puis 1 -> 1).
-        return int("".join(str(d) for d in digits))
+        return int("".join(map(str, digits)))
 
     def _run_restitution_lecture(self, numero: int, messages: List[Path]) -> None:
         """Lit le message n° numero, borné à [1, N] (§5.7).
@@ -648,11 +672,8 @@ class GuestBookStateMachine:
                         detail=f"{index}/{total} — {message_path.name}")
         logger.info("Mode restitution, lecture du message n°%d/%d : %s",
                     index, total, message_path.name)
-        audio_io.play(message_path, should_continue=self._hook_up_ignoring_dial,
-                      timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                      device=config.RESTITUTION_SOUND_CARD,
-                      output=config.AUDIO_OUTPUT_COMBINE,
-                      volume=config.VOLUME_COMBINE)
+        jouer_combine(message_path, self._hook_up_ignoring_dial,
+                      device=config.RESTITUTION_SOUND_CARD)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant la lecture (mode restitution), retour en attente.")
             return
@@ -666,19 +687,16 @@ class GuestBookStateMachine:
         _hook_up_ignoring_dial() et restent sans effet.
 
         Cette attente est sans limite de durée — un combiné simplement posé à
-        côté du téléphone y reste indéfiniment. Le heartbeat de status.json doit
-        donc continuer ici, sinon le watchdog (§7.1) verrait le fichier périmé
-        au bout de WATCHDOG_STALE_AFTER_SEC et redémarrerait le service en
-        boucle. C'est le seul état du parcours dont la durée n'est pas bornée
-        par ailleurs.
+        côté du téléphone y reste indéfiniment : c'est le seul état du parcours
+        dont la durée n'est pas bornée par ailleurs, d'où le battement de
+        status.json.
         """
-        self._set_state(STATE_RESTITUTION_LECTURE, detail="attente du raccroché")
+        detail = "attente du raccroché"
+        self._set_state(STATE_RESTITUTION_LECTURE, detail=detail)
         last_heartbeat = time.monotonic()
         while self._hook_up_ignoring_dial():
-            if (time.monotonic() - last_heartbeat) >= config.STATUS_HEARTBEAT_SEC:
-                status_io.write_status(STATE_RESTITUTION_LECTURE,
-                                       detail="attente du raccroché")
-                last_heartbeat = time.monotonic()
+            last_heartbeat = self._battement(last_heartbeat, STATE_RESTITUTION_LECTURE,
+                                             lambda: detail)
             time.sleep(MAIN_LOOP_POLL_SEC)
 
     def _run_enregistrement(self, should_continue: Callable[[], bool] = None) -> None:
@@ -722,7 +740,7 @@ class GuestBookStateMachine:
         result = audio_io.record(
             path, max_duration_sec=config.MAX_RECORD_SEC,
             should_continue=combined_should_continue,
-            poll_interval=0.02,
+            poll_interval=RECORD_POLL_SEC,
         )
         logger.info("Fin de l'enregistrement (%s) : %s", result, path.name)
 
@@ -741,12 +759,10 @@ class GuestBookStateMachine:
 
 def run_test_mode() -> None:
     """Affiche en direct l'état des 3 GPIO, pour valider câblage et sens logiques (§7.6, point 3)."""
-    if gpio_io.GPIO is None:
+    try:
+        gpio_io.configurer_broches()
+    except RuntimeError:
         raise SystemExit("RPi.GPIO indisponible : le mode --test doit être exécuté sur le Raspberry Pi.")
-    GPIO = gpio_io.GPIO
-    GPIO.setmode(GPIO.BCM)
-    for pin in (config.HOOK_PIN, config.DIAL_OFFNORMAL_PIN, config.DIAL_PULSE_PIN):
-        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
     print("Mode test GPIO — décrochez / tournez le cadran pour valider le câblage. Ctrl+C pour quitter.\n")
     print(f"HOOK_PIN={config.HOOK_PIN} (actif={config.HOOK_ACTIVE_STATE}) | "
@@ -754,19 +770,17 @@ def run_test_mode() -> None:
           f"DIAL_PULSE_PIN={config.DIAL_PULSE_PIN} (actif niveau {config.PULSE_ACTIF_LEVEL})\n")
     try:
         while True:
-            hook_raw = GPIO.input(config.HOOK_PIN)
-            offnormal_raw = GPIO.input(config.DIAL_OFFNORMAL_PIN)
-            pulse_raw = GPIO.input(config.DIAL_PULSE_PIN)
-            hook_state = "DECROCHE" if hook_raw == gpio_io.HOOK_ACTIVE_LEVEL else "raccroché"
-            offnormal_state = "actif (cadran en mouvement)" if offnormal_raw == gpio_io.DIAL_ACTIVE_LEVEL else "repos"
-            pulse_state = "actif" if pulse_raw == gpio_io.PULSE_ACTIVE_LEVEL else "repos"
+            etats = gpio_io.lire_contacts()
+            hook_state = "DECROCHE" if etats["crochet"] else "raccroché"
+            offnormal_state = "actif (cadran en mouvement)" if etats["off-normal"] else "repos"
+            pulse_state = "actif" if etats["impulsions"] else "repos"
             print(f"\rcrochet={hook_state:<10} | off-normal={offnormal_state:<25} | impulsion={pulse_state:<8}",
                   end="", flush=True)
             time.sleep(0.1)
     except KeyboardInterrupt:
         print("\nArrêt du mode test.")
     finally:
-        GPIO.cleanup()
+        gpio_io.GPIO.cleanup()
 
 
 def _check_required_audio_files() -> None:
@@ -839,20 +853,8 @@ def niveau_log(nom: Optional[str] = None) -> int:
 def setup_logging(niveau: Optional[int] = None) -> None:
     """Console + fichier avec rotation (5 x 1 Mo) sur logs/livre_dor.log (§7.3)."""
     config.ensure_directories()
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-
-    root = logging.getLogger()
-    root.setLevel(niveau_log() if niveau is None else niveau)
-
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    root.addHandler(console_handler)
-
-    file_handler = logging.handlers.RotatingFileHandler(
-        config.LIVRE_DOR_LOG, maxBytes=1_000_000, backupCount=5, encoding="utf-8"
-    )
-    file_handler.setFormatter(formatter)
-    root.addHandler(file_handler)
+    fichiers.configurer_journal(config.LIVRE_DOR_LOG,
+                                niveau_log() if niveau is None else niveau)
 
 
 def main() -> None:
@@ -869,7 +871,7 @@ def main() -> None:
     if args.test:
         # Mode diagnostic hors ligne : pas de logs fichier ni de status.json.
         logging.basicConfig(level=logging.DEBUG if args.verbeux else logging.INFO,
-                            format="%(asctime)s %(levelname)s %(message)s")
+                            format=fichiers.FORMAT_JOURNAL)
         run_test_mode()
         return
 

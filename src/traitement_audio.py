@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import config
+import fichiers
 
 try:
     import numpy as np
@@ -353,12 +354,7 @@ def traiter(path: Path) -> bool:
 def messages_en_attente(dossier: Optional[Path] = None) -> List[Path]:
     """Messages de messages/ sans copie brute : jamais traités, ou traitement interrompu."""
     dossier = dossier or config.MESSAGES_DIR
-    try:
-        entrees = list(dossier.iterdir())
-    except OSError:
-        return []
-    return sorted(p for p in entrees if p.is_file() and p.suffix.lower() == ".wav"
-                  and not brut_path(p).exists())
+    return sorted(p for p in fichiers.fichiers_wav(dossier) if not brut_path(p).exists())
 
 
 def lancer_en_arriere_plan(path: Path) -> Optional[subprocess.Popen]:
@@ -394,6 +390,8 @@ def lancer_en_arriere_plan(path: Path) -> Optional[subprocess.Popen]:
 
 
 def _cli() -> None:
+    # Format sans horodatage, niveau en tête : lancer_en_arriere_plan() relit
+    # ces lignes et en retire le niveau pour les rejouer dans son journal.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s",
                         stream=sys.stdout)
     parser = argparse.ArgumentParser(description="Traitement des messages enregistrés.")
@@ -402,12 +400,12 @@ def _cli() -> None:
                         help="traite les messages de messages/ sans copie dans brut/")
     args = parser.parse_args()
 
-    fichiers = list(args.fichiers)
+    a_traiter = list(args.fichiers)
     if args.en_attente:
-        fichiers += messages_en_attente()
-    if not fichiers:
+        a_traiter += messages_en_attente()
+    if not a_traiter:
         parser.error("aucun fichier à traiter")
-    echecs = sum(not traiter(f) for f in fichiers)
+    echecs = sum(not traiter(f) for f in a_traiter)
     sys.exit(1 if echecs else 0)
 
 

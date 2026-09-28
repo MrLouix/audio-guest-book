@@ -190,7 +190,7 @@ Le système est composé de **4 unités logicielles** indépendantes communiquan
 - Mapping chiffre → fichier message ; fallback message générique.
 - Lecture interruptible (surveillance du crochet toutes les ~100 ms pendant l'`aplay`, kill du sous-processus au raccroché).
 - Enregistrement `arecord` arrêté au raccroché ou à `MAX_RECORD_SEC`.
-- **Sonnerie périodique** en attente : joue le fichier sonnerie toutes les `RING_INTERVAL_SEC` (défaut 90 s), interrompue immédiatement au décroché. **`RING_INTERVAL_SEC` à 0 (ou négatif) la désactive** : plus aucune sonnerie spontanée, le reste du parcours inchangé et le déclenchement à distance toujours actif ; l'état `attente` porte alors le détail « sonnerie périodique désactivée » pour distinguer la coupure volontaire d'une panne. Vérifie aussi à chaque itération l'existence du fichier drapeau `ring_trigger` (déclenchement à distance depuis le dashboard) : s'il existe → sonner immédiatement puis supprimer le fichier.
+- **Sonnerie périodique** en attente : joue le fichier sonnerie toutes les `RING_INTERVAL_SEC` (défaut 0 : désactivée ; 90 s est une valeur typique), interrompue immédiatement au décroché. **`RING_INTERVAL_SEC` à 0 (ou négatif) la désactive** : plus aucune sonnerie spontanée, le reste du parcours inchangé et le déclenchement à distance toujours actif ; l'état `attente` porte alors le détail « sonnerie périodique désactivée » pour distinguer la coupure volontaire d'une panne. Vérifie aussi à chaque itération l'existence du fichier drapeau `ring_trigger` (déclenchement à distance depuis le dashboard) : s'il existe → sonner immédiatement puis supprimer le fichier.
 - Écriture continue de **`status.json`** (état courant + horodatage) pour le dashboard.
 - Journalisation dans `logs/livre_dor.log`, au niveau fixé par `LOG_LEVEL` (`INFO` en exploitation, `DEBUG` en mise en service) ou par `--verbeux` le temps d'un lancement à la main. `DEBUG` ouvre le détail du cadran — durée de chaque état stable des trois contacts, impulsions comptées et ignorées, chiffre validé — et la commutation des sorties du codec, sans qu'il faille arrêter le service ni éditer un fichier sur le Pi.
 - Chaque lecture audio journalise son issue (`completed` / `interrupted` / `error`) et sa durée, faute de quoi rien ne distingue une tonalité coupée par une impulsion d'une tonalité coupée par un raccroché. Ce qu'`aplay` et `arecord` écrivent sur leur sortie d'erreur est repris quel que soit le résultat.
@@ -521,7 +521,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 | `HOOK_ACTIVE_STATE` | LOW | État GPIO = décroché — **vérifier au multimètre** |
 | `OFFNORMAL_ACTIF_LEVEL` | à vérifier | Sens logique du contact off-normal |
 | `SOUND_CARD` / `CARTE_SON` | `plughw:1,0` | À confirmer via `aplay -l` / `arecord -l` |
-| `RING_INTERVAL_SEC` | 90 | Intervalle sonnerie en attente. **0 = ne sonne jamais de lui-même** (le déclenchement depuis le dashboard reste actif) |
+| `RING_INTERVAL_SEC` | 0 | Intervalle sonnerie en attente (90 s typique). **0 = ne sonne jamais de lui-même** (le déclenchement depuis le dashboard reste actif) |
 | `RING_COUNT` | 5 | Répétitions de `ring_out.wav` par sonnerie ; un décroché coupe la boucle à tout moment |
 | `RING_PAUSE_SEC` | 2.0 | Silence entre deux répétitions, compté comme « pendant la sonnerie » |
 | `RING_ANSWER_GRACE_SEC` | 5 | Fenêtre après la fin de la sonnerie pendant laquelle un décroché est traité comme un « appel entrant » (message aléatoire, sans cadran) |

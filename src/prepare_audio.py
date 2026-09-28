@@ -42,6 +42,7 @@ from pydub.generators import Sine
 import audio_config
 import audio_io
 import config
+import fichiers
 
 logger = logging.getLogger(__name__)
 
@@ -109,16 +110,14 @@ def roles() -> Dict[str, Tuple[Path, float]]:
 
 def output_for(role: str) -> str:
     """Sortie du codec sur laquelle ce rôle doit être entendu (§4.1)."""
-    if role == audio_config.ROLE_SONNERIE:
-        return config.AUDIO_OUTPUT_SONNERIE
-    return config.AUDIO_OUTPUT_COMBINE
+    return (config.AUDIO_OUTPUT_SONNERIE if role == audio_config.ROLE_SONNERIE
+            else config.AUDIO_OUTPUT_COMBINE)
 
 
 def volume_for(role: Optional[str]) -> int:
     """Volume (%) auquel ce rôle est joué : celui de la sonnerie ou du combiné."""
-    if role == audio_config.ROLE_SONNERIE:
-        return config.VOLUME_SONNERIE
-    return config.VOLUME_COMBINE
+    return (config.VOLUME_SONNERIE if role == audio_config.ROLE_SONNERIE
+            else config.VOLUME_COMBINE)
 
 
 # --- Traitement du signal ------------------------------------------------
@@ -308,7 +307,7 @@ def play_all() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format=fichiers.FORMAT_JOURNAL)
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--play-all", action="store_true",

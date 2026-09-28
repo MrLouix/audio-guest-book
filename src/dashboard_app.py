@@ -11,13 +11,10 @@ authentifiée par mot de passe unique (§6) : avant chaque requête, seules
 """
 
 import datetime
-import json
+import functools
 import logging
-import os
 import subprocess
 import time
-from pathlib import Path
-from typing import List
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.serving import make_server
@@ -27,6 +24,7 @@ import audio_config
 import audio_io
 import auth
 import config
+import fichiers
 import gpio_io
 import mode_io
 import network_info
@@ -59,8 +57,33 @@ PUBLIC_PATH_PREFIXES = ("/static/",)
 
 
 def _is_safe_redirect_target(target: str) -> bool:
-    """N'autorise qu'une redirection interne relative (protection open-redirect)."""
-    return bool(target) and target.startswith("/") and not target.startswith("//")
+    """N'autorise qu'une redirection interne relative (protection open-redirect).
+
+    Le navigateur traite « /\\hôte » comme « //hôte » : la barre inverse est
+    donc refusée au même titre que la double barre.
+    """
+    return (bool(target) and target.startswith("/")
+            and not target.startswith("//") and "\\" not in target)
+
+
+def _is_admin() -> bool:
+    return bool(session.get("is_admin"))
+
+
+def admin_requis(action: str):
+    """Réserve une route /api/* à la session administrateur (403 sinon, §6).
+
+    `action` complète « Seul un administrateur peut … » dans le message
+    d'erreur renvoyé à l'interface.
+    """
+    def decorateur(vue):
+        @functools.wraps(vue)
+        def enveloppe(*args, **kwargs):
+            if not _is_admin():
+                return jsonify({"erreur": f"Seul un administrateur peut {action}"}), 403
+            return vue(*args, **kwargs)
+        return enveloppe
+    return decorateur
 
 
 @app.before_request
@@ -118,34 +141,9 @@ def logout():
     return redirect(url_for("login"))
 
 
-def _tail_lines(path: Path, n: int) -> List[str]:
-    """Les n dernières lignes d'un fichier texte ; liste vide si absent ou illisible (§7.4).
-
-    Seule la fin du fichier est lue (LOG_TAIL_BYTES), jamais le fichier entier :
-    le dashboard interroge /api/logs toutes les 8 secondes et livre_dor.log monte
-    jusqu'à 1 Mo avant rotation, ce qui représentait autant de travail inutile à
-    chaque rafraîchissement sur un Pi Zero.
-    """
-    try:
-        with path.open("rb") as f:
-            f.seek(0, os.SEEK_END)
-            start = max(0, f.tell() - LOG_TAIL_BYTES)
-            f.seek(start)
-            raw = f.read()
-    except OSError:
-        return []
-    lines = raw.decode("utf-8", errors="replace").splitlines()
-    # Lecture démarrée en plein fichier : la première ligne est presque
-    # toujours coupée en son milieu, on l'écarte.
-    if start > 0 and lines:
-        lines = lines[1:]
-    return lines[-n:]
-
-
 def _messages_count() -> int:
-    if not config.MESSAGES_DIR.exists():
-        return 0
-    return sum(1 for p in config.MESSAGES_DIR.iterdir() if p.is_file() and p.suffix.lower() == ".wav")
+    """Nombre de messages d'invités ; 0 si le dossier est absent ou illisible (§7.4)."""
+    return len(fichiers.fichiers_wav(config.MESSAGES_DIR))
 
 
 def _status_payload() -> dict:
@@ -173,7 +171,10 @@ def api_status():
 
 @app.route("/api/logs")
 def api_logs():
-    return jsonify({"lignes": _tail_lines(config.LIVRE_DOR_LOG, LOG_TAIL_LINES)})
+    # Seule la fin du fichier est lue : /api/logs est interrogée toutes les
+    # 8 secondes et livre_dor.log monte jusqu'à 1 Mo avant rotation.
+    return jsonify({"lignes": fichiers.dernieres_lignes(config.LIVRE_DOR_LOG, LOG_TAIL_LINES,
+                                                         LOG_TAIL_BYTES)})
 
 
 @app.route("/api/messages/count")
@@ -323,6 +324,7 @@ def api_rclone_sync_now():
 
 
 @app.route("/api/rclone/resync", methods=["POST"])
+@admin_requis("réinitialiser la synchronisation")
 def api_rclone_resync():
     """Réinitialise la synchronisation bidirectionnelle de audio_src/ (§5.4).
 
@@ -330,8 +332,6 @@ def api_rclone_resync():
     référence et peut transférer beaucoup — à faire à l'installation, pas
     pendant l'événement.
     """
-    if not session.get("is_admin"):
-        return jsonify({"erreur": "Seul un administrateur peut réinitialiser la synchronisation"}), 403
     result = rclone_sync.run_bisync_sources(resync=True)
     return jsonify(result), (200 if result.get("ok") else 502)
 
@@ -339,18 +339,9 @@ def api_rclone_resync():
 @app.route("/settings")
 def settings_page():
     """Page de configuration des paramètres du système (§5.2)."""
-    # Récupérer les valeurs actuelles des paramètres
-    current_config = config.get_all_config()
-    
-    # Récupérer le statut GPIO
-    gpio_status = gpio_io.get_current_status()
-    
-    # Vérifier si la carte son est disponible
-    sound_card_available = audio_io.sound_card_available()
-    
     return render_template(
         "settings.html",
-        config=current_config,
+        config=config.get_all_config(),
         # Trois sections : utilisateur (à chaud), admin (à chaud), admin
         # nécessitant un redémarrage. Un non-admin voit les deux dernières en
         # lecture seule.
@@ -358,11 +349,11 @@ def settings_page():
             {"niveau": niveau, "params": config.params_par_niveau(niveau)}
             for niveau in config.NIVEAUX
         ],
-        is_admin=bool(session.get("is_admin")),
-        gpio_status=gpio_status,
+        is_admin=_is_admin(),
+        gpio_status=gpio_io.get_current_status(),
         gpio_available=gpio_io.is_gpio_available(),
         sound_card=config.SOUND_CARD,
-        sound_card_available=sound_card_available,
+        sound_card_available=audio_io.sound_card_available(),
         audio_roles=audio_config.mapping_status(),
         audio_sources=audio_config.available_sources(),
         audio_output_courant=alsa_io.current_output(),
@@ -373,19 +364,14 @@ def settings_page():
 @app.route("/api/settings")
 def api_settings_get():
     """Retourne la configuration et le statut actuel en JSON."""
-    current_config = config.get_all_config()
-    gpio_status = gpio_io.get_current_status()
-    sound_card_available = audio_io.sound_card_available()
-    
     return jsonify({
-        "params": current_config,
+        "params": config.get_all_config(),
         "status": {
             "sound_card": {
                 "name": config.SOUND_CARD,
-                "available": sound_card_available,
+                "available": audio_io.sound_card_available(),
             },
-            "gpio": gpio_status,
-            "gpio_available": gpio_io.is_gpio_available(),
+            **_gpio_payload(),
         },
     })
 
@@ -399,34 +385,22 @@ def api_settings_post():
     l'administrateur — la vérification est faite par config.update_config().
     """
     data = request.get_json(silent=True) or request.form
-    new_values = {}
-    
-    # Extraire les valeurs du formulaire ou JSON
-    for param_name in config.MODIFIABLE_PARAMS:
-        if param_name in data:
-            new_values[param_name] = data[param_name]
-    
+    new_values = {nom: data[nom] for nom in config.MODIFIABLE_PARAMS if nom in data}
     if not new_values:
         return jsonify({"erreur": "Aucun paramètre à mettre à jour"}), 400
-    
-    # Mettre à jour la configuration
-    result = config.update_config(new_values, is_admin=bool(session.get("is_admin")))
-    
+
+    result = config.update_config(new_values, is_admin=_is_admin())
     if not result["ok"]:
-        if result.get("interdit"):
-            return jsonify({"erreur": result["erreur"]}), 403
-        # Valeur hors bornes ou d'un mauvais type : erreur de saisie, pas du
-        # serveur. Seule l'écriture du fichier est une vraie 500.
-        code = 400 if result["erreur"].startswith("Valeur invalide") else 500
+        # Droits insuffisants : 403. Valeur hors bornes ou d'un mauvais type :
+        # erreur de saisie, 400. Seul l'accès au fichier est une vraie 500.
+        code = 403 if result.get("interdit") else 400 if result.get("invalide") else 500
         return jsonify({"erreur": result["erreur"]}), code
-    
-    # Retourner le résultat avec un avertissement si redémarrage nécessaire
+
     response = {
         "ok": True,
         "message": "Paramètres sauvegardés avec succès.",
         "params_modifies": result["params_modifies"],
     }
-    
     if result["redemarrage_necessaire"]:
         response["message"] += " Certains paramètres nécessitent un redémarrage du service pour prendre effet."
         response["redemarrage_necessaire"] = True
@@ -437,12 +411,12 @@ def api_settings_post():
 @app.route("/api/gpio-status")
 def api_gpio_status():
     """Retourne l'état actuel des GPIO en JSON."""
-    gpio_status = gpio_io.get_current_status()
-    
-    return jsonify({
-        "gpio": gpio_status,
-        "gpio_available": gpio_io.is_gpio_available(),
-    })
+    return jsonify(_gpio_payload())
+
+
+def _gpio_payload() -> dict:
+    return {"gpio": gpio_io.get_current_status(),
+            "gpio_available": gpio_io.is_gpio_available()}
 
 
 # --- Choix et conversion des fichiers audio (§4.2, §5.2) ----------------
@@ -467,7 +441,7 @@ def _refuse_si_communication():
     Même esprit que le garde-fou de transcribe_batch.py.
     """
     etat = (status_io.read_status() or {}).get("etat")
-    if etat not in (None, "attente", "erreur"):
+    if etat is not None and etat not in status_io.ETATS_AU_REPOS:
         return jsonify({"erreur": f"Téléphone en cours d'utilisation (état « {etat} ») : "
                                   "réessayez une fois raccroché."}), 409
     return None
@@ -479,16 +453,29 @@ def api_audio_sources():
     return jsonify(_audio_payload())
 
 
+def _resume_erreurs(erreurs: dict) -> str:
+    return " ; ".join(f"{role} — {msg}" for role, msg in erreurs.items())
+
+
+def _conversion_payload(conversion: dict, message: str):
+    """Réponse commune aux routes de conversion : 409 si une autre est en cours."""
+    if conversion.get("occupe"):
+        return jsonify({"erreur": conversion["message"]}), 409
+    return jsonify(_audio_payload({
+        "ok": not conversion["erreurs"],
+        "resultats": conversion["resultats"],
+        "message": message,
+    }))
+
+
 @app.route("/api/audio/roles", methods=["POST"])
+@admin_requis("modifier les fichiers audio")
 def api_audio_roles():
     """Enregistre le choix de fichier de chaque rôle, puis convertit (§4.2).
 
     Seuls les rôles réellement modifiés sont reconvertis : changer une
     sonnerie ne doit pas redécoder les douze messages.
     """
-    if not session.get("is_admin"):
-        return jsonify({"erreur": "Seul un administrateur peut modifier les fichiers audio"}), 403
-
     data = request.get_json(silent=True) or request.form
     mapping = {nom: data[nom] for nom in audio_config.ROLE_NAMES if nom in data}
     if not mapping:
@@ -498,7 +485,7 @@ def api_audio_roles():
     if refus is not None:
         return refus
 
-    import prepare_audio
+    import prepare_audio  # import tardif : pydub est lourd à charger sur un Pi Zero
 
     resultat = audio_config.set_role_sources(mapping)
     if not resultat["ok"]:
@@ -511,32 +498,21 @@ def api_audio_roles():
         }))
 
     conversion = prepare_audio.prepare_all_locked(resultat["roles_modifies"])
-    if conversion.get("occupe"):
-        return jsonify({"erreur": conversion["message"]}), 409
-
     erreurs = conversion["erreurs"]
     message = (f"{len(conversion['generes'])} fichier(s) converti(s)."
                if not erreurs else
-               f"{len(erreurs)} conversion(s) en échec : "
-               + " ; ".join(f"{role} — {msg}" for role, msg in erreurs.items()))
-
-    return jsonify(_audio_payload({
-        "ok": not erreurs,
-        "resultats": conversion["resultats"],
-        "message": message,
-    }))
+               f"{len(erreurs)} conversion(s) en échec : " + _resume_erreurs(erreurs))
+    return _conversion_payload(conversion, message)
 
 
 @app.route("/api/audio/reconvert", methods=["POST"])
+@admin_requis("reconvertir les fichiers audio")
 def api_audio_reconvert():
     """Reconvertit tous les rôles (ou ceux demandés) depuis audio_src/ (§4.2).
 
     Utile après une synchronisation Drive, qui remplace des sources sans
     passer par le formulaire.
     """
-    if not session.get("is_admin"):
-        return jsonify({"erreur": "Seul un administrateur peut reconvertir les fichiers audio"}), 403
-
     refus = _refuse_si_communication()
     if refus is not None:
         return refus
@@ -551,29 +527,17 @@ def api_audio_reconvert():
             return jsonify({"erreur": f"Rôle(s) inconnu(s) : {', '.join(inconnus)}"}), 400
 
     conversion = prepare_audio.prepare_all_locked(demandes)
-    if conversion.get("occupe"):
-        return jsonify({"erreur": conversion["message"]}), 409
-
-    erreurs = conversion["erreurs"]
     message = (f"{len(conversion['generes'])} fichier(s) converti(s), "
                f"{len(conversion['ignores'])} rôle(s) sans source.")
-    if erreurs:
-        message += (" Échecs : "
-                    + " ; ".join(f"{role} — {msg}" for role, msg in erreurs.items()))
-
-    return jsonify(_audio_payload({
-        "ok": not erreurs,
-        "resultats": conversion["resultats"],
-        "message": message,
-    }))
+    if conversion["erreurs"]:
+        message += " Échecs : " + _resume_erreurs(conversion["erreurs"])
+    return _conversion_payload(conversion, message)
 
 
 @app.route("/api/audio/test", methods=["POST"])
+@admin_requis("lancer un test audio")
 def api_audio_test():
     """Joue un fichier généré sur sa sortie, pour vérifier le câblage (§7.6)."""
-    if not session.get("is_admin"):
-        return jsonify({"erreur": "Seul un administrateur peut lancer un test audio"}), 403
-
     refus = _refuse_si_communication()
     if refus is not None:
         return refus
@@ -635,7 +599,7 @@ def run_server() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format=fichiers.FORMAT_JOURNAL)
     run_server()
 
 

@@ -25,15 +25,14 @@ import argparse
 import contextlib
 import datetime
 import fcntl
-import json
 import logging
-import os
 import re
 import shutil
 import subprocess
 from typing import List, Optional, Tuple
 
 import config
+import fichiers
 
 logger = logging.getLogger(__name__)
 
@@ -86,20 +85,15 @@ WantedBy=timers.target
 
 
 def read_config() -> dict:
-    try:
-        data = json.loads(config.RCLONE_CONFIG_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return dict(DEFAULT_CONFIG)
+    """rclone_config.json complété par les défauts ; jamais d'exception (§7.4)."""
     merged = dict(DEFAULT_CONFIG)
-    merged.update(data)
+    merged.update(fichiers.lire_json_dict(config.RCLONE_CONFIG_FILE))
     return merged
 
 
 def write_config(cfg: dict) -> None:
-    """Écriture atomique (fichier temporaire + os.replace, cohérent avec status_io.py)."""
-    tmp_path = config.RCLONE_CONFIG_FILE.with_suffix(config.RCLONE_CONFIG_FILE.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp_path, config.RCLONE_CONFIG_FILE)
+    """Écriture atomique (fichier temporaire + os.replace)."""
+    fichiers.ecrire_json_atomique(config.RCLONE_CONFIG_FILE, cfg)
 
 
 def ensure_config_exists() -> None:
@@ -121,12 +115,34 @@ def _log(level: str, message: str) -> None:
 
 
 def _tail_log_lines(n: int = LOG_TAIL_LINES) -> List[str]:
-    try:
-        with config.RCLONE_LOG.open("r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-    except OSError:
-        return []
-    return [line.rstrip("\n") for line in lines[-n:]]
+    # rclone.log n'est pas tourné : seule sa fin est lue.
+    return fichiers.dernieres_lignes(config.RCLONE_LOG, n)
+
+
+def _rclone_absent() -> Optional[dict]:
+    """Résultat d'échec (journalisé) si rclone n'est pas installé, None sinon."""
+    if shutil.which("rclone"):
+        return None
+    _log("ERROR", "rclone introuvable sur ce système.")
+    return {"ok": False, "message": "rclone introuvable sur ce système."}
+
+
+def _remote(cfg: dict) -> str:
+    return cfg.get("remote", config.RCLONE_REMOTE)
+
+
+def _dossier(cfg: dict) -> str:
+    return cfg.get("dossier", config.RCLONE_FOLDER)
+
+
+def _sources_dossier(cfg: dict) -> str:
+    return cfg.get("sources_dossier", config.RCLONE_SOURCES_FOLDER)
+
+
+def _derniere_ligne(sortie: str) -> str:
+    """Dernière ligne non vide d'une sortie de rclone : c'est là qu'il met la cause."""
+    lignes = (sortie or "").strip().splitlines()
+    return lignes[-1] if lignes else "échec inconnu"
 
 
 def run_copy_messages() -> dict:
@@ -136,14 +152,12 @@ def run_copy_messages() -> dict:
         _log("INFO", "Synchronisation désactivée (actif=false), cycle ignoré.")
         return {"ok": True, "skipped": True, "message": "Synchronisation désactivée."}
 
-    remote, dossier = cfg.get("remote", config.RCLONE_REMOTE), cfg.get("dossier", config.RCLONE_FOLDER)
-
-    if not shutil.which("rclone"):
-        _log("ERROR", "rclone introuvable sur ce système.")
-        return {"ok": False, "message": "rclone introuvable sur ce système."}
+    absent = _rclone_absent()
+    if absent:
+        return absent
 
     config.MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
-    dest = f"{remote}:{dossier}"
+    dest = f"{_remote(cfg)}:{_dossier(cfg)}"
 
     try:
         result = subprocess.run(
@@ -158,8 +172,7 @@ def run_copy_messages() -> dict:
         return {"ok": False, "message": f"Impossible de lancer rclone : {exc}"}
 
     if result.returncode != 0:
-        detail_lines = (result.stderr or result.stdout or "échec inconnu").strip().splitlines()
-        detail = detail_lines[-1] if detail_lines else "échec inconnu"
+        detail = _derniere_ligne(result.stderr or result.stdout)
         # Échec toléré (§5.4) : pas d'internet au moment de l'exécution -> on
         # journalise et on laisse le prochain cycle du timer retenter.
         _log("WARNING", f"Échec de synchronisation vers {dest} : {detail}")
@@ -203,7 +216,7 @@ def rclone_version() -> Optional[Tuple[int, int, int]]:
     return (int(majeur), int(mineur), int(correctif or 0))
 
 
-def _resync_mode_supporte() -> bool:
+def _resync_mode_supporte(version: Optional[Tuple[int, int, int]]) -> bool:
     """rclone sait-il faire un --resync « le plus récent gagne » ?
 
     Sans --resync-mode (< 1.66), le resync prend path1 comme référence et
@@ -211,7 +224,6 @@ def _resync_mode_supporte() -> bool:
     illisible est traitée comme récente : mieux vaut laisser rclone refuser un
     drapeau inconnu que bloquer une installation à jour.
     """
-    version = rclone_version()
     return version is None or version >= RCLONE_MIN_CONFLICT_RESOLVE
 
 
@@ -242,15 +254,21 @@ def _bisync_lock():
         verrou.close()
 
 
-def _bisync_command(cfg: dict, resync: bool) -> Tuple[List[str], List[str]]:
-    """Construit la commande bisync ; retourne (commande, avertissements)."""
-    dest = f"{cfg.get('remote', config.RCLONE_REMOTE)}:{cfg.get('sources_dossier', config.RCLONE_SOURCES_FOLDER)}"
+def _bisync_command(cfg: dict, resync: bool,
+                    version: Optional[Tuple[int, int, int]] = None) -> Tuple[List[str], List[str]]:
+    """Construit la commande bisync ; retourne (commande, avertissements).
+
+    `version` évite de relancer `rclone version` quand l'appelant la connaît
+    déjà ; interrogée ici sinon.
+    """
+    dest = f"{_remote(cfg)}:{_sources_dossier(cfg)}"
     cmd = ["rclone", "bisync", str(config.AUDIO_SRC_DIR), dest,
            "--max-delete", str(config.RCLONE_BISYNC_MAX_DELETE_PCT),
            "--create-empty-src-dirs=false"]
     avertissements = []
 
-    version = rclone_version()
+    if version is None:
+        version = rclone_version()
     if version is not None and version >= RCLONE_MIN_CONFLICT_RESOLVE:
         # En cas d'édition des deux côtés, le plus récent gagne et l'autre est
         # conservé sous un nom suffixé : rien n'est jamais perdu.
@@ -286,9 +304,9 @@ def run_bisync_sources(resync: bool = False) -> dict:
         return {"ok": True, "skipped": True,
                 "message": "Synchronisation des sources audio désactivée."}
 
-    if not shutil.which("rclone"):
-        _log("ERROR", "rclone introuvable sur ce système.")
-        return {"ok": False, "message": "rclone introuvable sur ce système."}
+    absent = _rclone_absent()
+    if absent:
+        return absent
 
     version = rclone_version()
     if version is not None and version < RCLONE_MIN_BISYNC:
@@ -313,7 +331,7 @@ def run_bisync_sources(resync: bool = False) -> dict:
         # encore descendu. On ne le déclenche alors jamais tout seul : il faut
         # le bouton du dashboard ou `--resync` en ligne de commande, en
         # connaissance de cause.
-        if besoin_resync and not resync and not _resync_mode_supporte():
+        if besoin_resync and not resync and not _resync_mode_supporte(version):
             message = ("Synchronisation bidirectionnelle jamais initialisée et "
                        "rclone trop ancien pour un --resync sans risque : lancez-la "
                        "explicitement depuis le dashboard (« Réinitialiser la "
@@ -322,13 +340,13 @@ def run_bisync_sources(resync: bool = False) -> dict:
             _log("WARNING", message)
             return {"ok": False, "message": message}
 
-        resultat = _lancer_bisync(cfg, besoin_resync)
+        resultat = _lancer_bisync(cfg, besoin_resync, version)
 
         # État perdu côté rclone : on retente une fois avec --resync, sauf si
         # c'est précisément ce qu'on vient de faire.
         if not resultat["ok"] and not besoin_resync and resultat.get("resync_requis"):
             _log("WARNING", "État bisync perdu : nouvelle tentative avec --resync.")
-            resultat = _lancer_bisync(cfg, True)
+            resultat = _lancer_bisync(cfg, True, version)
 
         cfg_courant = read_config()
         if resultat["ok"] and not cfg_courant.get("sources_resync_fait", False):
@@ -341,9 +359,10 @@ def run_bisync_sources(resync: bool = False) -> dict:
         return resultat
 
 
-def _lancer_bisync(cfg: dict, resync: bool) -> dict:
+def _lancer_bisync(cfg: dict, resync: bool,
+                   version: Optional[Tuple[int, int, int]]) -> dict:
     """Un passage de bisync. Le verrou est supposé déjà tenu par l'appelant."""
-    cmd, avertissements = _bisync_command(cfg, resync)
+    cmd, avertissements = _bisync_command(cfg, resync, version)
     for avertissement in avertissements:
         _log("WARNING", avertissement)
     if resync:
@@ -363,8 +382,7 @@ def _lancer_bisync(cfg: dict, resync: bool) -> dict:
 
     sortie = (result.stderr or "") + (result.stdout or "")
     if result.returncode != 0:
-        lignes = sortie.strip().splitlines()
-        detail = lignes[-1] if lignes else "échec inconnu"
+        detail = _derniere_ligne(sortie)
         resync_requis = any(motif in sortie.lower() for motif in BISYNC_RESYNC_REQUIS)
         # Échec toléré comme pour la copie montante : pas d'internet au moment
         # du cycle, on journalise et on laisse le timer retenter.
@@ -406,7 +424,7 @@ def sources_status() -> dict:
     version = rclone_version()
     return {
         "actif": cfg.get("sources_actif", False),
-        "dossier": cfg.get("sources_dossier", config.RCLONE_SOURCES_FOLDER),
+        "dossier": _sources_dossier(cfg),
         "resync_fait": cfg.get("sources_resync_fait", False),
         "derniere_sync_reussie": derniere,
         "fichiers_locaux": len(list(config.AUDIO_SRC_DIR.glob("*")))
@@ -429,11 +447,11 @@ def get_status() -> dict:
 
     pending = None
     if cfg.get("actif", True):
-        pending = count_pending_files(cfg.get("remote", config.RCLONE_REMOTE), cfg.get("dossier", config.RCLONE_FOLDER))
+        pending = count_pending_files(_remote(cfg), _dossier(cfg))
 
     return {
-        "remote": cfg.get("remote", config.RCLONE_REMOTE),
-        "dossier": cfg.get("dossier", config.RCLONE_FOLDER),
+        "remote": _remote(cfg),
+        "dossier": _dossier(cfg),
         "intervalle_min": cfg.get("intervalle_min", config.RCLONE_INTERVAL_MIN),
         "actif": cfg.get("actif", True),
         "derniere_sync_reussie": last_success,
@@ -448,10 +466,8 @@ def get_status() -> dict:
 def regenerate_timer_unit(minutes: int) -> None:
     """Réécrit systemd/rclone-sync.timer (symlinké depuis /etc/systemd/system, §5.4)."""
     config.SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
-    content = TIMER_TEMPLATE.format(minutes=minutes)
-    tmp_path = config.SYSTEMD_RCLONE_TIMER_FILE.with_suffix(".tmp")
-    tmp_path.write_text(content, encoding="utf-8")
-    os.replace(tmp_path, config.SYSTEMD_RCLONE_TIMER_FILE)
+    fichiers.ecrire_texte_atomique(config.SYSTEMD_RCLONE_TIMER_FILE,
+                                   TIMER_TEMPLATE.format(minutes=minutes))
 
 
 def reload_and_restart_timer() -> Optional[subprocess.CompletedProcess]:
@@ -491,7 +507,7 @@ def update_config(remote: str, dossier: str, intervalle_min: int, actif: bool,
     """Met à jour rclone_config.json ; régénère et recharge le timer si l'intervalle a changé (§5.4)."""
     previous = read_config()
     if sources_dossier is None:
-        sources_dossier = previous.get("sources_dossier", config.RCLONE_SOURCES_FOLDER)
+        sources_dossier = _sources_dossier(previous)
     if sources_actif is None:
         sources_actif = previous.get("sources_actif", False)
 

@@ -21,7 +21,7 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import config
 
@@ -311,24 +311,36 @@ def _boucle_echantillonnage(inputs: PhoneInputs, contacts: List[_Contact],
         attendre(periode_rapide if maintenant < rapide_jusqu_a else periode_repos)
 
 
-def setup(inputs: PhoneInputs) -> None:
-    """Configure les GPIO en entrée (pull-up) et démarre leur échantillonnage."""
+def configurer_broches() -> None:
+    """Passe les trois broches en entrée avec pull-up (numérotation BCM).
+
+    Lève RuntimeError si RPi.GPIO est indisponible (hors Raspberry Pi).
+    """
     if GPIO is None:
         raise RuntimeError("RPi.GPIO indisponible : ce module doit s'exécuter sur un Raspberry Pi.")
-
-    global _thread
-
     GPIO.setmode(GPIO.BCM)
     for pin in (config.HOOK_PIN, config.DIAL_OFFNORMAL_PIN, config.DIAL_PULSE_PIN):
         GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-    # Les filtres démarrent sur l'état réel des broches, pour qu'un téléphone
-    # déjà décroché au lancement du service ne produise pas un faux front.
-    etats = {
+
+def lire_contacts() -> Dict[str, bool]:
+    """Niveau brut des trois contacts, déjà traduit en actif/repos (sans filtrage)."""
+    return {
         "crochet": GPIO.input(config.HOOK_PIN) == HOOK_ACTIVE_LEVEL,
         "off-normal": GPIO.input(config.DIAL_OFFNORMAL_PIN) == DIAL_ACTIVE_LEVEL,
         "impulsions": GPIO.input(config.DIAL_PULSE_PIN) == PULSE_ACTIVE_LEVEL,
     }
+
+
+def setup(inputs: PhoneInputs) -> None:
+    """Configure les GPIO en entrée (pull-up) et démarre leur échantillonnage."""
+    global _thread
+
+    configurer_broches()
+
+    # Les filtres démarrent sur l'état réel des broches, pour qu'un téléphone
+    # déjà décroché au lancement du service ne produise pas un faux front.
+    etats = lire_contacts()
     inputs.set_hook(etats["crochet"])
     inputs.set_dial_active(etats["off-normal"])
 
@@ -367,77 +379,44 @@ def cleanup() -> None:
         GPIO.cleanup()
 
 
-# Instance globale pour stocker l'état des GPIO (si RPi.GPIO est disponible)
+# PhoneInputs du processus, s'il en a un : le dashboard tourne dans un autre
+# processus que livre_dor.py et n'en a pas ; les tests en posent un.
 _phone_inputs: Optional[PhoneInputs] = None
 
 
-def get_phone_inputs() -> Optional[PhoneInputs]:
-    """Retourne l'instance PhoneInputs si disponible."""
-    return _phone_inputs
-
-
-def set_phone_inputs(inputs: PhoneInputs) -> None:
-    """Définit l'instance PhoneInputs à utiliser pour get_current_status."""
-    global _phone_inputs
-    _phone_inputs = inputs
-
-
-def get_current_status() -> Optional[Dict[str, Any]]:
-    """Retourne l'état actuel des GPIO si disponible.
-    
-    Retourne un dictionnaire avec :
-    {
-        "hook": "DECROCHE" ou "raccroché",
-        "dial_offnormal": "actif" ou "repos",
-        "dial_pulse": "actif" ou "repos" (ou "inconnu" si pas de pulse détecté)
+def _libelles(crochet: bool, off_normal: bool, impulsion: bool) -> Dict[str, str]:
+    return {
+        "hook": "DECROCHE" if crochet else "raccroché",
+        "dial_offnormal": "actif" if off_normal else "repos",
+        "dial_pulse": "actif" if impulsion else "repos",
     }
-    
-    Retourne None si RPi.GPIO n'est pas disponible (mode démo).
+
+
+def get_current_status() -> Optional[Dict[str, str]]:
+    """État actuel des contacts, pour le dashboard ; None s'il est illisible.
+
+    Retourne {"hook": "DECROCHE" | "raccroché", "dial_offnormal": "actif" |
+    "repos", "dial_pulse": "actif" | "repos"}.
+
+    Source, par ordre de préférence : le PhoneInputs du processus (filtré ;
+    l'impulsion, simple événement, y est toujours « repos »), sinon une
+    lecture directe des broches. None hors Raspberry Pi, ou si les broches
+    n'ont pas été configurées dans ce processus.
     """
-    import config
-    
-    # Si PhoneInputs est disponible et a été initialisé
     if _phone_inputs is not None:
-        hook_active = _phone_inputs.is_hook_up()
-        # Accesseur public plutôt que l'attribut privé : is_dial_active() prend
-        # le verrou de PhoneInputs, ce qui importe ici car cette fonction est
-        # appelée depuis le thread Flask alors que _dial_active est muté par les
-        # callbacks GPIO.
-        dial_active = _phone_inputs.is_dial_active()
-        
-        # Déterminer les états
-        hook_state = "DECROCHE" if hook_active else "raccroché"
-        dial_offnormal_state = "actif" if dial_active else "repos"
-        
-        return {
-            "hook": hook_state,
-            "dial_offnormal": dial_offnormal_state,
-            "dial_pulse": "repos",  # On ne peut pas lire directement l'état de la pulse
-        }
-    
-    # Si RPi.GPIO est disponible mais PhoneInputs n'a pas été initialisé
-    if GPIO is not None:
-        try:
-            # Lire directement les valeurs des pins
-            hook_value = GPIO.input(config.HOOK_PIN)
-            dial_offnormal_value = GPIO.input(config.DIAL_OFFNORMAL_PIN)
-            dial_pulse_value = GPIO.input(config.DIAL_PULSE_PIN)
-            
-            hook_active = (hook_value == HOOK_ACTIVE_LEVEL)
-            dial_active = (dial_offnormal_value == DIAL_ACTIVE_LEVEL)
-            pulse_active = (dial_pulse_value == PULSE_ACTIVE_LEVEL)
-            
-            return {
-                "hook": "DECROCHE" if hook_active else "raccroché",
-                "dial_offnormal": "actif" if dial_active else "repos",
-                "dial_pulse": "actif" if pulse_active else "repos",
-            }
-        except Exception:
-            # Erreur lors de la lecture GPIO
-            return None
-    
-    # RPi.GPIO non disponible (mode développement/démo)
-    return None
+        # Accesseurs publics : ils prennent le verrou de PhoneInputs, muté par
+        # le thread d'échantillonnage.
+        return _libelles(_phone_inputs.is_hook_up(), _phone_inputs.is_dial_active(), False)
+
+    if GPIO is None:
+        return None
+    try:
+        etats = lire_contacts()
+    except (RuntimeError, ValueError, OSError):
+        # Broches non configurées dans ce processus (setmode jamais appelé),
+        # ou déjà prises : le dashboard affiche alors « inconnu », pas une 500.
+        return None
+    return _libelles(etats["crochet"], etats["off-normal"], etats["impulsions"])
 
 
 def is_gpio_available() -> bool:

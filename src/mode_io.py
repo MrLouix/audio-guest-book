@@ -26,12 +26,12 @@ est reflétée immédiatement par le processus qui l'a écrite.
 
 import json
 import logging
-import os
 import threading
 import time
 from typing import Optional
 
 import config
+import fichiers
 
 logger = logging.getLogger(__name__)
 
@@ -95,10 +95,7 @@ def write_mode(restitution: bool) -> None:
     Même garantie que status_io.write_status : la machine à états ne peut
     jamais lire un JSON à moitié écrit.
     """
-    data = {"restitution": bool(restitution)}
-    tmp_path = config.MODE_CONFIG_FILE.with_suffix(config.MODE_CONFIG_FILE.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp_path, config.MODE_CONFIG_FILE)
+    fichiers.ecrire_json_atomique(config.MODE_CONFIG_FILE, {"restitution": bool(restitution)})
     # Le processus qui bascule doit voir sa propre écriture tout de suite : le
     # dashboard réaffiche la page juste après le POST (§5.2).
     invalidate_cache()

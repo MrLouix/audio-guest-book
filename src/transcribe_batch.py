@@ -27,15 +27,19 @@ from pathlib import Path
 from typing import List
 
 import config
+import fichiers
 
 logger = logging.getLogger(__name__)
 
 
 def find_untranscribed_messages() -> List[Path]:
-    """WAV de messages/ sans .txt associé : jamais retraité (idempotent, incrémental)."""
-    if not config.MESSAGES_DIR.exists():
-        return []
-    return sorted(p for p in config.MESSAGES_DIR.glob("*.wav") if not p.with_suffix(".txt").exists())
+    """WAV de messages/ sans .txt associé : jamais retraité (idempotent, incrémental).
+
+    Les copies brutes de messages/brut/ sont exclues : c'est le message
+    traité qui est transcrit.
+    """
+    return sorted(p for p in fichiers.fichiers_wav(config.MESSAGES_DIR)
+                  if not p.with_suffix(".txt").exists())
 
 
 def _livre_dor_service_active() -> bool:
@@ -50,7 +54,8 @@ def _livre_dor_service_active() -> bool:
 
 
 def _resample_to_16k_mono(source: Path, destination: Path) -> None:
-    """whisper.cpp attend du 16 kHz mono ; nos enregistrements sont en 44,1 kHz (§4.3)."""
+    """whisper.cpp attend du 16 kHz mono ; nos enregistrements sont en stéréo L = R,
+    à config.RECORD_RATE_HZ (§4.3) : ffmpeg ramène les deux au format attendu."""
     subprocess.run(
         ["ffmpeg", "-y", "-i", str(source), "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(destination)],
         capture_output=True, text=True, timeout=config.WHISPER_TIMEOUT_SEC, check=True,
@@ -127,7 +132,7 @@ def main() -> None:
                          help="Liste les fichiers qui seraient transcrits, sans rien transcrire.")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format=fichiers.FORMAT_JOURNAL)
 
     if args.dry_run:
         pending = find_untranscribed_messages()

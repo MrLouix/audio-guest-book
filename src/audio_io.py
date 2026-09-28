@@ -10,9 +10,10 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 import config
+import fichiers
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,59 @@ def _terminate(proc: subprocess.Popen, grace_sec: float = TERMINATE_GRACE_SEC) -
     if proc.poll() is None:
         proc.kill()
         proc.wait()
+
+
+def _superviser(proc: subprocess.Popen, outil: str, path: Path,
+                should_continue: Callable[[], bool], poll_interval: float,
+                timeout_sec: Optional[float] = None) -> str:
+    """Surveille un aplay/arecord jusqu'à sa fin ; "completed", "interrupted" ou "error".
+
+    Le processus est arrêté dès que should_continue() renvoie False, ou quand
+    timeout_sec est dépassé : jamais d'orphelin (§7.2).
+    """
+    start = time.monotonic()
+    result = "completed"
+    while proc.poll() is None:
+        if not should_continue():
+            result = "interrupted"
+            _terminate(proc)
+            break
+        if timeout_sec is not None and (time.monotonic() - start) > timeout_sec:
+            logger.warning("Timeout dépassé pendant la lecture de %s", path)
+            result = "error"
+            _terminate(proc)
+            break
+        time.sleep(poll_interval)
+
+    # stderr est lu quel que soit le résultat, et non seulement sur un code de
+    # retour non nul : une lecture ou un enregistrement s'arrête le plus
+    # souvent sur un raccroché (« interrupted »), et c'est précisément là
+    # qu'ALSA signale un périphérique occupé, un format refusé ou une
+    # sous-alimentation. Laisser le tube non lu perdait ces messages — et
+    # pouvait, à la longue, le remplir.
+    stderr = ""
+    if proc.stderr is not None:
+        try:
+            stderr = proc.stderr.read().decode(errors="replace").strip()
+        except (OSError, ValueError):
+            stderr = ""
+
+    if result == "completed" and proc.returncode != 0:
+        logger.error("%s a échoué (code %s) sur %s : %s", outil, proc.returncode, path, stderr)
+        result = "error"
+    elif stderr:
+        logger.warning("%s (%s) sur %s a écrit : %s", outil, result, path.name, stderr)
+    return result
+
+
+def _lancer(cmd: List[str], outil: str) -> Optional[subprocess.Popen]:
+    """Lance aplay/arecord (stderr capturé) ; None, journalisé, s'il ne démarre pas."""
+    logger.debug("%s : %s", "Lecture" if outil == "aplay" else "Enregistrement", " ".join(cmd))
+    try:
+        return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except OSError:
+        logger.exception("Impossible de lancer %s", outil)
+        return None
 
 
 def play(path: Path, should_continue: Callable[[], bool],
@@ -68,47 +122,11 @@ def play(path: Path, should_continue: Callable[[], bool],
         import alsa_io
         alsa_io.select_output(output, volume=volume)
 
-    cmd = ["aplay", "-D", device or config.SOUND_CARD, str(path)]
-    logger.debug("Lecture : %s", " ".join(cmd))
-    try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    except OSError:
-        logger.exception("Impossible de lancer aplay")
-        return "error"
-
     start = time.monotonic()
-    result = "completed"
-    while True:
-        if proc.poll() is not None:
-            break
-        if not should_continue():
-            result = "interrupted"
-            _terminate(proc)
-            break
-        if timeout_sec is not None and (time.monotonic() - start) > timeout_sec:
-            logger.warning("Timeout dépassé pendant la lecture de %s", path)
-            result = "error"
-            _terminate(proc)
-            break
-        time.sleep(poll_interval)
-
-    # stderr est lu quel que soit le résultat, et non seulement sur un code de
-    # retour non nul : une lecture interrompue est le cas le plus fréquent du
-    # parcours, et c'est précisément là qu'ALSA signale un périphérique occupé,
-    # un format refusé ou une sous-alimentation. Laisser le tube non lu perdait
-    # ces messages — et pouvait, à la longue, le remplir.
-    stderr = ""
-    if proc.stderr is not None:
-        try:
-            stderr = proc.stderr.read().decode(errors="replace").strip()
-        except (OSError, ValueError):
-            stderr = ""
-
-    if result == "completed" and proc.returncode != 0:
-        logger.error("aplay a échoué (code %s) sur %s : %s", proc.returncode, path, stderr)
-        result = "error"
-    elif stderr:
-        logger.warning("aplay (%s) sur %s a écrit : %s", result, path.name, stderr)
+    proc = _lancer(["aplay", "-D", device or config.SOUND_CARD, str(path)], "aplay")
+    if proc is None:
+        return "error"
+    result = _superviser(proc, "aplay", path, should_continue, poll_interval, timeout_sec)
 
     # Une ligne par lecture, avec son issue et sa durée : c'est ce qui dit si
     # la tonalité a été coupée par une impulsion, par un raccroché, ou si elle
@@ -120,12 +138,12 @@ def play(path: Path, should_continue: Callable[[], bool],
 
 def record(path: Path, max_duration_sec: int, should_continue: Callable[[], bool],
            poll_interval: float = POLL_INTERVAL_SEC) -> str:
-    """Enregistre directement vers path (WAV stéréo 16 kHz, 16 bits).
+    """Enregistre directement vers path (WAV 16 bits, format de config.RECORD_*).
 
-    16 kHz : c'est là que le plancher de bruit du micro électret est le plus
-    bas (voir config.RECORD_RATE_HZ). Le micro est sur le jack MIC (Mic 1),
-    dupliqué sur les deux canaux DAI par scripts/audio-setup.sh (numids 89
-    et 90) — les deux pistes portent donc le même signal.
+    16 kHz par défaut : c'est là que le plancher de bruit du micro électret
+    est le plus bas (voir config.RECORD_RATE_HZ). Le micro est sur le jack
+    MIC (Mic 1), dupliqué sur les deux canaux DAI par scripts/audio-setup.sh —
+    les deux pistes portent donc le même signal.
 
     should_continue() est interrogé toutes les poll_interval secondes ; dès
     qu'il renvoie False (raccroché), l'enregistrement est arrêté immédiatement
@@ -133,7 +151,7 @@ def record(path: Path, max_duration_sec: int, should_continue: Callable[[], bool
     arecord (-d) comme filet de sécurité si la boucle appelante se bloquait.
     Retourne "completed", "interrupted" ou "error".
     """
-    cmd = [
+    proc = _lancer([
         "arecord",
         "-D", config.SOUND_CARD,
         "-f", config.AUDIO_SAMPLE_FORMAT,
@@ -141,40 +159,10 @@ def record(path: Path, max_duration_sec: int, should_continue: Callable[[], bool
         "-r", str(config.RECORD_RATE_HZ),
         "-d", str(max_duration_sec),
         str(path),
-    ]
-    logger.debug("Enregistrement : %s", " ".join(cmd))
-    try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    except OSError:
-        logger.exception("Impossible de lancer arecord")
+    ], "arecord")
+    if proc is None:
         return "error"
-
-    result = "completed"
-    while True:
-        if proc.poll() is not None:
-            break
-        if not should_continue():
-            result = "interrupted"
-            _terminate(proc)
-            break
-        time.sleep(poll_interval)
-
-    # Même raison que dans play() : un enregistrement s'arrête presque toujours
-    # sur un raccroché, donc sur « interrupted ».
-    stderr = ""
-    if proc.stderr is not None:
-        try:
-            stderr = proc.stderr.read().decode(errors="replace").strip()
-        except (OSError, ValueError):
-            stderr = ""
-
-    if result == "completed" and proc.returncode != 0:
-        logger.error("arecord a échoué (code %s) sur %s : %s", proc.returncode, path, stderr)
-        result = "error"
-    elif stderr:
-        logger.warning("arecord (%s) sur %s a écrit : %s", result, path.name, stderr)
-
-    return result
+    return _superviser(proc, "arecord", path, should_continue, poll_interval)
 
 
 def card_index(sound_card: Optional[str] = None) -> Optional[str]:
@@ -210,7 +198,7 @@ def _cli() -> None:
     import argparse
     import signal
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format=fichiers.FORMAT_JOURNAL)
     parser = argparse.ArgumentParser(description="Test manuel de lecture/enregistrement audio.")
     sub = parser.add_subparsers(dest="command", required=True)
 

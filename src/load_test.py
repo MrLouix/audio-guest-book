@@ -25,6 +25,7 @@ from pathlib import Path
 
 import audio_io
 import config
+import fichiers
 import gpio_io
 import livre_dor
 
@@ -105,7 +106,7 @@ def main() -> None:
                          help="Nombre de cycles décroché/composition/enregistrement/raccroché à simuler.")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format=fichiers.FORMAT_JOURNAL)
 
     if not audio_io.sound_card_available():
         print(f"ATTENTION : carte son {config.SOUND_CARD} introuvable — les lectures/enregistrements "

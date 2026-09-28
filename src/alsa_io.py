@@ -31,6 +31,7 @@ from typing import List, Optional, Tuple
 
 import audio_io
 import config
+import fichiers
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,30 @@ def _run(argv: List[str], timeout_sec: float) -> Optional[subprocess.CompletedPr
         return None
 
 
+def _appliquer(argv: List[str], timeout_sec: float, echec: str) -> bool:
+    """Lance audio-setup.sh ; en cas d'échec, journalise `echec` et oublie le cache.
+
+    Après un échec, l'état réel du codec est inconnu : la prochaine
+    commutation doit être refaite, même vers la même sortie.
+    """
+    global _last_output, _last_volume, _last_levels
+    result = _run(argv, timeout_sec)
+    if result is not None and result.returncode == 0:
+        return True
+    if result is not None:
+        logger.warning("%s (code %s) : %s", echec, result.returncode,
+                       (result.stderr or "").strip())
+    _last_output = _last_volume = _last_levels = None
+    return False
+
+
+def _verifier_sortie(output: str) -> bool:
+    if output in OUTPUTS:
+        return True
+    logger.error("Sortie inconnue : %r (attendu %s)", output, ", ".join(OUTPUTS))
+    return False
+
+
 def setup_card(mode: str = OUTPUT_HEADPHONE, store: bool = False) -> bool:
     """Configuration complète du codec : entrée micro, routage, sortie par défaut.
 
@@ -108,19 +133,11 @@ def setup_card(mode: str = OUTPUT_HEADPHONE, store: bool = False) -> bool:
     `scripts/install.sh` qui fige l'état une fois pour toutes.
     """
     global _last_output, _last_volume, _last_levels
-    if mode not in OUTPUTS:
-        logger.error("Sortie inconnue : %r (attendu %s)", mode, ", ".join(OUTPUTS))
+    if not _verifier_sortie(mode):
         return False
 
     argv = [mode] if store else ["--no-store", mode]
-    result = _run(argv, config.AUDIO_SETUP_TIMEOUT_SEC)
-    if result is None:
-        _last_output = _last_volume = None
-        return False
-    if result.returncode != 0:
-        logger.warning("Configuration du codec en échec (code %s) : %s",
-                       result.returncode, (result.stderr or "").strip())
-        _last_output = _last_volume = None
+    if not _appliquer(argv, config.AUDIO_SETUP_TIMEOUT_SEC, "Configuration du codec en échec"):
         return False
 
     # La configuration complète pose le niveau maximum (100 %).
@@ -148,16 +165,16 @@ def select_output(output: str, force: bool = False, volume: Optional[int] = None
     dizaines de millisecondes.
 
     `volume` est un pourcentage du niveau maximum de la sortie
-    (config.AUDIO_MAX_DB_*, 0 = sortie coupée, None = 100) : c'est ainsi que la sonnerie et le combiné gardent chacun
-    leur volume même s'ils partagent une sortie.
+    (config.AUDIO_MAX_DB_*, 0 = sortie coupée, None = 100) : c'est ainsi que
+    la sonnerie et le combiné gardent chacun leur volume même s'ils partagent
+    une sortie.
 
     Retourne True si la sortie est bien celle demandée (y compris quand rien
     n'a eu besoin d'être fait). Un échec est journalisé sans être propagé :
     l'appelant joue quand même le fichier.
     """
     global _last_output, _last_volume, _last_levels
-    if output not in OUTPUTS:
-        logger.error("Sortie inconnue : %r (attendu %s)", output, ", ".join(OUTPUTS))
+    if not _verifier_sortie(output):
         return False
     volume = _clamp_volume(volume)
     levels = max_levels()
@@ -165,14 +182,8 @@ def select_output(output: str, force: bool = False, volume: Optional[int] = None
             and _last_levels == levels):
         return True
 
-    result = _run([f"switch-{output}", str(volume)], config.AUDIO_SWITCH_TIMEOUT_SEC)
-    if result is None:
-        _last_output = _last_volume = None
-        return False
-    if result.returncode != 0:
-        logger.warning("Commutation vers %s en échec (code %s) : %s",
-                       output, result.returncode, (result.stderr or "").strip())
-        _last_output = _last_volume = None
+    if not _appliquer([f"switch-{output}", str(volume)], config.AUDIO_SWITCH_TIMEOUT_SEC,
+                      f"Commutation vers {output} en échec"):
         return False
 
     _last_output, _last_volume, _last_levels = output, volume, levels
@@ -213,7 +224,7 @@ def _cli() -> None:
     """Test manuel : `python3 src/alsa_io.py lineout` ou `... status`."""
     import argparse
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format=fichiers.FORMAT_JOURNAL)
     parser = argparse.ArgumentParser(description="Commutation des sorties du codec.")
     parser.add_argument("action", choices=[*OUTPUTS, "status", "setup"],
                         help="sortie à activer, 'setup' (config complète) ou 'status'")

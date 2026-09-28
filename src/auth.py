@@ -6,24 +6,26 @@ clair dans le code. La clé de session Flask est générée aléatoirement au
 premier démarrage et persistée dans secret_key.txt (permissions 600), pour
 que les sessions ouvertes survivent à un redémarrage du service.
 
-Un second mot de passe, dit « admin », fonctionne en parallèle du mot de
-passe standard : les deux donnent accès à la même session (aucune
-fonctionnalité admin n'est encore conditionnée dessus). Contrairement au
-mot de passe standard, il n'a aucune valeur par défaut — tant que
-`set_admin_password.py` n'a pas été exécuté, seul le mot de passe standard
-fonctionne.
+Un second mot de passe, dit « admin », ouvre une session administrateur :
+elle seule peut modifier les paramètres de niveau « admin », les fichiers
+audio et réinitialiser la synchronisation bidirectionnelle (§6).
+Contrairement au mot de passe standard, il n'a aucune valeur par défaut —
+tant que `set_admin_password.py` n'a pas été exécuté, seul le mot de passe
+standard fonctionne, sans accès administrateur.
 """
 
-import json
+import getpass
 import logging
 import os
 import secrets
+import sys
 import time
-from typing import Dict, Tuple
+from typing import Callable, Dict, Tuple
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import config
+import fichiers
 
 logger = logging.getLogger(__name__)
 
@@ -33,22 +35,31 @@ DEFAULT_PASSWORD = "livredor"
 _failed_attempts: Dict[str, Tuple[int, float]] = {}
 
 
+PASSWORD_KEY = "password_hash"
+ADMIN_PASSWORD_KEY = "admin_password_hash"
+
+
 def _read_config() -> dict:
-    try:
-        return json.loads(config.DASHBOARD_CONFIG_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    return fichiers.lire_json_dict(config.DASHBOARD_CONFIG_FILE)
 
 
-def _write_config(data: dict) -> None:
-    tmp_path = config.DASHBOARD_CONFIG_FILE.with_suffix(config.DASHBOARD_CONFIG_FILE.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp_path, config.DASHBOARD_CONFIG_FILE)
+def _set_hash(key: str, new_password: str) -> None:
+    data = _read_config()
+    data[key] = generate_password_hash(new_password)
+    fichiers.ecrire_json_atomique(config.DASHBOARD_CONFIG_FILE, data)
+
+
+def _verify(key: str, password: str) -> bool:
+    """False si aucun mot de passe n'est enregistré sous `key`."""
+    password_hash = _read_config().get(key)
+    if not password_hash:
+        return False
+    return check_password_hash(password_hash, password)
 
 
 def ensure_password_configured() -> None:
     """Initialise dashboard_config.json avec le mot de passe par défaut s'il n'existe pas encore."""
-    if "password_hash" not in _read_config():
+    if PASSWORD_KEY not in _read_config():
         logger.warning(
             "Aucun mot de passe dashboard configuré : mot de passe par défaut %r utilisé — "
             "à changer immédiatement avec `python3 src/set_password.py`.", DEFAULT_PASSWORD,
@@ -57,30 +68,39 @@ def ensure_password_configured() -> None:
 
 
 def set_password(new_password: str) -> None:
-    data = _read_config()
-    data["password_hash"] = generate_password_hash(new_password)
-    _write_config(data)
+    _set_hash(PASSWORD_KEY, new_password)
 
 
 def verify_password(password: str) -> bool:
-    password_hash = _read_config().get("password_hash")
-    if not password_hash:
-        return False
-    return check_password_hash(password_hash, password)
+    return _verify(PASSWORD_KEY, password)
 
 
 def set_admin_password(new_password: str) -> None:
-    data = _read_config()
-    data["admin_password_hash"] = generate_password_hash(new_password)
-    _write_config(data)
+    _set_hash(ADMIN_PASSWORD_KEY, new_password)
 
 
 def verify_admin_password(password: str) -> bool:
     """Non configuré par défaut : renvoie False tant que set_admin_password.py n'a pas été exécuté."""
-    password_hash = _read_config().get("admin_password_hash")
-    if not password_hash:
-        return False
-    return check_password_hash(password_hash, password)
+    return _verify(ADMIN_PASSWORD_KEY, password)
+
+
+def saisir_mot_de_passe(invite: str, enregistrer: Callable[[str], None],
+                        confirmation: str) -> None:
+    """Saisie interactive commune à set_password.py et set_admin_password.py.
+
+    Demande le mot de passe deux fois, refuse un mot de passe vide ou une
+    confirmation différente (sortie en code 1), puis appelle `enregistrer`.
+    """
+    password = getpass.getpass(invite)
+    confirm = getpass.getpass("Confirmez : ")
+    if not password:
+        print("Le mot de passe ne peut pas être vide.", file=sys.stderr)
+        raise SystemExit(1)
+    if password != confirm:
+        print("Les deux mots de passe ne correspondent pas.", file=sys.stderr)
+        raise SystemExit(1)
+    enregistrer(password)
+    print(confirmation)
 
 
 def get_or_create_secret_key() -> str:
@@ -91,8 +111,13 @@ def get_or_create_secret_key() -> str:
         if key:
             return key
     key = secrets.token_hex(32)
-    path.write_text(key, encoding="utf-8")
+    # Créé directement en 600 : écrire puis restreindre laissait la clé
+    # lisible par tous le temps de l'écriture.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(key)
     try:
+        # Fichier préexistant (vide) : os.open n'a pas changé ses droits.
         os.chmod(path, 0o600)
     except OSError:
         logger.exception("Impossible de restreindre les permissions de %s à 600", path)

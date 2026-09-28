@@ -10,22 +10,21 @@ Le choix est sérialisé dans `audio_config.json` (contrat du §8) :
 
     { "roles": { "sonnerie": "cloches.mp3", "message_3": "papy.m4a" } }
 
-Fichier dédié, et non `custom_config.json` : ce dernier n'est lu qu'une fois,
-à l'import de `config.py`, et impose un redémarrage du service, alors que le
-mapping doit être relu à chaque conversion.
+Fichier dédié, et non `custom_config.json` : ce dernier ne porte que des
+paramètres scalaires déclarés dans `config.MODIFIABLE_PARAMS`, alors que le
+mapping est un dictionnaire relu à chaque conversion.
 
 **Repli** : un rôle sans entrée explicite retombe sur l'ancienne convention de
 nommage `audio_src/<role>.*`. Une installation antérieure continue donc de
 fonctionner sans `audio_config.json`.
 """
 
-import json
 import logging
-import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import config
+import fichiers
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +34,6 @@ SOURCE_EXTENSIONS = {
     ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus",
     ".flac", ".aiff", ".aif", ".wma", ".3gp", ".amr",
 }
-
-DEFAULT_CONFIG = {"roles": {}}
 
 ROLE_SONNERIE = "sonnerie"
 ROLE_MESSAGE_GENERIQUE = "message_generique"
@@ -84,11 +81,7 @@ def target_for(role: str) -> Optional[Path]:
 
 def read_config() -> dict:
     """Mapping courant ; valeurs par défaut si le fichier est absent ou illisible (§7.4)."""
-    try:
-        data = json.loads(config.AUDIO_CONFIG_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"roles": {}}
-    roles = data.get("roles") if isinstance(data, dict) else None
+    roles = fichiers.lire_json_dict(config.AUDIO_CONFIG_FILE).get("roles")
     if not isinstance(roles, dict):
         return {"roles": {}}
     # On ne garde que les rôles connus et les valeurs textuelles : le fichier
@@ -98,16 +91,13 @@ def read_config() -> dict:
 
 
 def write_config(cfg: dict) -> None:
-    """Écriture atomique (fichier temporaire + os.replace, cohérent avec status_io.py)."""
-    config.AUDIO_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = config.AUDIO_CONFIG_FILE.with_suffix(config.AUDIO_CONFIG_FILE.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp_path, config.AUDIO_CONFIG_FILE)
+    """Écriture atomique (fichier temporaire + os.replace)."""
+    fichiers.ecrire_json_atomique(config.AUDIO_CONFIG_FILE, cfg)
 
 
 def ensure_config_exists() -> None:
     if not config.AUDIO_CONFIG_FILE.exists():
-        write_config(dict(DEFAULT_CONFIG))
+        write_config({"roles": {}})
 
 
 # --- Sources disponibles -------------------------------------------------
@@ -136,33 +126,38 @@ def _is_safe_name(nom: str) -> bool:
     return bool(nom) and Path(nom).name == nom and nom not in (".", "..")
 
 
-def source_for(role: str) -> Optional[Path]:
-    """Fichier source de ce rôle : mapping explicite, puis repli sur la convention.
+def _resoudre(role: str, roles: Dict[str, str]) -> Tuple[Optional[Path], str]:
+    """(fichier source, origine) du rôle, d'après un mapping déjà lu.
 
     Précédence :
-    1. le fichier choisi dans le dashboard, s'il existe toujours ;
-    2. l'ancienne convention `audio_src/<role>.*` (premier par ordre alphabétique) ;
-    3. None — le rôle n'a pas de source.
+    1. le fichier choisi dans le dashboard, s'il existe toujours ("mapping") ;
+    2. l'ancienne convention `audio_src/<role>.*`, premier par ordre
+       alphabétique ("convention") ;
+    3. (None, "absent") — le rôle n'a pas de source.
     """
-    nom = read_config()["roles"].get(role)
+    nom = roles.get(role)
     if nom and _is_safe_name(nom):
         chemin = config.AUDIO_SRC_DIR / nom
         if chemin.is_file():
-            return chemin
+            return chemin, "mapping"
         logger.warning("Source %r du rôle %r introuvable : repli sur la convention "
                        "de nommage.", nom, role)
 
     candidats = sorted(p for p in config.AUDIO_SRC_DIR.glob(f"{role}.*")
                        if p.is_file() and p.suffix.lower() in SOURCE_EXTENSIONS)
-    return candidats[0] if candidats else None
+    if candidats:
+        return candidats[0], "convention"
+    return None, "absent"
+
+
+def source_for(role: str) -> Optional[Path]:
+    """Fichier source de ce rôle : mapping explicite, puis repli sur la convention."""
+    return _resoudre(role, read_config()["roles"])[0]
 
 
 def origin_for(role: str) -> str:
     """D'où vient la source du rôle : "mapping", "convention" ou "absent"."""
-    nom = read_config()["roles"].get(role)
-    if nom and _is_safe_name(nom) and (config.AUDIO_SRC_DIR / nom).is_file():
-        return "mapping"
-    return "convention" if source_for(role) is not None else "absent"
+    return _resoudre(role, read_config()["roles"])[1]
 
 
 def set_role_sources(mapping: Dict[str, Optional[str]]) -> dict:
@@ -213,7 +208,7 @@ def mapping_status() -> List[dict]:
     cfg = read_config()["roles"]
     etat = []
     for role in ROLE_NAMES:
-        source = source_for(role)
+        source, origine = _resoudre(role, cfg)
         cible = target_for(role)
         cible_existe = bool(cible and cible.exists())
 
@@ -232,7 +227,7 @@ def mapping_status() -> List[dict]:
             "label": ROLE_LABELS.get(role, role),
             "source": cfg.get(role),
             "source_effective": source.name if source else None,
-            "origine": origin_for(role),
+            "origine": origine,
             "cible": cible.name if cible else None,
             "pret": cible_existe,
             "perimee": perimee,
