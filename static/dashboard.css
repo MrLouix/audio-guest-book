@@ -200,6 +200,23 @@ button:disabled {
   color: var(--fg);
 }
 
+/* Curseur de volume : la valeur courante reste lisible à côté. */
+.range-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.range-field input[type="range"] {
+  flex: 1;
+}
+
+.range-field output {
+  min-width: 3ch;
+  text-align: right;
+  color: var(--fg);
+}
+
 button.secondary {
   background: transparent;
   color: var(--fg);

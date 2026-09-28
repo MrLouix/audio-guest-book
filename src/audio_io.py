@@ -37,7 +37,8 @@ def play(path: Path, should_continue: Callable[[], bool],
          poll_interval: float = POLL_INTERVAL_SEC,
          timeout_sec: Optional[float] = None,
          device: Optional[str] = None,
-         output: Optional[str] = None) -> str:
+         output: Optional[str] = None,
+         volume: Optional[int] = None) -> str:
     """Joue un fichier WAV sur la carte son configurée.
 
     should_continue() est interrogé toutes les poll_interval secondes ; dès
@@ -53,6 +54,9 @@ def play(path: Path, should_continue: Callable[[], bool],
     La commutation est faite AVANT l'ouverture du PCM — la faire après
     mettrait les premières dizaines de millisecondes sur le mauvais
     haut-parleur. Un échec de commutation n'empêche jamais la lecture.
+
+    volume (pourcentage, cf. config.VOLUME_SONNERIE / VOLUME_COMBINE) est
+    appliqué avec la commutation ; ignoré sans output.
     """
     if not path.exists():
         logger.error("Fichier audio introuvable : %s", path)
@@ -62,7 +66,7 @@ def play(path: Path, should_continue: Callable[[], bool],
         # Import local : alsa_io importe ce module (pour card_index), un
         # import en tête de fichier serait circulaire.
         import alsa_io
-        alsa_io.select_output(output)
+        alsa_io.select_output(output, volume=volume)
 
     cmd = ["aplay", "-D", device or config.SOUND_CARD, str(path)]
     logger.debug("Lecture : %s", " ".join(cmd))

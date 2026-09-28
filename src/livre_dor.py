@@ -279,6 +279,7 @@ class Tonalite:
             timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
             device=self.device,
             output=config.AUDIO_OUTPUT_COMBINE,
+            volume=config.VOLUME_COMBINE,
         )
         if resultat == "error":
             # Fichier manquant ou aplay en échec : ne pas boucler sur l'erreur,
@@ -342,6 +343,14 @@ class GuestBookStateMachine:
         self._last_ring_start_ts = time.monotonic()
         last_heartbeat = time.monotonic()
         while not self._stop.is_set():
+            # Paramètres modifiables à chaud depuis /settings (volumes,
+            # cadence de la sonnerie…) : relus ici, entre deux communications,
+            # jamais au milieu d'une. La relecture est limitée à une par
+            # seconde par config.LIVE_RELOAD_SEC.
+            changes = config.refresh_live_params()
+            if changes:
+                logger.info("Paramètres rechargés à chaud : %s",
+                            ", ".join(f"{k}={v}" for k, v in sorted(changes.items())))
             # Mode relu à chaque tour : une bascule depuis le dashboard est
             # prise en compte en moins d'une seconde, et jamais au milieu
             # d'une communication déjà engagée (§5.7).
@@ -415,6 +424,7 @@ class GuestBookStateMachine:
                     should_continue=self._sonnerie_continue,
                     timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
                     output=config.AUDIO_OUTPUT_SONNERIE,
+                    volume=config.VOLUME_SONNERIE,
                 )
                 # Une erreur (fichier absent, aplay en échec) se répéterait à
                 # l'identique : inutile d'enchaîner les tentatives.
@@ -456,14 +466,16 @@ class GuestBookStateMachine:
         self._set_state(STATE_APPEL_REPONDU, detail=message_path.name)
         audio_io.play(message_path, should_continue=self._hook_up_ignoring_dial,
                       timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                      output=config.AUDIO_OUTPUT_COMBINE)
+                      output=config.AUDIO_OUTPUT_COMBINE,
+                      volume=config.VOLUME_COMBINE)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant le message (appel répondu), retour en attente.")
             return
 
         audio_io.play(config.BIP_WAV, should_continue=self._hook_up_ignoring_dial,
                       timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                      output=config.AUDIO_OUTPUT_COMBINE)
+                      output=config.AUDIO_OUTPUT_COMBINE,
+                      volume=config.VOLUME_COMBINE)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant le bip (appel répondu), retour en attente.")
             return
@@ -509,14 +521,16 @@ class GuestBookStateMachine:
         logger.info("Lecture du message : %s", message_path.name)
         audio_io.play(message_path, should_continue=self.inputs.is_hook_up,
                       timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                      output=config.AUDIO_OUTPUT_COMBINE)
+                      output=config.AUDIO_OUTPUT_COMBINE,
+                      volume=config.VOLUME_COMBINE)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant le message, retour en attente.")
             return
 
         audio_io.play(config.BIP_WAV, should_continue=self.inputs.is_hook_up,
                       timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                      output=config.AUDIO_OUTPUT_COMBINE)
+                      output=config.AUDIO_OUTPUT_COMBINE,
+                      volume=config.VOLUME_COMBINE)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant le bip, retour en attente.")
             return
@@ -543,7 +557,8 @@ class GuestBookStateMachine:
             audio_io.play(restitution_absence_wav(),
                           should_continue=self._hook_up_ignoring_dial,
                           timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                          output=config.AUDIO_OUTPUT_COMBINE)
+                          output=config.AUDIO_OUTPUT_COMBINE,
+                          volume=config.VOLUME_COMBINE)
             self._wait_for_hangup()
             return
 
@@ -636,7 +651,8 @@ class GuestBookStateMachine:
         audio_io.play(message_path, should_continue=self._hook_up_ignoring_dial,
                       timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
                       device=config.RESTITUTION_SOUND_CARD,
-                      output=config.AUDIO_OUTPUT_COMBINE)
+                      output=config.AUDIO_OUTPUT_COMBINE,
+                      volume=config.VOLUME_COMBINE)
         if not self.inputs.is_hook_up():
             logger.info("Raccroché pendant la lecture (mode restitution), retour en attente.")
             return
@@ -878,10 +894,10 @@ def main() -> None:
     # Récapitulatif de ce que le service va réellement utiliser. Un « aucun
     # son » se diagnostique d'abord ici : carte, sorties et format effectifs,
     # qui viennent de custom_config.json autant que des valeurs par défaut.
-    logger.info("Audio : carte %s, sonnerie sur %s, combiné sur %s, %d Hz %d canaux ; "
-                "tonalité bornée à %d s.",
-                config.SOUND_CARD, config.AUDIO_OUTPUT_SONNERIE,
-                config.AUDIO_OUTPUT_COMBINE, config.AUDIO_RATE_HZ,
+    logger.info("Audio : carte %s, sonnerie sur %s (volume %d %%), combiné sur %s "
+                "(volume %d %%), %d Hz %d canaux ; tonalité bornée à %d s.",
+                config.SOUND_CARD, config.AUDIO_OUTPUT_SONNERIE, config.VOLUME_SONNERIE,
+                config.AUDIO_OUTPUT_COMBINE, config.VOLUME_COMBINE, config.AUDIO_RATE_HZ,
                 config.AUDIO_CHANNELS, config.TONALITE_MAX_SEC)
 
     inputs = gpio_io.PhoneInputs()

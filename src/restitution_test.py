@@ -58,7 +58,7 @@ class FakeAudio:
         self._lock = threading.Lock()
 
     def play(self, path, should_continue, poll_interval=0.1, timeout_sec=None,
-             device=None, output=None) -> str:
+             device=None, output=None, volume=None) -> str:
         with self._lock:
             self.played.append(Path(path))
         deadline = time.monotonic() + PLAY_DURATION_SEC

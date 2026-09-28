@@ -181,6 +181,20 @@ API (administrateur uniquement pour les écritures) : `GET /api/audio/sources`, 
 
 Deux garde-fous : les conversions sont refusées (409) tant que `status.json` n'est pas en `attente` — décoder une dizaine de fichiers sature le Pi Zero 2 W et provoquerait des ratés si un invité était en train de laisser son message — et un verrou non bloquant répond « occupé » plutôt que d'empiler deux décodages. Les noms de fichier venus du formulaire sont validés : ni chemin absolu, ni `..`, ni sous-chemin, et le fichier doit exister dans `audio_src/`.
 
+### Page Paramètres : paramètres de fonctionnement
+
+Les paramètres modifiables (`MODIFIABLE_PARAMS` dans `src/config.py`, écrits dans `custom_config.json`) sont répartis en trois sections, selon la clé `niveau` :
+
+| Section | Qui peut modifier | Prise en compte | Paramètres |
+|---|---|---|---|
+| 🔊 Réglages courants (`utilisateur`) | tout utilisateur connecté | à chaud | `VOLUME_SONNERIE`, `VOLUME_COMBINE`, `RING_INTERVAL_SEC`, `RING_COUNT`, `RING_PAUSE_SEC` |
+| 🛠️ Réglages administrateur (`admin`) | administrateur | à chaud | fenêtre de grâce, durées d'enregistrement et de lecture, tonalité, sorties du codec, mode restitution |
+| ⚠️ Redémarrage nécessaire (`admin_redemarrage`) | administrateur | au redémarrage du service | `SOUND_CARD`, niveaux et anti-rebonds GPIO, `LOG_LEVEL` |
+
+« À chaud » : la machine à états relit `custom_config.json` (au plus une fois par seconde, `LIVE_RELOAD_SEC`) à chaque tour de sa boucle d'attente, donc entre deux communications, jamais au milieu d'une. Un paramètre `utilisateur` ne peut pas exiger de redémarrage. Un non-admin voit les sections admin en lecture seule, et `POST /api/settings` lui répond 403 s'il tente d'y écrire ; les valeurs hors bornes (`min`/`max`) sont refusées (400).
+
+**Volumes** : `VOLUME_SONNERIE` et `VOLUME_COMBINE` sont des pourcentages (0-100) du niveau de référence réglé au banc — 100 reproduit exactement le comportement antérieur, 0 coupe la sortie. Ils sont passés à `scripts/audio-setup.sh switch-<sortie> <volume>` à chaque commutation, donc par rôle : sonnerie et combiné gardent chacun leur volume même s'ils partagent une sortie. L'échelle suit la valeur brute du contrôle, donc linéaire en dB (50 % ≈ −31 dB au casque, −24 dB au line out).
+
 Le formulaire des fichiers audio est **distinct** de celui des paramètres de fonctionnement : changer un timeout ne déclenche pas une conversion.
 
 ## Authentification du dashboard (Sprint 6)

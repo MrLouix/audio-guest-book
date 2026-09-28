@@ -351,7 +351,14 @@ def settings_page():
     return render_template(
         "settings.html",
         config=current_config,
-        modifiable_params=config.MODIFIABLE_PARAMS,
+        # Trois sections : utilisateur (à chaud), admin (à chaud), admin
+        # nécessitant un redémarrage. Un non-admin voit les deux dernières en
+        # lecture seule.
+        sections_params=[
+            {"niveau": niveau, "params": config.params_par_niveau(niveau)}
+            for niveau in config.NIVEAUX
+        ],
+        is_admin=bool(session.get("is_admin")),
         gpio_status=gpio_status,
         gpio_available=gpio_io.is_gpio_available(),
         sound_card=config.SOUND_CARD,
@@ -385,11 +392,12 @@ def api_settings_get():
 
 @app.route("/api/settings", methods=["POST"])
 def api_settings_post():
-    """Met à jour les paramètres de configuration."""
-    # Vérifier que l'utilisateur est admin
-    if not session.get("is_admin"):
-        return jsonify({"erreur": "Seul un administrateur peut modifier les paramètres"}), 403
-    
+    """Met à jour les paramètres de configuration.
+
+    Tout utilisateur connecté peut modifier les paramètres de niveau
+    « utilisateur » (volumes, sonnerie) ; les autres sont réservés à
+    l'administrateur — la vérification est faite par config.update_config().
+    """
     data = request.get_json(silent=True) or request.form
     new_values = {}
     
@@ -402,10 +410,15 @@ def api_settings_post():
         return jsonify({"erreur": "Aucun paramètre à mettre à jour"}), 400
     
     # Mettre à jour la configuration
-    result = config.update_config(new_values)
+    result = config.update_config(new_values, is_admin=bool(session.get("is_admin")))
     
     if not result["ok"]:
-        return jsonify({"erreur": result["erreur"]}), 500
+        if result.get("interdit"):
+            return jsonify({"erreur": result["erreur"]}), 403
+        # Valeur hors bornes ou d'un mauvais type : erreur de saisie, pas du
+        # serveur. Seule l'écriture du fichier est une vraie 500.
+        code = 400 if result["erreur"].startswith("Valeur invalide") else 500
+        return jsonify({"erreur": result["erreur"]}), code
     
     # Retourner le résultat avec un avertissement si redémarrage nécessaire
     response = {
@@ -582,7 +595,7 @@ def api_audio_test():
 
     resultat = audio_io.play(cible, should_continue=lambda: True,
                              timeout_sec=config.AUDIO_PLAY_TIMEOUT_SEC,
-                             output=sortie)
+                             output=sortie, volume=prepare_audio.volume_for(role))
     if resultat != "completed":
         return jsonify({"erreur": f"Lecture de {cible.name} : {resultat}"}), 500
     return jsonify({"ok": True, "message": f"{cible.name} joué sur {sortie}."})

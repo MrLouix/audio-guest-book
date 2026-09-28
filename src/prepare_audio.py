@@ -114,6 +114,13 @@ def output_for(role: str) -> str:
     return config.AUDIO_OUTPUT_COMBINE
 
 
+def volume_for(role: Optional[str]) -> int:
+    """Volume (%) auquel ce rôle est joué : celui de la sonnerie ou du combiné."""
+    if role == audio_config.ROLE_SONNERIE:
+        return config.VOLUME_SONNERIE
+    return config.VOLUME_COMBINE
+
+
 # --- Traitement du signal ------------------------------------------------
 
 
@@ -295,7 +302,8 @@ def play_all() -> None:
         role = cibles.get(path.name)
         sortie = output_for(role) if role else config.AUDIO_OUTPUT_COMBINE
         input(f"Entrée pour jouer {path.name} sur {sortie} (Ctrl+C pour arrêter)... ")
-        result = audio_io.play(path, should_continue=lambda: True, output=sortie)
+        result = audio_io.play(path, should_continue=lambda: True, output=sortie,
+                               volume=volume_for(role))
         print(f"  -> {result}")
 
 

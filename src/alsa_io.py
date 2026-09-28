@@ -39,10 +39,13 @@ OUTPUT_HEADPHONE = "headphone"
 OUTPUT_BOTH = "both"
 OUTPUTS = (OUTPUT_LINEOUT, OUTPUT_HEADPHONE, OUTPUT_BOTH)
 
-# Dernière sortie effectivement appliquée. Sur un parcours invité la séquence
-# est lineout (sonnerie) -> headphone (message) -> headphone (bip) : le cache
-# économise une commutation sur trois.
+VOLUME_MAX = 100
+
+# Dernière sortie effectivement appliquée, et son volume. Sur un parcours
+# invité la séquence est lineout (sonnerie) -> headphone (message) ->
+# headphone (bip) : le cache économise une commutation sur trois.
 _last_output: Optional[str] = None
+_last_volume: Optional[int] = None
 # L'avertissement « configuration ALSA indisponible » n'est émis qu'une fois,
 # sinon c'est une ligne de log par lecture.
 _unavailable_warned = False
@@ -92,7 +95,7 @@ def setup_card(mode: str = OUTPUT_HEADPHONE, store: bool = False) -> bool:
     service tourne sous un utilisateur non privilégié — c'est
     `scripts/install.sh` qui fige l'état une fois pour toutes.
     """
-    global _last_output
+    global _last_output, _last_volume
     if mode not in OUTPUTS:
         logger.error("Sortie inconnue : %r (attendu %s)", mode, ", ".join(OUTPUTS))
         return False
@@ -100,49 +103,66 @@ def setup_card(mode: str = OUTPUT_HEADPHONE, store: bool = False) -> bool:
     argv = [mode] if store else ["--no-store", mode]
     result = _run(argv, config.AUDIO_SETUP_TIMEOUT_SEC)
     if result is None:
-        _last_output = None
+        _last_output = _last_volume = None
         return False
     if result.returncode != 0:
         logger.warning("Configuration du codec en échec (code %s) : %s",
                        result.returncode, (result.stderr or "").strip())
-        _last_output = None
+        _last_output = _last_volume = None
         return False
 
-    _last_output = mode
+    # La configuration complète pose le niveau de référence (100 %).
+    _last_output, _last_volume = mode, VOLUME_MAX
     logger.info("Codec configuré (sortie %s).", mode)
     return True
 
 
-def select_output(output: str, force: bool = False) -> bool:
+def _clamp_volume(volume: Optional[int]) -> int:
+    """Volume en pourcentage borné à 0..100 ; None = niveau de référence."""
+    if volume is None:
+        return VOLUME_MAX
+    try:
+        return max(0, min(VOLUME_MAX, int(volume)))
+    except (TypeError, ValueError):
+        logger.warning("Volume illisible : %r, niveau de référence utilisé.", volume)
+        return VOLUME_MAX
+
+
+def select_output(output: str, force: bool = False, volume: Optional[int] = None) -> bool:
     """Commute le codec sur `output` avant une lecture (commutation rapide).
 
     Ne touche ni à l'entrée micro ni au routage, et n'écrit jamais
     asound.state : seuls les numids de sortie sont modifiés, soit quelques
     dizaines de millisecondes.
 
+    `volume` est un pourcentage du niveau de référence (0 = sortie coupée,
+    None = 100) : c'est ainsi que la sonnerie et le combiné gardent chacun
+    leur volume même s'ils partagent une sortie.
+
     Retourne True si la sortie est bien celle demandée (y compris quand rien
     n'a eu besoin d'être fait). Un échec est journalisé sans être propagé :
     l'appelant joue quand même le fichier.
     """
-    global _last_output
+    global _last_output, _last_volume
     if output not in OUTPUTS:
         logger.error("Sortie inconnue : %r (attendu %s)", output, ", ".join(OUTPUTS))
         return False
-    if not force and _last_output == output:
+    volume = _clamp_volume(volume)
+    if not force and _last_output == output and _last_volume == volume:
         return True
 
-    result = _run([f"switch-{output}"], config.AUDIO_SWITCH_TIMEOUT_SEC)
+    result = _run([f"switch-{output}", str(volume)], config.AUDIO_SWITCH_TIMEOUT_SEC)
     if result is None:
-        _last_output = None
+        _last_output = _last_volume = None
         return False
     if result.returncode != 0:
         logger.warning("Commutation vers %s en échec (code %s) : %s",
                        output, result.returncode, (result.stderr or "").strip())
-        _last_output = None
+        _last_output = _last_volume = None
         return False
 
-    _last_output = output
-    logger.debug("Sortie commutée sur %s.", output)
+    _last_output, _last_volume = output, volume
+    logger.debug("Sortie commutée sur %s (volume %d %%).", output, volume)
     return True
 
 
@@ -164,8 +184,8 @@ def current_output() -> Optional[str]:
 
 def invalidate_cache() -> None:
     """Oublie la dernière sortie appliquée (tests, ou reconfiguration externe)."""
-    global _last_output, _unavailable_warned
-    _last_output = None
+    global _last_output, _last_volume, _unavailable_warned
+    _last_output = _last_volume = None
     _unavailable_warned = False
 
 

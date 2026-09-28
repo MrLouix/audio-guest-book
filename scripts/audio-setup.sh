@@ -16,10 +16,15 @@
 #   ./audio-setup.sh switch-headphone      -> bascule de sortie seule (rapide)
 #   ./audio-setup.sh switch-lineout        -> idem, vers le line out
 #   ./audio-setup.sh switch-both           -> idem, les deux sorties
+#   ./audio-setup.sh switch-lineout 60     -> idem, volume a 60 %
 #
 # Les modes switch-* ne touchent ni a l'entree ni au routage et n'ecrivent
 # jamais asound.state : c'est ce que src/alsa_io.py appelle avant chaque
 # lecture pour envoyer la sonnerie sur le line out et le reste sur le casque.
+# Le second argument, facultatif, est le volume en pourcentage (0-100) du
+# niveau de reference ci-dessous (defaut 100). Il est proportionnel a la
+# valeur brute du controle, donc lineaire en dB : 50 % = -31 dB au casque,
+# -24 dB au line out. 0 coupe la sortie (switch off).
 #
 # Cablage du livre d'or (cf. README, "Sorties audio") :
 #   - line out   -> 1 haut-parleur mono de sonnerie, qui lit la piste gauche
@@ -150,28 +155,48 @@ setup_routing() {
 
 # ------------------------------------------------------------- sorties
 
+# Niveaux de reference (100 %) : ceux valides au banc.
+HP_VOL_REF=63               # Headphone Volume       0 dB
+LO_VOL_REF=48               # Lineout Volume         0 dB
+VOLUME=100                  # pourcentage, cf. en-tete
+
+hp_on() {
+    local v=$(( HP_VOL_REF * VOLUME / 100 ))
+    set_ctl 75 on           # HP Jack Switch
+    if [ "$VOLUME" -eq 0 ]; then
+        set_ctl 28 off,off  # volume 0 : casque coupe
+    else
+        set_ctl 28 on,on    # Headphone on
+    fi
+    set_ctl 7  "$v,$v"      # Headphone Volume
+}
+
+lo_on() {
+    local v=$(( LO_VOL_REF * VOLUME / 100 ))
+    if [ "$VOLUME" -eq 0 ]; then
+        set_ctl 29 off      # volume 0 : line out coupe
+    else
+        set_ctl 29 on       # Lineout on
+    fi
+    set_ctl 8  "$v"         # Lineout Volume
+}
+
 output_headphone() {
     set_ctl 29 off          # Lineout off
-    set_ctl 75 on           # HP Jack Switch
-    set_ctl 28 on,on        # Headphone on
-    set_ctl 7  63,63        # Headphone Volume       0 dB
-    echo "Sortie  : casque"
+    hp_on
+    echo "Sortie  : casque ($VOLUME %)"
 }
 
 output_lineout() {
     set_ctl 28 off,off      # Headphone off
-    set_ctl 29 on           # Lineout on
-    set_ctl 8  48           # Lineout Volume         0 dB
-    echo "Sortie  : line out"
+    lo_on
+    echo "Sortie  : line out ($VOLUME %)"
 }
 
 output_both() {
-    set_ctl 75 on           # HP Jack Switch
-    set_ctl 28 on,on        # Headphone on
-    set_ctl 7  63,63        # Headphone Volume       0 dB
-    set_ctl 29 on           # Lineout on
-    set_ctl 8  48           # Lineout Volume         0 dB
-    echo "Sortie  : casque + line out"
+    hp_on
+    lo_on
+    echo "Sortie  : casque + line out ($VOLUME %)"
 }
 
 # -------------------------------------------------------------- etat
@@ -236,6 +261,7 @@ Usage : audio-setup.sh [--no-store] {headphone|lineout|both|status|switch-*}
   switch-headphone  bascule de sortie seule, sans toucher entree/routage
   switch-lineout    idem, vers le line out
   switch-both       idem, les deux sorties
+  switch-* VOLUME   idem, volume en % du niveau de reference (0-100, 0 = coupe)
 
   --no-store        ne pas sauvegarder dans asound.state
 
@@ -277,6 +303,13 @@ case "$MODE" in
         # Appelee avant chaque lecture, elle ne doit rien reconfigurer
         # d'autre ni ecrire asound.state.
         STORE=0
+        if [ $# -ge 2 ]; then
+            case "$2" in
+                ''|*[!0-9]*) die "volume invalide : '$2' (entier 0-100 attendu)" ;;
+            esac
+            [ "$2" -le 100 ] || die "volume invalide : '$2' (entier 0-100 attendu)"
+            VOLUME=$(( 10#$2 ))
+        fi
         case "$MODE" in
             switch-headphone) output_headphone ;;
             switch-lineout)   output_lineout   ;;
