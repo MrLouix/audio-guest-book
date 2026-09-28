@@ -200,6 +200,8 @@ class Appel:
         # Sortie du codec demandée pour cette lecture ("lineout" pour la
         # sonnerie, "headphone" pour le combiné), cf. §4.1.
         self.sortie = sortie
+        # Volume (%) demandé avec la commutation ; None = niveau de référence.
+        self.volume: Optional[int] = None
         # Horodatages monotones : permettent de mesurer un intervalle entre
         # deux appels (cadence de la sonnerie) et de savoir si l'appel est
         # terminé (fin is None -> lecture encore en cours).
@@ -242,13 +244,15 @@ class AudioFactice:
     def play(self, path, should_continue, poll_interval: float = 0.1,
              timeout_sec: Optional[float] = None,
              device: Optional[str] = None,
-             output: Optional[str] = None) -> str:
+             output: Optional[str] = None,
+             volume: Optional[int] = None) -> str:
         appel = Appel(path, device=device, timeout_sec=timeout_sec, sortie=output)
+        appel.volume = volume
         # Comme le vrai audio_io.play : la commutation du codec précède la
         # lecture. C'est ce qui rend observable, via AlsaFactice, l'ordre des
         # bascules sur un parcours complet (§4.1).
         if output:
-            alsa_io.select_output(output)
+            alsa_io.select_output(output, volume=volume)
         appel.debut = time.monotonic()
         with self._verrou:
             self.lectures.append(appel)
@@ -324,6 +328,11 @@ class AudioFactice:
         """Sortie demandée pour la première lecture de ce fichier."""
         appels = self.lectures_de(nom)
         return appels[0].sortie if appels else None
+
+    def volume_de(self, nom: str) -> Optional[int]:
+        """Volume demandé pour la première lecture de ce fichier."""
+        appels = self.lectures_de(nom)
+        return appels[0].volume if appels else None
 
     def lectures_de(self, nom: str) -> List[Appel]:
         """Tous les appels de lecture portant sur ce nom de fichier."""
@@ -455,10 +464,13 @@ class AlsaFactice:
     def __init__(self, echouer: bool = False) -> None:
         self.echouer = echouer
         self.bascules: List[str] = []
+        self.volumes: List[Optional[int]] = []
         self.setups: List[str] = []
 
-    def select_output(self, output: str, force: bool = False) -> bool:
+    def select_output(self, output: str, force: bool = False,
+                      volume: Optional[int] = None) -> bool:
         self.bascules.append(output)
+        self.volumes.append(volume)
         return not self.echouer
 
     def setup_card(self, mode: str = "headphone", store: bool = False) -> bool:
@@ -473,6 +485,7 @@ class AlsaFactice:
 
     def reinitialiser(self) -> None:
         self.bascules.clear()
+        self.volumes.clear()
         self.setups.clear()
 
 
@@ -571,6 +584,10 @@ _PARAMS_SAUVEGARDES = (
     "AUDIO_RATE_HZ", "AUDIO_CHANNELS", "AUDIO_SAMPLE_FORMAT",
     "RECORD_RATE_HZ", "RECORD_CHANNELS",
     "AUDIO_OUTPUT_SONNERIE", "AUDIO_OUTPUT_COMBINE", "AUDIO_SETUP_SCRIPT",
+    "VOLUME_SONNERIE", "VOLUME_COMBINE", "AUDIO_MAX_DB_CASQUE", "AUDIO_MAX_DB_LINEOUT",
+    # Paramètres modifiables à chaud : sans redirection, refresh_live_params()
+    # appliquerait le vrai custom_config.json du Pi au milieu d'un scénario.
+    "CUSTOM_CONFIG_FILE",
     # Traitement des messages après enregistrement.
     "TRAITEMENT_ACTIF", "TRAITEMENT_NR", "TRAITEMENT_NOTCH",
     "TRAITEMENT_EXPANDEUR", "TRAITEMENT_PROFIL_DEBUT_SEC",
@@ -655,6 +672,7 @@ class Banc:
         config.RCLONE_LOG = config.LOGS_DIR / "rclone.log"
         config.LIVRE_DOR_LOG = config.LOGS_DIR / "livre_dor.log"
         config.RING_TRIGGER_FILE = self._dossier / "ring_trigger"
+        config.CUSTOM_CONFIG_FILE = self._dossier / "custom_config.json"
         config.TONALITE_WAV = config.AUDIO_DIR / "tonalite.wav"
         config.BIP_WAV = config.AUDIO_DIR / "bip.wav"
         config.RING_OUT_WAV = config.AUDIO_DIR / "ring_out.wav"

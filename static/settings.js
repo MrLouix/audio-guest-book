@@ -5,8 +5,7 @@
   var gpioHookEl = document.getElementById("gpio-hook");
   var gpioDialOffnormalEl = document.getElementById("gpio-dial-offnormal");
   var gpioDialPulseEl = document.getElementById("gpio-dial-pulse");
-  var settingsForm = document.getElementById("settings-form");
-  var settingsFeedback = document.getElementById("settings-feedback");
+  var settingsForms = document.querySelectorAll(".settings-form");
   var saveMessage = document.getElementById("save-message");
   var audioForm = document.getElementById("audio-form");
   var audioFeedback = document.getElementById("audio-feedback");
@@ -57,7 +56,10 @@
   function handleFormSubmit(event) {
     event.preventDefault();
 
+    // Chaque section a son propre formulaire : n'envoyer que ses champs,
+    // pour qu'un utilisateur non admin ne soumette jamais un paramètre admin.
     var form = event.target;
+    var settingsFeedback = form.querySelector(".settings-feedback");
     var formData = new FormData(form);
     var data = {};
 
@@ -72,6 +74,7 @@
     }
     if (saveMessage) {
       saveMessage.textContent = "";
+      saveMessage.hidden = true;
     }
 
     // Envoyer la requête
@@ -95,6 +98,7 @@
           if (result.data.redemarrage_necessaire) {
             if (saveMessage) {
               saveMessage.textContent = "⚠️ Certains paramètres nécessitent un redémarrage du service.";
+              saveMessage.hidden = false;
             }
           }
           // Rafraîchir la page après 2 secondes pour refléter les changements
@@ -214,10 +218,21 @@
       setInterval(refreshGPIOStatus, GPIO_REFRESH_MS);
     }
 
-    // Gérer le formulaire
-    if (settingsForm) {
-      settingsForm.addEventListener("submit", handleFormSubmit);
-    }
+    // Gérer les formulaires (un par section de paramètres)
+    Array.prototype.forEach.call(settingsForms, function (form) {
+      form.addEventListener("submit", handleFormSubmit);
+    });
+
+    // Curseurs de volume : afficher la valeur pendant le déplacement.
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.range-field input[type="range"]'),
+      function (curseur) {
+        var affichage = curseur.parentNode.querySelector("output");
+        curseur.addEventListener("input", function () {
+          if (affichage) affichage.textContent = curseur.value;
+        });
+      }
+    );
 
     // Formulaire des fichiers audio : charge utile disjointe de celle des
     // paramètres, pour ne pas déclencher une conversion en changeant un timeout.

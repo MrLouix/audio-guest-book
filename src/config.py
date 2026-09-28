@@ -13,15 +13,26 @@ Ordre de précédence d'un paramètre, du plus fort au plus faible :
    paramètres déclarés dans MODIFIABLE_PARAMS ;
 3. la valeur par défaut inscrite ici.
 
-Tout est résolu une fois pour toutes à l'import de ce module, et livre_dor.py
-tourne dans un autre processus que le dashboard : une modification faite
-depuis /settings ne prend donc effet qu'au redémarrage du service (cf.
-RESTART_REQUIRED_PARAMS). Seul le mode mariage/restitution bascule à chaud,
-via mode_config.json et non par ce mécanisme (§5.7).
+Tout est résolu une première fois à l'import de ce module, et livre_dor.py
+tourne dans un autre processus que le dashboard. Les paramètres de
+MODIFIABLE_PARAMS se répartissent donc en trois niveaux (clé « niveau ») :
+
+- « utilisateur » : modifiables par tout utilisateur connecté, pris en compte
+  à chaud (volumes, cadence de la sonnerie) ;
+- « admin » : réservés à l'administrateur, pris en compte à chaud ;
+- « admin_redemarrage » : réservés à l'administrateur, lus une seule fois au
+  démarrage (GPIO, carte son, journalisation) — cf. RESTART_REQUIRED_PARAMS.
+
+Les deux premiers niveaux forment LIVE_PARAMS : livre_dor.py appelle
+refresh_live_params() à chaque tour de sa boucle d'attente, qui relit
+custom_config.json quand il a changé et met à jour les constantes du module.
+Le mode mariage/restitution bascule lui aussi à chaud, mais via
+mode_config.json et non par ce mécanisme (§5.7).
 """
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -147,6 +158,21 @@ AUDIO_SETUP_SCRIPT = SCRIPTS_DIR / "audio-setup.sh"
 #   headphone : écouteur du combiné (L) + écouteur secondaire (R)
 AUDIO_OUTPUT_SONNERIE = _env("AUDIO_OUTPUT_SONNERIE", "lineout")
 AUDIO_OUTPUT_COMBINE = _env("AUDIO_OUTPUT_COMBINE", "headphone")
+
+# Volumes, en pourcentage du niveau de référence réglé au banc (100 = niveau
+# d'origine de scripts/audio-setup.sh, 0 = sortie coupée). Appliqués par
+# audio-setup.sh à chaque commutation, donc par rôle et non par sortie : si la
+# sonnerie et le combiné partagent la même sortie, chacun garde son volume.
+VOLUME_SONNERIE = _env_int("VOLUME_SONNERIE", 100)
+VOLUME_COMBINE = _env_int("VOLUME_COMBINE", 100)
+
+# Niveau maximum de chaque sortie du codec, en dB : ce que vaut un volume de
+# 100 %. Réglage administrateur, pour plafonner ce que les volumes en %
+# permettent. Passés à audio-setup.sh (ALSA_HP_MAX_DB / ALSA_LO_MAX_DB), qui
+# garde seul les numids et les échelles : casque -57..+6 dB, line out
+# -48..+15 dB, par pas de 1 dB. Les défauts reproduisent le réglage du banc.
+AUDIO_MAX_DB_CASQUE = _env_int("AUDIO_MAX_DB_CASQUE", 6)
+AUDIO_MAX_DB_LINEOUT = _env_int("AUDIO_MAX_DB_LINEOUT", 0)
 
 # Garde-fous sur les appels au script (amixer peut se bloquer sur une carte
 # qui vient d'être débranchée).
@@ -455,59 +481,181 @@ def ensure_directories() -> None:
 
 # --- Paramètres modifiables via le dashboard ---
 
-# Liste des paramètres modifiables via l'interface /settings
-# Format: (nom, type, valeur_par_defaut, description)
+# Niveaux d'accès (cf. docstring du module). Un paramètre « utilisateur » ne
+# peut jamais exiger de redémarrage : un utilisateur non admin n'a pas la main
+# sur le service.
+NIVEAU_UTILISATEUR = "utilisateur"
+NIVEAU_ADMIN = "admin"
+NIVEAU_ADMIN_REDEMARRAGE = "admin_redemarrage"
+NIVEAUX = (NIVEAU_UTILISATEUR, NIVEAU_ADMIN, NIVEAU_ADMIN_REDEMARRAGE)
+
+# Paramètres modifiables via l'interface /settings, dans l'ordre d'affichage.
+# Clés : type, default, label, niveau ; min, max et choices facultatifs.
 MODIFIABLE_PARAMS = {
+    # --- Utilisateur, à chaud ---------------------------------------------
+    "VOLUME_SONNERIE": {"type": "int", "default": 100, "min": 0, "max": 100,
+                        "niveau": NIVEAU_UTILISATEUR,
+                        "label": "Volume de la sonnerie (%, 0 = coupée)"},
+    "VOLUME_COMBINE": {"type": "int", "default": 100, "min": 0, "max": 100,
+                       "niveau": NIVEAU_UTILISATEUR,
+                       "label": "Volume du combiné et de l'écouteur secondaire (%, 0 = coupé)"},
     "RING_INTERVAL_SEC": {"type": "int", "default": 90, "min": 0,
+                          "niveau": NIVEAU_UTILISATEUR,
                           "label": "Intervalle de sonnerie (secondes, 0 = ne sonne jamais)"},
     "RING_COUNT": {"type": "int", "default": 5, "min": 1,
+                   "niveau": NIVEAU_UTILISATEUR,
                    "label": "Nombre de sonneries par appel"},
     "RING_PAUSE_SEC": {"type": "float", "default": 2.0, "min": 0,
+                       "niveau": NIVEAU_UTILISATEUR,
                        "label": "Silence entre deux sonneries (secondes)"},
-    "RING_ANSWER_GRACE_SEC": {"type": "int", "default": 5, "label": "Fenêtre de grâce pour répondre (secondes)"},
-    "MAX_RECORD_SEC": {"type": "int", "default": 120, "label": "Durée max d'enregistrement (secondes)"},
-    "SHORT_RECORDING_THRESHOLD_SEC": {"type": "float", "default": 2.0, "label": "Seuil enregistrement court (secondes)"},
-    "AUDIO_PLAY_TIMEOUT_SEC": {"type": "int", "default": 180, "label": "Timeout lecture audio (secondes)"},
-    "SOUND_CARD": {"type": "str", "default": "hw:1,0", "label": "Carte son ALSA"},
+
+    # --- Administrateur, à chaud ------------------------------------------
+    # Lus par livre_dor.py au moment où ils servent (config.X à chaque appel),
+    # jamais recopiés au démarrage : refresh_live_params() suffit.
+    "RING_ANSWER_GRACE_SEC": {"type": "int", "default": 5, "min": 0,
+                              "niveau": NIVEAU_ADMIN,
+                              "label": "Fenêtre de grâce pour répondre (secondes)"},
+    "MAX_RECORD_SEC": {"type": "int", "default": 120, "min": 1,
+                       "niveau": NIVEAU_ADMIN,
+                       "label": "Durée max d'enregistrement (secondes)"},
+    "SHORT_RECORDING_THRESHOLD_SEC": {"type": "float", "default": 2.0, "min": 0,
+                                      "niveau": NIVEAU_ADMIN,
+                                      "label": "Seuil enregistrement court (secondes)"},
+    "AUDIO_PLAY_TIMEOUT_SEC": {"type": "int", "default": 180, "min": 1,
+                               "niveau": NIVEAU_ADMIN,
+                               "label": "Timeout lecture audio (secondes)"},
+    # Tonalité d'invitation à numéroter (§1.2).
+    "TONALITE_MAX_SEC": {"type": "int", "default": 180, "min": 0,
+                         "niveau": NIVEAU_ADMIN,
+                         "label": "Durée max de la tonalité (secondes, 0 = aucune tonalité)"},
+    # Plafonds des sorties (100 % des volumes ci-dessus), appliqués à la
+    # commutation suivante. Bornes = échelles du DA7213 (audio-setup.sh).
+    "AUDIO_MAX_DB_CASQUE": {"type": "int", "default": 6, "min": -57, "max": 6,
+                            "niveau": NIVEAU_ADMIN,
+                            "label": "Niveau maximum du casque (combiné et écouteur secondaire) "
+                                     "en dB, de -57 à +6 — atteint à 100 % de volume"},
+    "AUDIO_MAX_DB_LINEOUT": {"type": "int", "default": 0, "min": -48, "max": 15,
+                             "niveau": NIVEAU_ADMIN,
+                             "label": "Niveau maximum du line out (haut-parleur de sonnerie) "
+                                      "en dB, de -48 à +15 — atteint à 100 % de volume"},
     # Sorties du codec : seul moyen de re-tester un câblage depuis le
-    # dashboard, sans SSH (§4.1).
+    # dashboard, sans SSH (§4.1). Commutées avant chaque lecture.
     "AUDIO_OUTPUT_SONNERIE": {"type": "str", "default": "lineout",
-                               "choices": ["lineout", "headphone", "both"],
-                               "label": "Sortie de la sonnerie"},
-    "AUDIO_OUTPUT_COMBINE": {"type": "str", "default": "headphone",
                               "choices": ["lineout", "headphone", "both"],
-                              "label": "Sortie du combiné et de l'écouteur secondaire"},
-    "HOOK_ACTIVE_STATE": {"type": "str", "default": "LOW", "choices": ["LOW", "HIGH"],
-                           "label": "Niveau actif crochet"},
-    "OFFNORMAL_ACTIF_LEVEL": {"type": "str", "default": "LOW", "choices": ["LOW", "HIGH"],
-                               "label": "Niveau actif cadran"},
-    "PULSE_ACTIF_LEVEL": {"type": "str", "default": "HIGH", "choices": ["LOW", "HIGH"],
-                           "label": "Niveau actif pulse"},
-    "HOOK_DEBOUNCE_SEC": {"type": "float", "default": 0.075, "label": "Anti-rebond crochet (secondes)"},
-    "DIAL_DEBOUNCE_SEC": {"type": "float", "default": 0.02, "label": "Anti-rebond cadran (secondes)"},
+                              "niveau": NIVEAU_ADMIN,
+                              "label": "Sortie de la sonnerie"},
+    "AUDIO_OUTPUT_COMBINE": {"type": "str", "default": "headphone",
+                             "choices": ["lineout", "headphone", "both"],
+                             "niveau": NIVEAU_ADMIN,
+                             "label": "Sortie du combiné et de l'écouteur secondaire"},
     # Mode restitution (§5.7). MODE_RESTITUTION n'est pas listé : la bascule a
     # sa propre page /mode et passe par mode_config.json, à chaud.
     # RESTITUTION_SOUND_CARD non plus : c'est un routage ALSA avancé, et son
     # défaut suit SOUND_CARD, ce qu'une valeur figée ici casserait.
-    "RESTITUTION_DIGITS_MAX": {"type": "int", "default": 4, "label": "Mode restitution : nombre max de chiffres du numéro"},
-    "RESTITUTION_INTERDIGIT_SEC": {"type": "float", "default": 3.0, "label": "Mode restitution : silence du cadran validant le numéro (secondes)"},
+    "RESTITUTION_DIGITS_MAX": {"type": "int", "default": 4, "min": 1,
+                               "niveau": NIVEAU_ADMIN,
+                               "label": "Mode restitution : nombre max de chiffres du numéro"},
+    "RESTITUTION_INTERDIGIT_SEC": {"type": "float", "default": 3.0, "min": 0,
+                                   "niveau": NIVEAU_ADMIN,
+                                   "label": "Mode restitution : silence du cadran validant le numéro (secondes)"},
+
+    # --- Administrateur, redémarrage nécessaire ---------------------------
+    # Lus une seule fois au démarrage : carte son (dont dérive
+    # RESTITUTION_SOUND_CARD), niveaux et filtres des GPIO (gpio_io les fige à
+    # l'import), configuration de la journalisation.
+    "SOUND_CARD": {"type": "str", "default": "hw:1,0",
+                   "niveau": NIVEAU_ADMIN_REDEMARRAGE,
+                   "label": "Carte son ALSA"},
+    "HOOK_ACTIVE_STATE": {"type": "str", "default": "LOW", "choices": ["LOW", "HIGH"],
+                          "niveau": NIVEAU_ADMIN_REDEMARRAGE,
+                          "label": "Niveau actif crochet"},
+    "OFFNORMAL_ACTIF_LEVEL": {"type": "str", "default": "LOW", "choices": ["LOW", "HIGH"],
+                              "niveau": NIVEAU_ADMIN_REDEMARRAGE,
+                              "label": "Niveau actif cadran"},
+    "PULSE_ACTIF_LEVEL": {"type": "str", "default": "HIGH", "choices": ["LOW", "HIGH"],
+                          "niveau": NIVEAU_ADMIN_REDEMARRAGE,
+                          "label": "Niveau actif pulse"},
+    "HOOK_DEBOUNCE_SEC": {"type": "float", "default": 0.075, "min": 0,
+                          "niveau": NIVEAU_ADMIN_REDEMARRAGE,
+                          "label": "Anti-rebond crochet (secondes)"},
+    "DIAL_DEBOUNCE_SEC": {"type": "float", "default": 0.02, "min": 0,
+                          "niveau": NIVEAU_ADMIN_REDEMARRAGE,
+                          "label": "Anti-rebond cadran (secondes)"},
     # Journalisation (§7.3) : « DEBUG » pour la mise en service, « INFO » pour
     # l'exploitation. Modifiable depuis le dashboard, pour ne pas avoir à
     # ouvrir une session SSH le jour où le cadran se met à mal compter.
     "LOG_LEVEL": {"type": "str", "default": "INFO", "choices": ["INFO", "DEBUG"],
-                   "label": "Niveau de journalisation"},
-    # Tonalité d'invitation à numéroter (§1.2).
-    "TONALITE_MAX_SEC": {"type": "int", "default": 180, "min": 0,
-                          "label": "Durée max de la tonalité (secondes, 0 = aucune tonalité)"},
+                  "niveau": NIVEAU_ADMIN_REDEMARRAGE,
+                  "label": "Niveau de journalisation"},
 }
 
+
+def params_par_niveau(niveau: str) -> Dict[str, Dict[str, Any]]:
+    """Sous-ensemble de MODIFIABLE_PARAMS d'un niveau donné, ordre conservé."""
+    return {nom: info for nom, info in MODIFIABLE_PARAMS.items() if info["niveau"] == niveau}
+
+
 # Paramètres nécessitant un redémarrage du service après modification.
-# C'est le cas de tous : ils sont résolus à l'import de ce module, et
-# livre_dor.py tourne dans un autre processus que le dashboard — rien ne
-# relit custom_config.json en cours de route. Le champ existait mais ne
-# listait que SOUND_CARD, ce qui laissait croire que les autres prenaient
-# effet immédiatement.
-RESTART_REQUIRED_PARAMS = set(MODIFIABLE_PARAMS)
+RESTART_REQUIRED_PARAMS = set(params_par_niveau(NIVEAU_ADMIN_REDEMARRAGE))
+# Paramètres relus à chaud par refresh_live_params().
+LIVE_PARAMS = set(MODIFIABLE_PARAMS) - RESTART_REQUIRED_PARAMS
+# Paramètres qu'un utilisateur non admin peut modifier.
+USER_PARAMS = set(params_par_niveau(NIVEAU_UTILISATEUR))
+
+# Période minimale entre deux relectures de custom_config.json : la boucle
+# d'attente tourne à 20 Hz, un stat() par seconde suffit (même raisonnement
+# que MODE_RELOAD_SEC).
+LIVE_RELOAD_SEC = _env_float("LIVE_RELOAD_SEC", 1.0)
+
+_CONVERTERS: Dict[str, Callable[[Any], Any]] = {"int": int, "float": float, "str": str}
+
+
+def _custom_mtime() -> Optional[int]:
+    try:
+        return CUSTOM_CONFIG_FILE.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+_live_mtime: Optional[int] = _custom_mtime()
+_live_checked_at = 0.0
+
+
+def refresh_live_params(force: bool = False) -> Dict[str, Any]:
+    """Relit custom_config.json s'il a changé et applique les LIVE_PARAMS.
+
+    Met à jour les constantes de ce module, que le reste du code lit sous la
+    forme config.X au moment où il en a besoin. Une variable d'environnement
+    garde la priorité (précédence documentée en tête de module) ; une valeur
+    illisible est ignorée, comme dans _param(). Ne lève jamais.
+
+    Retourne {nom: nouvelle_valeur} pour les paramètres effectivement changés.
+    """
+    global _live_mtime, _live_checked_at
+    now = time.monotonic()
+    if not force and (now - _live_checked_at) < LIVE_RELOAD_SEC:
+        return {}
+    _live_checked_at = now
+
+    mtime = _custom_mtime()
+    if not force and mtime == _live_mtime:
+        return {}
+    _live_mtime = mtime
+
+    values = _read_custom_config()
+    module = globals()
+    changes: Dict[str, Any] = {}
+    for name in LIVE_PARAMS:
+        if name in os.environ or name not in values:
+            continue
+        try:
+            value = _CONVERTERS[MODIFIABLE_PARAMS[name]["type"]](values[name])
+        except (TypeError, ValueError):
+            continue
+        if module.get(name) != value:
+            module[name] = value
+            changes[name] = value
+    return changes
 
 
 def _get_current_value(name: str) -> Any:
@@ -550,15 +698,25 @@ def get_config_value(name: str) -> Any:
     return _get_current_value(name)
 
 
-def update_config(new_values: Dict[str, Any]) -> Dict[str, Any]:
+def update_config(new_values: Dict[str, Any], is_admin: bool = True) -> Dict[str, Any]:
     """Met à jour les paramètres dans custom_config.json.
-    
+
     Args:
         new_values: Dictionnaire {nom_param: nouvelle_valeur}
-    
+        is_admin: False limite l'écriture aux paramètres de niveau
+            « utilisateur » ; tout autre paramètre fait échouer l'appel.
+
     Returns:
-        Dict avec {"ok": bool, "erreur": str ou None, "params_modifies": list, "redemarrage_necessaire": bool}
+        Dict avec {"ok": bool, "erreur": str ou None, "params_modifies": list,
+        "redemarrage_necessaire": bool, "interdit": bool}
     """
+    if not is_admin:
+        interdits = [n for n in new_values if n in MODIFIABLE_PARAMS and n not in USER_PARAMS]
+        if interdits:
+            return {"ok": False, "interdit": True,
+                    "erreur": "Seul un administrateur peut modifier : " + ", ".join(interdits),
+                    "params_modifies": [], "redemarrage_necessaire": False}
+
     # Lire la config existante
     try:
         if CUSTOM_CONFIG_FILE.exists():
@@ -600,6 +758,18 @@ def update_config(new_values: Dict[str, Any]) -> Dict[str, Any]:
                     "erreur": f"Valeur invalide pour {name} : attendu l'un de {', '.join(choices)}",
                     "params_modifies": [], "redemarrage_necessaire": False}
 
+        # Bornes : un volume à 250 % ou un nombre de sonneries négatif ne
+        # doivent pas atteindre le service, même par un appel direct à l'API.
+        minimum, maximum = param_info.get("min"), param_info.get("max")
+        if (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
+            bornes = " et ".join(filter(None, [
+                f"≥ {minimum}" if minimum is not None else "",
+                f"≤ {maximum}" if maximum is not None else "",
+            ]))
+            return {"ok": False,
+                    "erreur": f"Valeur invalide pour {name} : attendu {bornes}",
+                    "params_modifies": [], "redemarrage_necessaire": False}
+
         # Vérifier si le paramètre nécessite un redémarrage
         if name in RESTART_REQUIRED_PARAMS:
             redemarrage_necessaire = True
@@ -616,7 +786,11 @@ def update_config(new_values: Dict[str, Any]) -> Dict[str, Any]:
         os.replace(tmp_path, CUSTOM_CONFIG_FILE)
     except OSError as e:
         return {"ok": False, "erreur": f"Impossible d'écrire custom_config.json: {e}", "params_modifies": [], "redemarrage_necessaire": False}
-    
+
+    # Le processus qui écrit (le dashboard) voit aussitôt les nouvelles
+    # valeurs ; livre_dor.py les relira au prochain tour de sa boucle.
+    refresh_live_params(force=True)
+
     return {
         "ok": True,
         "erreur": None,

@@ -173,9 +173,9 @@ def test_simule(rapport: Rapport) -> None:
         alsa_espion = harness.AlsaFactice()
         alsa_espion_select = alsa_espion.select_output
 
-        def select_trace(output, force=False):
+        def select_trace(output, force=False, volume=None):
             ordre.append(("bascule", output))
-            return alsa_espion_select(output, force)
+            return alsa_espion_select(output, force, volume)
 
         popen = PopenFactice(duree=0.1)
         with harness.remplacer(alsa_io, "select_output", select_trace):

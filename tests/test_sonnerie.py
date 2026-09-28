@@ -14,16 +14,21 @@ Ce que vérifie ce script, seul et sans matériel :
 4. l'interruption immédiate de la sonnerie au décroché ;
 5. la fenêtre de grâce : appel entrant juste après la sonnerie, parcours
    normal au-delà ;
-6. l'absence totale de sonnerie en mode restitution (§5.7).
+6. l'absence totale de sonnerie en mode restitution (§5.7) ;
+7. le réarmement de l'intervalle au retour en mode mariage ;
+8. les volumes de la sonnerie et du combiné ;
+9. la prise en compte à chaud des paramètres modifiés depuis /settings, et
+   les droits (utilisateur / admin / redémarrage) qui les encadrent.
 
 Usage :
     python3 tests/test_sonnerie.py             # simulation, aucune dépendance
     python3 tests/test_sonnerie.py --reel      # sonnerie réelle sur le matériel
 """
 
+import json
 import time
 
-import harness                       # règle sys.path : doit précéder les imports de src/
+import harness                      # règle sys.path : doit précéder les imports de src/
 from harness import Banc, Rapport
 
 import audio_io                      # noqa: E402
@@ -248,6 +253,66 @@ def test_simule(rapport: Rapport) -> None:
         rapport.verifie("la sonnerie reprend à l'échéance suivante",
                         banc.attendre_lecture("ring_out.wav", timeout=2.5),
                         f"fichiers joués : {banc.audio.noms_lus()}")
+
+    rapport.section("8. Volumes de la sonnerie et du combiné (VOLUME_*)")
+    with Banc(VOLUME_SONNERIE=35, VOLUME_COMBINE=80, RING_ANSWER_GRACE_SEC=5) as banc:
+        banc.declencher_sonnerie_a_distance()
+        banc.attendre_lecture("ring_out.wav", timeout=1.5)
+        banc.decrocher(stabiliser=False)
+        banc.attendre_etat(livre_dor.STATE_APPEL_REPONDU, timeout=2.0)
+        time.sleep(0.3)
+        joues = banc.audio.noms_lus()
+        message = next((n for n in joues if n.startswith("message_")), None)
+        rapport.egal("la sonnerie est jouée au volume de la sonnerie",
+                     banc.audio.volume_de("ring_out.wav"), 35)
+        rapport.egal("le message au volume du combiné",
+                     banc.audio.volume_de(message) if message else None, 80)
+        rapport.verifie("le volume accompagne chaque commutation",
+                        banc.alsa.volumes[:2] == [35, 80],
+                        f"volumes : {banc.alsa.volumes}")
+
+    rapport.section("9. Paramètres modifiés à chaud depuis le dashboard")
+    with Banc(VOLUME_SONNERIE=100) as banc:
+        # Fichier écrit directement, et non par update_config() : celle-ci
+        # rafraîchit aussi le processus appelant, ce qui masquerait une
+        # machine à états qui ne relirait pas le fichier d'elle-même.
+        config.CUSTOM_CONFIG_FILE.write_text(json.dumps({"VOLUME_SONNERIE": 20}),
+                                             encoding="utf-8")
+        time.sleep(config.LIVE_RELOAD_SEC + 0.3)
+        banc.declencher_sonnerie_a_distance()
+        banc.attendre_lecture("ring_out.wav", timeout=1.5)
+        rapport.egal("la sonnerie suivante prend le nouveau volume sans redémarrage",
+                     banc.audio.volume_de("ring_out.wav"), 20)
+
+        resultat = config.update_config({"VOLUME_COMBINE": 60}, is_admin=False)
+        rapport.verifie("un utilisateur non admin peut régler le volume",
+                        resultat["ok"] and not resultat["redemarrage_necessaire"],
+                        f"résultat : {resultat}")
+        rapport.egal("et la valeur est aussitôt appliquée", config.VOLUME_COMBINE, 60)
+        resultat = config.update_config({"MAX_RECORD_SEC": 30}, is_admin=False)
+        rapport.verifie("un paramètre admin est refusé à un non-admin",
+                        not resultat["ok"] and resultat.get("interdit"),
+                        f"résultat : {resultat}")
+        resultat = config.update_config({"AUDIO_MAX_DB_LINEOUT": -6}, is_admin=False)
+        rapport.verifie("un plafond en dB est refusé à un non-admin",
+                        not resultat["ok"] and resultat.get("interdit"),
+                        f"résultat : {resultat}")
+        resultat = config.update_config({"AUDIO_MAX_DB_LINEOUT": -6})
+        rapport.verifie("mais accepté pour l'admin, sans redémarrage",
+                        resultat["ok"] and not resultat["redemarrage_necessaire"]
+                        and config.AUDIO_MAX_DB_LINEOUT == -6, f"résultat : {resultat}")
+        resultat = config.update_config({"AUDIO_MAX_DB_CASQUE": 7})
+        rapport.verifie("un plafond au-delà de l'échelle du codec est refusé",
+                        not resultat["ok"], f"résultat : {resultat}")
+        resultat = config.update_config({"VOLUME_COMBINE": 150})
+        rapport.verifie("un volume hors bornes est refusé",
+                        not resultat["ok"], f"résultat : {resultat}")
+        resultat = config.update_config({"LOG_LEVEL": "DEBUG"})
+        rapport.verifie("un paramètre lu au démarrage signale le redémarrage",
+                        resultat["ok"] and resultat["redemarrage_necessaire"],
+                        f"résultat : {resultat}")
+        rapport.verifie("aucun paramètre « utilisateur » n'exige de redémarrage",
+                        not (config.USER_PARAMS & config.RESTART_REQUIRED_PARAMS))
 
 
 def test_reel(rapport: Rapport) -> None:

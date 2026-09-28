@@ -139,39 +139,70 @@
       <p class="muted" id="audio-feedback"></p>
     </section>
 
+    {% if message %}
+    <p class="warning" id="save-message">{{ message }}</p>
+    {% else %}
+    <p class="warning" id="save-message" hidden></p>
+    {% endif %}
+
+    {% set titres = {
+      "utilisateur": "🔊 Réglages courants",
+      "admin": "🛠️ Réglages administrateur",
+      "admin_redemarrage": "⚠️ Réglages administrateur — redémarrage nécessaire",
+    } %}
+    {% set explications = {
+      "utilisateur": "Modifiables par tout utilisateur connecté. Pris en compte en une seconde environ, dès la fin de la communication en cours.",
+      "admin": "Réservés à l'administrateur. Pris en compte en une seconde environ, dès la fin de la communication en cours.",
+      "admin_redemarrage": "Réservés à l'administrateur. Lus au démarrage uniquement : redémarrez le service après les avoir modifiés.",
+    } %}
+
+    {% for section in sections_params %}
+    {% set modifiable = is_admin or section.niveau == "utilisateur" %}
     <section class="card">
-      <h2>Paramètres de fonctionnement</h2>
-      
-      {% if message %}
-      <p class="warning" id="save-message">{{ message }}</p>
+      <h2>{{ titres[section.niveau] }}</h2>
+      <p class="muted">{{ explications[section.niveau] }}</p>
+      {% if not modifiable %}
+      <p class="muted">Lecture seule : connectez-vous en administrateur pour les modifier.</p>
       {% endif %}
-      
-      <form id="settings-form" method="post">
-        {% for param_name, param_info in modifiable_params.items() %}
+
+      <form class="settings-form" data-niveau="{{ section.niveau }}" method="post">
+        {% for param_name, param_info in section.params.items() %}
         <label>
           {{ param_info.label }}
-          {% if param_info.type == "int" %}
+          {% if param_info.type == "int" and param_info.max is defined %}
+          <span class="range-field">
+            <input
+              type="range"
+              name="{{ param_name }}"
+              value="{{ config[param_name] | int }}"
+              min="{{ param_info.min | default(0) }}"
+              max="{{ param_info.max }}"
+              step="1"
+              {% if not modifiable %}disabled{% endif %}
+            >
+            <output>{{ config[param_name] | int }}</output>
+          </span>
+          {% elif param_info.type == "int" %}
           <input
             type="number"
             name="{{ param_name }}"
             value="{{ config[param_name] | int }}"
-            {% if param_info.min is defined %}
-            min="{{ param_info.min }}"
-            {% elif param_name in ["MAX_RECORD_SEC", "AUDIO_PLAY_TIMEOUT_SEC"] %}
-            min="1"
-            {% endif %}
+            {% if param_info.min is defined %}min="{{ param_info.min }}"{% endif %}
+            {% if param_info.max is defined %}max="{{ param_info.max }}"{% endif %}
             step="1"
+            {% if not modifiable %}disabled{% endif %}
           >
           {% elif param_info.type == "float" %}
-          <input 
-            type="number" 
-            name="{{ param_name }}" 
-            value="{{ config[param_name] | float }}" 
-            min="0"
+          <input
+            type="number"
+            name="{{ param_name }}"
+            value="{{ config[param_name] | float }}"
+            min="{{ param_info.min | default(0) }}"
             step="0.001"
+            {% if not modifiable %}disabled{% endif %}
           >
           {% elif param_info.choices %}
-          <select name="{{ param_name }}">
+          <select name="{{ param_name }}" {% if not modifiable %}disabled{% endif %}>
             {% for choix in param_info.choices %}
             <option value="{{ choix }}" {% if config[param_name] | string == choix %}selected{% endif %}>{{ choix }}</option>
             {% endfor %}
@@ -181,20 +212,19 @@
             type="text"
             name="{{ param_name }}"
             value="{{ config[param_name] | string }}"
+            {% if not modifiable %}disabled{% endif %}
           >
           {% endif %}
         </label>
         {% endfor %}
-        
+
+        {% if modifiable %}
         <button type="submit">💾 Enregistrer</button>
-        <p class="muted">Seul un administrateur peut modifier ces paramètres.</p>
-        {% if redemarrage_necessaire %}
-        <p class="warning">⚠️ Certains paramètres nécessitent un redémarrage du service.</p>
         {% endif %}
+        <p class="muted settings-feedback"></p>
       </form>
-      
-      <p class="muted" id="settings-feedback"></p>
     </section>
+    {% endfor %}
   </main>
 
   <script src="{{ url_for('static', filename='burger-menu.js') }}"></script>

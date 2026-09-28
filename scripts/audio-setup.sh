@@ -16,10 +16,22 @@
 #   ./audio-setup.sh switch-headphone      -> bascule de sortie seule (rapide)
 #   ./audio-setup.sh switch-lineout        -> idem, vers le line out
 #   ./audio-setup.sh switch-both           -> idem, les deux sorties
+#   ./audio-setup.sh switch-lineout 60     -> idem, volume a 60 %
 #
 # Les modes switch-* ne touchent ni a l'entree ni au routage et n'ecrivent
 # jamais asound.state : c'est ce que src/alsa_io.py appelle avant chaque
 # lecture pour envoyer la sonnerie sur le line out et le reste sur le casque.
+# Le second argument, facultatif, est le volume en pourcentage (0-100) du
+# niveau maximum de la sortie (defaut 100). Il est proportionnel a la valeur
+# brute du controle, donc lineaire en dB entre le plancher du controle et ce
+# maximum : a 50 %, un line out plafonne a 0 dB sort a -24 dB. 0 coupe la
+# sortie (switch off).
+#
+# Niveaux maximum (ce que vaut 100 %), en dB, par variables d'environnement
+# — fixees par src/alsa_io.py depuis config.AUDIO_MAX_DB_* :
+#   ALSA_HP_MAX_DB  casque   entier -57..+6  (defaut +6, valeur brute 63)
+#   ALSA_LO_MAX_DB  line out entier -48..+15 (defaut 0,  valeur brute 48)
+# Les defauts reproduisent les reglages du banc.
 #
 # Cablage du livre d'or (cf. README, "Sorties audio") :
 #   - line out   -> 1 haut-parleur mono de sonnerie, qui lit la piste gauche
@@ -45,7 +57,10 @@
 #   Mic 1 Volume (numid=1) : dB = -6   + v * 6.0    (v 0-7)
 #   Mixin PGA    (numid=4) : dB = -4.5 + v * 1.5    (v 0-15)
 #   ADC / DAC  (numid=5/6) : dB = -78  + (v-8)*0.75 -> 0 dB = 112
-#   Lineout      (numid=8) : dB = -48  + v * 1.0    -> 0 dB = 48
+#   Headphone    (numid=7) : dB = -57  + v * 1.0    -> 0 dB = 57 (v 0-63)
+#   Lineout      (numid=8) : dB = -48  + v * 1.0    -> 0 dB = 48 (v 0-63)
+#   (echelles TLV du driver da7213 ; a verifier sur le Pi par
+#    `amixer -c 1 cget numid=7` et `numid=8`, ligne dBscale-min)
 #
 
 set -u
@@ -150,28 +165,70 @@ setup_routing() {
 
 # ------------------------------------------------------------- sorties
 
+# Echelles des controles de sortie (dB = MIN + v, v 0-63).
+HP_DB_MIN=-57; HP_DB_MAX=6
+LO_DB_MIN=-48; LO_DB_MAX=15
+# Niveaux maximum (100 %), cf. en-tete ; valides dans check_levels.
+HP_MAX_DB="${ALSA_HP_MAX_DB:-6}"
+LO_MAX_DB="${ALSA_LO_MAX_DB:-0}"
+HP_VOL_REF=63               # recalcules par check_levels
+LO_VOL_REF=48
+VOLUME=100                  # pourcentage, cf. en-tete
+
+check_levels() {
+    # $1 = nom, $2 = valeur, $3 = min, $4 = max
+    case "$2" in
+        ''|-|*[!0-9-]*|?*-*) die "$1 invalide : '$2' (entier $3..$4 attendu)" ;;
+    esac
+    if [ "$2" -lt "$3" ] || [ "$2" -gt "$4" ]; then
+        die "$1 hors bornes : $2 (entier $3..$4 attendu)"
+    fi
+}
+
+compute_refs() {
+    check_levels ALSA_HP_MAX_DB "$HP_MAX_DB" "$HP_DB_MIN" "$HP_DB_MAX"
+    check_levels ALSA_LO_MAX_DB "$LO_MAX_DB" "$LO_DB_MIN" "$LO_DB_MAX"
+    HP_VOL_REF=$(( HP_MAX_DB - HP_DB_MIN ))
+    LO_VOL_REF=$(( LO_MAX_DB - LO_DB_MIN ))
+}
+
+hp_on() {
+    local v=$(( HP_VOL_REF * VOLUME / 100 ))
+    set_ctl 75 on           # HP Jack Switch
+    if [ "$VOLUME" -eq 0 ]; then
+        set_ctl 28 off,off  # volume 0 : casque coupe
+    else
+        set_ctl 28 on,on    # Headphone on
+    fi
+    set_ctl 7  "$v,$v"      # Headphone Volume
+}
+
+lo_on() {
+    local v=$(( LO_VOL_REF * VOLUME / 100 ))
+    if [ "$VOLUME" -eq 0 ]; then
+        set_ctl 29 off      # volume 0 : line out coupe
+    else
+        set_ctl 29 on       # Lineout on
+    fi
+    set_ctl 8  "$v"         # Lineout Volume
+}
+
 output_headphone() {
     set_ctl 29 off          # Lineout off
-    set_ctl 75 on           # HP Jack Switch
-    set_ctl 28 on,on        # Headphone on
-    set_ctl 7  63,63        # Headphone Volume       0 dB
-    echo "Sortie  : casque"
+    hp_on
+    echo "Sortie  : casque ($VOLUME % de $HP_MAX_DB dB)"
 }
 
 output_lineout() {
     set_ctl 28 off,off      # Headphone off
-    set_ctl 29 on           # Lineout on
-    set_ctl 8  48           # Lineout Volume         0 dB
-    echo "Sortie  : line out"
+    lo_on
+    echo "Sortie  : line out ($VOLUME % de $LO_MAX_DB dB)"
 }
 
 output_both() {
-    set_ctl 75 on           # HP Jack Switch
-    set_ctl 28 on,on        # Headphone on
-    set_ctl 7  63,63        # Headphone Volume       0 dB
-    set_ctl 29 on           # Lineout on
-    set_ctl 8  48           # Lineout Volume         0 dB
-    echo "Sortie  : casque + line out"
+    hp_on
+    lo_on
+    echo "Sortie  : casque + line out ($VOLUME % de $HP_MAX_DB / $LO_MAX_DB dB)"
 }
 
 # -------------------------------------------------------------- etat
@@ -236,10 +293,14 @@ Usage : audio-setup.sh [--no-store] {headphone|lineout|both|status|switch-*}
   switch-headphone  bascule de sortie seule, sans toucher entree/routage
   switch-lineout    idem, vers le line out
   switch-both       idem, les deux sorties
+  switch-* VOLUME   idem, volume en % du niveau maximum (0-100, 0 = coupe)
 
   --no-store        ne pas sauvegarder dans asound.state
 
-Variable d'environnement : ALSA_CARD (numero de carte, defaut 1).
+Variables d'environnement :
+  ALSA_CARD       numero de carte (defaut 1)
+  ALSA_HP_MAX_DB  niveau maximum du casque, dB entier -57..+6 (defaut 6)
+  ALSA_LO_MAX_DB  niveau maximum du line out, dB entier -48..+15 (defaut 0)
 EOF
 }
 
@@ -255,6 +316,7 @@ done
 
 MODE="${1:-headphone}"
 
+compute_refs
 check_card
 
 case "$MODE" in
@@ -277,6 +339,13 @@ case "$MODE" in
         # Appelee avant chaque lecture, elle ne doit rien reconfigurer
         # d'autre ni ecrire asound.state.
         STORE=0
+        if [ $# -ge 2 ]; then
+            case "$2" in
+                ''|*[!0-9]*) die "volume invalide : '$2' (entier 0-100 attendu)" ;;
+            esac
+            [ "$2" -le 100 ] || die "volume invalide : '$2' (entier 0-100 attendu)"
+            VOLUME=$(( 10#$2 ))
+        fi
         case "$MODE" in
             switch-headphone) output_headphone ;;
             switch-lineout)   output_lineout   ;;
