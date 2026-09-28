@@ -325,6 +325,24 @@ def test_commutation(rapport: Rapport) -> None:
                      appels[-1], ["switch-headphone", "100"])
         alsa_io.select_output("headphone", volume=-3)
         rapport.egal("y compris par le bas", appels[-1], ["switch-headphone", "0"])
+
+        # Plafonds en dB (AUDIO_MAX_DB_*) : réglage admin à chaud, transmis
+        # au script par l'environnement, et partie de la clé du cache.
+        env = alsa_io._script_env()
+        rapport.egal("les plafonds par défaut reproduisent le réglage du banc",
+                     (env["ALSA_HP_MAX_DB"], env["ALSA_LO_MAX_DB"]), ("6", "0"))
+        casque, lineout = config.AUDIO_MAX_DB_CASQUE, config.AUDIO_MAX_DB_LINEOUT
+        try:
+            alsa_io.select_output("headphone", volume=0)   # état de départ connu
+            nb = len(appels)
+            config.AUDIO_MAX_DB_LINEOUT = -12
+            rapport.egal("un plafond modifié est passé au script",
+                         alsa_io._script_env()["ALSA_LO_MAX_DB"], "-12")
+            alsa_io.select_output("headphone", volume=0)
+            rapport.egal("et force une nouvelle commutation, même sortie et même volume",
+                         len(appels), nb + 1)
+        finally:
+            config.AUDIO_MAX_DB_CASQUE, config.AUDIO_MAX_DB_LINEOUT = casque, lineout
         rapport.egal("la dernière sortie appliquée est mémorisée",
                      alsa_io.last_output(), "headphone")
 

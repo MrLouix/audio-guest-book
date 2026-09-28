@@ -166,6 +166,14 @@ AUDIO_OUTPUT_COMBINE = _env("AUDIO_OUTPUT_COMBINE", "headphone")
 VOLUME_SONNERIE = _env_int("VOLUME_SONNERIE", 100)
 VOLUME_COMBINE = _env_int("VOLUME_COMBINE", 100)
 
+# Niveau maximum de chaque sortie du codec, en dB : ce que vaut un volume de
+# 100 %. Réglage administrateur, pour plafonner ce que les volumes en %
+# permettent. Passés à audio-setup.sh (ALSA_HP_MAX_DB / ALSA_LO_MAX_DB), qui
+# garde seul les numids et les échelles : casque -57..+6 dB, line out
+# -48..+15 dB, par pas de 1 dB. Les défauts reproduisent le réglage du banc.
+AUDIO_MAX_DB_CASQUE = _env_int("AUDIO_MAX_DB_CASQUE", 6)
+AUDIO_MAX_DB_LINEOUT = _env_int("AUDIO_MAX_DB_LINEOUT", 0)
+
 # Garde-fous sur les appels au script (amixer peut se bloquer sur une carte
 # qui vient d'être débranchée).
 AUDIO_SWITCH_TIMEOUT_SEC = _env_float("AUDIO_SWITCH_TIMEOUT_SEC", 3.0)
@@ -520,6 +528,16 @@ MODIFIABLE_PARAMS = {
     "TONALITE_MAX_SEC": {"type": "int", "default": 180, "min": 0,
                          "niveau": NIVEAU_ADMIN,
                          "label": "Durée max de la tonalité (secondes, 0 = aucune tonalité)"},
+    # Plafonds des sorties (100 % des volumes ci-dessus), appliqués à la
+    # commutation suivante. Bornes = échelles du DA7213 (audio-setup.sh).
+    "AUDIO_MAX_DB_CASQUE": {"type": "int", "default": 6, "min": -57, "max": 6,
+                            "niveau": NIVEAU_ADMIN,
+                            "label": "Niveau maximum du casque (combiné et écouteur secondaire) "
+                                     "en dB, de -57 à +6 — atteint à 100 % de volume"},
+    "AUDIO_MAX_DB_LINEOUT": {"type": "int", "default": 0, "min": -48, "max": 15,
+                             "niveau": NIVEAU_ADMIN,
+                             "label": "Niveau maximum du line out (haut-parleur de sonnerie) "
+                                      "en dB, de -48 à +15 — atteint à 100 % de volume"},
     # Sorties du codec : seul moyen de re-tester un câblage depuis le
     # dashboard, sans SSH (§4.1). Commutées avant chaque lecture.
     "AUDIO_OUTPUT_SONNERIE": {"type": "str", "default": "lineout",

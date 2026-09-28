@@ -584,7 +584,7 @@ _PARAMS_SAUVEGARDES = (
     "AUDIO_RATE_HZ", "AUDIO_CHANNELS", "AUDIO_SAMPLE_FORMAT",
     "RECORD_RATE_HZ", "RECORD_CHANNELS",
     "AUDIO_OUTPUT_SONNERIE", "AUDIO_OUTPUT_COMBINE", "AUDIO_SETUP_SCRIPT",
-    "VOLUME_SONNERIE", "VOLUME_COMBINE",
+    "VOLUME_SONNERIE", "VOLUME_COMBINE", "AUDIO_MAX_DB_CASQUE", "AUDIO_MAX_DB_LINEOUT",
     # Paramètres modifiables à chaud : sans redirection, refresh_live_params()
     # appliquerait le vrai custom_config.json du Pi au milieu d'un scénario.
     "CUSTOM_CONFIG_FILE",

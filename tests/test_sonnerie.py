@@ -293,6 +293,17 @@ def test_simule(rapport: Rapport) -> None:
         rapport.verifie("un paramètre admin est refusé à un non-admin",
                         not resultat["ok"] and resultat.get("interdit"),
                         f"résultat : {resultat}")
+        resultat = config.update_config({"AUDIO_MAX_DB_LINEOUT": -6}, is_admin=False)
+        rapport.verifie("un plafond en dB est refusé à un non-admin",
+                        not resultat["ok"] and resultat.get("interdit"),
+                        f"résultat : {resultat}")
+        resultat = config.update_config({"AUDIO_MAX_DB_LINEOUT": -6})
+        rapport.verifie("mais accepté pour l'admin, sans redémarrage",
+                        resultat["ok"] and not resultat["redemarrage_necessaire"]
+                        and config.AUDIO_MAX_DB_LINEOUT == -6, f"résultat : {resultat}")
+        resultat = config.update_config({"AUDIO_MAX_DB_CASQUE": 7})
+        rapport.verifie("un plafond au-delà de l'échelle du codec est refusé",
+                        not resultat["ok"], f"résultat : {resultat}")
         resultat = config.update_config({"VOLUME_COMBINE": 150})
         rapport.verifie("un volume hors bornes est refusé",
                         not resultat["ok"], f"résultat : {resultat}")

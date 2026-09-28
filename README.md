@@ -188,12 +188,14 @@ Les paramètres modifiables (`MODIFIABLE_PARAMS` dans `src/config.py`, écrits d
 | Section | Qui peut modifier | Prise en compte | Paramètres |
 |---|---|---|---|
 | 🔊 Réglages courants (`utilisateur`) | tout utilisateur connecté | à chaud | `VOLUME_SONNERIE`, `VOLUME_COMBINE`, `RING_INTERVAL_SEC`, `RING_COUNT`, `RING_PAUSE_SEC` |
-| 🛠️ Réglages administrateur (`admin`) | administrateur | à chaud | fenêtre de grâce, durées d'enregistrement et de lecture, tonalité, sorties du codec, mode restitution |
+| 🛠️ Réglages administrateur (`admin`) | administrateur | à chaud | niveaux maximum en dB (`AUDIO_MAX_DB_CASQUE`, `AUDIO_MAX_DB_LINEOUT`), fenêtre de grâce, durées d'enregistrement et de lecture, tonalité, sorties du codec, mode restitution |
 | ⚠️ Redémarrage nécessaire (`admin_redemarrage`) | administrateur | au redémarrage du service | `SOUND_CARD`, niveaux et anti-rebonds GPIO, `LOG_LEVEL` |
 
 « À chaud » : la machine à états relit `custom_config.json` (au plus une fois par seconde, `LIVE_RELOAD_SEC`) à chaque tour de sa boucle d'attente, donc entre deux communications, jamais au milieu d'une. Un paramètre `utilisateur` ne peut pas exiger de redémarrage. Un non-admin voit les sections admin en lecture seule, et `POST /api/settings` lui répond 403 s'il tente d'y écrire ; les valeurs hors bornes (`min`/`max`) sont refusées (400).
 
-**Volumes** : `VOLUME_SONNERIE` et `VOLUME_COMBINE` sont des pourcentages (0-100) du niveau de référence réglé au banc — 100 reproduit exactement le comportement antérieur, 0 coupe la sortie. Ils sont passés à `scripts/audio-setup.sh switch-<sortie> <volume>` à chaque commutation, donc par rôle : sonnerie et combiné gardent chacun leur volume même s'ils partagent une sortie. L'échelle suit la valeur brute du contrôle, donc linéaire en dB (50 % ≈ −31 dB au casque, −24 dB au line out).
+**Volumes** : `VOLUME_SONNERIE` et `VOLUME_COMBINE` (réglages utilisateur) sont des pourcentages (0-100) du **niveau maximum** de la sortie utilisée — 0 coupe la sortie. Ils sont passés à `scripts/audio-setup.sh switch-<sortie> <volume>` à chaque commutation, donc par rôle : sonnerie et combiné gardent chacun leur volume même s'ils partagent une sortie.
+
+**Niveaux maximum** (réglages admin, à chaud) : `AUDIO_MAX_DB_CASQUE` (−57 à +6 dB, défaut +6) et `AUDIO_MAX_DB_LINEOUT` (−48 à +15 dB, défaut 0) fixent ce que vaut 100 %, par pas de 1 dB. Ils sont transmis au script par `ALSA_HP_MAX_DB` / `ALSA_LO_MAX_DB`, qui garde seul numids et échelles. Les défauts reproduisent le réglage du banc (valeurs brutes 63 et 48). Le % suit la valeur brute du contrôle, donc linéaire en dB entre le plancher du contrôle et ce maximum : à 50 %, un line out plafonné à 0 dB sort à −24 dB. Échelles à confirmer sur le Pi avec `amixer -c 1 cget numid=7` (casque) et `numid=8` (line out), ligne `dBscale-min`.
 
 Le formulaire des fichiers audio est **distinct** de celui des paramètres de fonctionnement : changer un timeout ne déclenche pas une conversion.
 
