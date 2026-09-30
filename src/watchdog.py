@@ -15,11 +15,11 @@ Exécuté périodiquement par livre-dor-watchdog.timer. Deux mécanismes :
 
 import datetime
 import logging
-import logging.handlers
 import subprocess
 from typing import Optional
 
 import config
+import fichiers
 import status_io
 
 logger = logging.getLogger(__name__)
@@ -34,19 +34,31 @@ MANAGED_SERVICES = [
 
 STATUS_OWNER_SERVICE = "livre-dor.service"
 
+SYSTEMCTL_TIMEOUT_SEC = 10
+
+
+def _systemctl(*args: str) -> Optional[int]:
+    """Code de retour de `systemctl args…` ; None s'il n'a pas pu s'exécuter.
+
+    Ne lève jamais : un systemctl bloqué sur un service ne doit pas empêcher
+    le watchdog de surveiller les suivants.
+    """
+    try:
+        return subprocess.run(["systemctl", *args], timeout=SYSTEMCTL_TIMEOUT_SEC,
+                              check=False).returncode
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.error("Watchdog : systemctl %s en échec : %s", " ".join(args), exc)
+        return None
+
 
 def _service_is_failed(name: str) -> bool:
-    try:
-        result = subprocess.run(["systemctl", "is-failed", "--quiet", name], timeout=10, check=False)
-    except (subprocess.TimeoutExpired, OSError):
-        return False
-    return result.returncode == 0
+    return _systemctl("is-failed", "--quiet", name) == 0
 
 
 def _restart_service(name: str, reason: str) -> None:
     logger.warning("Watchdog : redémarrage de %s (%s).", name, reason)
-    subprocess.run(["systemctl", "reset-failed", name], timeout=10, check=False)
-    subprocess.run(["systemctl", "restart", name], timeout=10, check=False)
+    _systemctl("reset-failed", name)
+    _systemctl("restart", name)
 
 
 def _status_age_seconds() -> Optional[float]:
@@ -75,17 +87,9 @@ def check_and_restart_if_needed() -> None:
 
 
 def _setup_logging() -> None:
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    console = logging.StreamHandler()
-    console.setFormatter(formatter)
-    root.addHandler(console)
-    file_handler = logging.handlers.RotatingFileHandler(
-        config.LIVRE_DOR_LOG, maxBytes=1_000_000, backupCount=5, encoding="utf-8"
-    )
-    file_handler.setFormatter(formatter)
-    root.addHandler(file_handler)
+    # Même fichier que livre_dor.py : ses décisions apparaissent dans les
+    # journaux affichés par le dashboard.
+    fichiers.configurer_journal(config.LIVRE_DOR_LOG, logging.INFO)
 
 
 def main() -> None:

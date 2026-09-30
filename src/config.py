@@ -34,7 +34,9 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
+
+import fichiers
 
 # config.py vit dans src/ ; l'arborescence de données (audio/, messages/,
 # logs/, static/, templates/...) reste à la racine du projet (§8).
@@ -46,15 +48,16 @@ CUSTOM_CONFIG_FILE = BASE_DIR / "custom_config.json"
 
 def _read_custom_config() -> Dict[str, Any]:
     """Valeurs enregistrées depuis la page /settings ; {} si absent ou illisible (§7.4)."""
-    try:
-        data = json.loads(CUSTOM_CONFIG_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return fichiers.lire_json_dict(CUSTOM_CONFIG_FILE)
 
 
 # Lu une seule fois, à l'import : ce module fournit des constantes.
 _CUSTOM_VALUES = _read_custom_config()
+
+# Valeur par défaut inscrite dans ce fichier pour chaque paramètre, relevée par
+# _param() : MODIFIABLE_PARAMS y puise ses « default », qui ne peuvent donc
+# plus diverger de la valeur réellement appliquée.
+_DEFAUTS: Dict[str, Any] = {}
 
 
 def _param(name: str, default: Any, convert: Callable[[Any], Any]) -> Any:
@@ -66,6 +69,7 @@ def _param(name: str, default: Any, convert: Callable[[Any], Any]) -> Any:
     écrit par le dashboard et peut avoir été édité à la main, il ne doit jamais
     empêcher le service de démarrer (§7.4) ; on retombe alors sur le défaut.
     """
+    _DEFAUTS[name] = convert(default)
     if name in os.environ:
         return convert(os.environ[name])
     if name in _CUSTOM_VALUES:
@@ -86,6 +90,11 @@ def _env_int(name: str, default: int) -> int:
 
 def _env_float(name: str, default: float) -> float:
     return _param(name, default, float)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Booléen : seule la chaîne exacte « True » vaut vrai (motif historique du projet)."""
+    return _env(name, "True" if default else "False") == "True"
 
 
 # --- Arborescence (§8) -------------------------------------------------
@@ -207,17 +216,17 @@ RECORD_CHANNELS = _env_int("RECORD_CHANNELS", AUDIO_CHANNELS)
 # en arrière-plan par src/traitement_audio.py à chaque message : declip ->
 # despike -> coupe-bandes 50/100/150 Hz -> noisered -> expandeur doux. Le brut
 # est conservé dans messages/brut/. Hors MODIFIABLE_PARAMS, comme le format.
-TRAITEMENT_ACTIF = _env("TRAITEMENT_ACTIF", "True") == "True"
+TRAITEMENT_ACTIF = _env_bool("TRAITEMENT_ACTIF", True)
 # Force de sox noisered : 0.25 retenu à l'oreille (0.35 gagne du SNR mais
 # coûte ~8 dB de voix).
 TRAITEMENT_NR = _env_float("TRAITEMENT_NR", 0.25)
 # Coupe-bandes 50/100/150 Hz contre le hum secteur. Sans intérêt si le bruit
 # est large bande (alimentation USB bruyante, piles) : ils coûtent alors
 # 2 à 5 dB de voix pour rien.
-TRAITEMENT_NOTCH = _env("TRAITEMENT_NOTCH", "True") == "True"
+TRAITEMENT_NOTCH = _env_bool("TRAITEMENT_NOTCH", True)
 # Expandeur doux sur les pauses : supprime le « scintillement » (bruit musical)
 # que laisse noisered, sans toucher la voix (> -60 dB).
-TRAITEMENT_EXPANDEUR = _env("TRAITEMENT_EXPANDEUR", "True") == "True"
+TRAITEMENT_EXPANDEUR = _env_bool("TRAITEMENT_EXPANDEUR", True)
 # Début de la recherche de la fenêtre de silence servant de profil de bruit :
 # la première demi-seconde porte la charge du bias de l'électret.
 TRAITEMENT_PROFIL_DEBUT_SEC = _env_float("TRAITEMENT_PROFIL_DEBUT_SEC", 0.5)
@@ -226,7 +235,7 @@ TRAITEMENT_PROFIL_DEBUT_SEC = _env_float("TRAITEMENT_PROFIL_DEBUT_SEC", 0.5)
 # des blocs de 20 ms) est ramené à cette cible, avec un limiteur contre les
 # claquements résiduels. Gain plafonné (TRAITEMENT_GAIN_MAX_DB) pour ne pas
 # remonter le bruit d'un message sans voix.
-TRAITEMENT_NORMALISATION = _env("TRAITEMENT_NORMALISATION", "True") == "True"
+TRAITEMENT_NORMALISATION = _env_bool("TRAITEMENT_NORMALISATION", True)
 TRAITEMENT_NIVEAU_VOIX_DBFS = _env_float("TRAITEMENT_NIVEAU_VOIX_DBFS", -20.0)
 TRAITEMENT_GAIN_MAX_DB = _env_float("TRAITEMENT_GAIN_MAX_DB", 30.0)
 
@@ -370,8 +379,7 @@ TONALITE_MAX_SEC = _env_int("TONALITE_MAX_SEC", 180)
 
 # Valeur par défaut au premier démarrage uniquement : la source de vérité à
 # l'exécution est mode_config.json, éditable à chaud depuis le dashboard (§5.2).
-# Motif booléen identique à USE_MDNS, seul motif bool du projet.
-MODE_RESTITUTION = _env("MODE_RESTITUTION", "False") == "True"
+MODE_RESTITUTION = _env_bool("MODE_RESTITUTION", False)
 
 # Nombre maximal de chiffres du numéro de message : au-delà, la saisie se
 # ferme immédiatement sans attendre l'inter-chiffre (§5.7).
@@ -400,7 +408,7 @@ MODE_RELOAD_SEC = _env_float("MODE_RELOAD_SEC", 1.0)
 
 WEB_PORT = _env_int("WEB_PORT", 5000)
 WEB_PORT_MAX_ATTEMPTS = _env_int("WEB_PORT_MAX_ATTEMPTS", 1)
-USE_MDNS = _env("USE_MDNS", "True") == "True"
+USE_MDNS = _env_bool("USE_MDNS", True)
 MDNS_HOSTNAME = _env("MDNS_HOSTNAME", "livredor")
 QR_LABEL_SIZE_MM = _env_int("QR_LABEL_SIZE_MM", 45)
 
@@ -490,72 +498,72 @@ NIVEAU_ADMIN_REDEMARRAGE = "admin_redemarrage"
 NIVEAUX = (NIVEAU_UTILISATEUR, NIVEAU_ADMIN, NIVEAU_ADMIN_REDEMARRAGE)
 
 # Paramètres modifiables via l'interface /settings, dans l'ordre d'affichage.
-# Clés : type, default, label, niveau ; min, max et choices facultatifs.
+# Clés : type, label, niveau ; min, max et choices facultatifs. « default »
+# est ajouté juste après, depuis _DEFAUTS : la valeur par défaut d'un
+# paramètre n'est écrite qu'une fois, là où il est déclaré plus haut.
 MODIFIABLE_PARAMS = {
     # --- Utilisateur, à chaud ---------------------------------------------
-    "VOLUME_SONNERIE": {"type": "int", "default": 100, "min": 0, "max": 100,
+    "VOLUME_SONNERIE": {"type": "int", "min": 0, "max": 100,
                         "niveau": NIVEAU_UTILISATEUR,
                         "label": "Volume de la sonnerie (%, 0 = coupée)"},
-    "VOLUME_COMBINE": {"type": "int", "default": 100, "min": 0, "max": 100,
+    "VOLUME_COMBINE": {"type": "int", "min": 0, "max": 100,
                        "niveau": NIVEAU_UTILISATEUR,
                        "label": "Volume du combiné et de l'écouteur secondaire (%, 0 = coupé)"},
-    "RING_INTERVAL_SEC": {"type": "int", "default": 90, "min": 0,
+    "RING_INTERVAL_SEC": {"type": "int", "min": 0,
                           "niveau": NIVEAU_UTILISATEUR,
                           "label": "Intervalle de sonnerie (secondes, 0 = ne sonne jamais)"},
-    "RING_COUNT": {"type": "int", "default": 5, "min": 1,
+    "RING_COUNT": {"type": "int", "min": 1,
                    "niveau": NIVEAU_UTILISATEUR,
                    "label": "Nombre de sonneries par appel"},
-    "RING_PAUSE_SEC": {"type": "float", "default": 2.0, "min": 0,
+    "RING_PAUSE_SEC": {"type": "float", "min": 0,
                        "niveau": NIVEAU_UTILISATEUR,
                        "label": "Silence entre deux sonneries (secondes)"},
 
     # --- Administrateur, à chaud ------------------------------------------
     # Lus par livre_dor.py au moment où ils servent (config.X à chaque appel),
     # jamais recopiés au démarrage : refresh_live_params() suffit.
-    "RING_ANSWER_GRACE_SEC": {"type": "int", "default": 5, "min": 0,
+    "RING_ANSWER_GRACE_SEC": {"type": "int", "min": 0,
                               "niveau": NIVEAU_ADMIN,
                               "label": "Fenêtre de grâce pour répondre (secondes)"},
-    "MAX_RECORD_SEC": {"type": "int", "default": 120, "min": 1,
+    "MAX_RECORD_SEC": {"type": "int", "min": 1,
                        "niveau": NIVEAU_ADMIN,
                        "label": "Durée max d'enregistrement (secondes)"},
-    "SHORT_RECORDING_THRESHOLD_SEC": {"type": "float", "default": 2.0, "min": 0,
+    "SHORT_RECORDING_THRESHOLD_SEC": {"type": "float", "min": 0,
                                       "niveau": NIVEAU_ADMIN,
                                       "label": "Seuil enregistrement court (secondes)"},
-    "AUDIO_PLAY_TIMEOUT_SEC": {"type": "int", "default": 180, "min": 1,
+    "AUDIO_PLAY_TIMEOUT_SEC": {"type": "int", "min": 1,
                                "niveau": NIVEAU_ADMIN,
                                "label": "Timeout lecture audio (secondes)"},
     # Tonalité d'invitation à numéroter (§1.2).
-    "TONALITE_MAX_SEC": {"type": "int", "default": 180, "min": 0,
+    "TONALITE_MAX_SEC": {"type": "int", "min": 0,
                          "niveau": NIVEAU_ADMIN,
                          "label": "Durée max de la tonalité (secondes, 0 = aucune tonalité)"},
     # Plafonds des sorties (100 % des volumes ci-dessus), appliqués à la
     # commutation suivante. Bornes = échelles du DA7213 (audio-setup.sh).
-    "AUDIO_MAX_DB_CASQUE": {"type": "int", "default": 6, "min": -57, "max": 6,
+    "AUDIO_MAX_DB_CASQUE": {"type": "int", "min": -57, "max": 6,
                             "niveau": NIVEAU_ADMIN,
                             "label": "Niveau maximum du casque (combiné et écouteur secondaire) "
                                      "en dB, de -57 à +6 — atteint à 100 % de volume"},
-    "AUDIO_MAX_DB_LINEOUT": {"type": "int", "default": 0, "min": -48, "max": 15,
+    "AUDIO_MAX_DB_LINEOUT": {"type": "int", "min": -48, "max": 15,
                              "niveau": NIVEAU_ADMIN,
                              "label": "Niveau maximum du line out (haut-parleur de sonnerie) "
                                       "en dB, de -48 à +15 — atteint à 100 % de volume"},
     # Sorties du codec : seul moyen de re-tester un câblage depuis le
     # dashboard, sans SSH (§4.1). Commutées avant chaque lecture.
-    "AUDIO_OUTPUT_SONNERIE": {"type": "str", "default": "lineout",
-                              "choices": ["lineout", "headphone", "both"],
+    "AUDIO_OUTPUT_SONNERIE": {"type": "str", "choices": ["lineout", "headphone", "both"],
                               "niveau": NIVEAU_ADMIN,
                               "label": "Sortie de la sonnerie"},
-    "AUDIO_OUTPUT_COMBINE": {"type": "str", "default": "headphone",
-                             "choices": ["lineout", "headphone", "both"],
+    "AUDIO_OUTPUT_COMBINE": {"type": "str", "choices": ["lineout", "headphone", "both"],
                              "niveau": NIVEAU_ADMIN,
                              "label": "Sortie du combiné et de l'écouteur secondaire"},
     # Mode restitution (§5.7). MODE_RESTITUTION n'est pas listé : la bascule a
     # sa propre page /mode et passe par mode_config.json, à chaud.
     # RESTITUTION_SOUND_CARD non plus : c'est un routage ALSA avancé, et son
     # défaut suit SOUND_CARD, ce qu'une valeur figée ici casserait.
-    "RESTITUTION_DIGITS_MAX": {"type": "int", "default": 4, "min": 1,
+    "RESTITUTION_DIGITS_MAX": {"type": "int", "min": 1,
                                "niveau": NIVEAU_ADMIN,
                                "label": "Mode restitution : nombre max de chiffres du numéro"},
-    "RESTITUTION_INTERDIGIT_SEC": {"type": "float", "default": 3.0, "min": 0,
+    "RESTITUTION_INTERDIGIT_SEC": {"type": "float", "min": 0,
                                    "niveau": NIVEAU_ADMIN,
                                    "label": "Mode restitution : silence du cadran validant le numéro (secondes)"},
 
@@ -563,31 +571,33 @@ MODIFIABLE_PARAMS = {
     # Lus une seule fois au démarrage : carte son (dont dérive
     # RESTITUTION_SOUND_CARD), niveaux et filtres des GPIO (gpio_io les fige à
     # l'import), configuration de la journalisation.
-    "SOUND_CARD": {"type": "str", "default": "hw:1,0",
-                   "niveau": NIVEAU_ADMIN_REDEMARRAGE,
+    "SOUND_CARD": {"type": "str", "niveau": NIVEAU_ADMIN_REDEMARRAGE,
                    "label": "Carte son ALSA"},
-    "HOOK_ACTIVE_STATE": {"type": "str", "default": "LOW", "choices": ["LOW", "HIGH"],
+    "HOOK_ACTIVE_STATE": {"type": "str", "choices": ["LOW", "HIGH"],
                           "niveau": NIVEAU_ADMIN_REDEMARRAGE,
                           "label": "Niveau actif crochet"},
-    "OFFNORMAL_ACTIF_LEVEL": {"type": "str", "default": "LOW", "choices": ["LOW", "HIGH"],
+    "OFFNORMAL_ACTIF_LEVEL": {"type": "str", "choices": ["LOW", "HIGH"],
                               "niveau": NIVEAU_ADMIN_REDEMARRAGE,
                               "label": "Niveau actif cadran"},
-    "PULSE_ACTIF_LEVEL": {"type": "str", "default": "HIGH", "choices": ["LOW", "HIGH"],
+    "PULSE_ACTIF_LEVEL": {"type": "str", "choices": ["LOW", "HIGH"],
                           "niveau": NIVEAU_ADMIN_REDEMARRAGE,
                           "label": "Niveau actif pulse"},
-    "HOOK_DEBOUNCE_SEC": {"type": "float", "default": 0.075, "min": 0,
+    "HOOK_DEBOUNCE_SEC": {"type": "float", "min": 0,
                           "niveau": NIVEAU_ADMIN_REDEMARRAGE,
                           "label": "Anti-rebond crochet (secondes)"},
-    "DIAL_DEBOUNCE_SEC": {"type": "float", "default": 0.02, "min": 0,
+    "DIAL_DEBOUNCE_SEC": {"type": "float", "min": 0,
                           "niveau": NIVEAU_ADMIN_REDEMARRAGE,
                           "label": "Anti-rebond cadran (secondes)"},
     # Journalisation (§7.3) : « DEBUG » pour la mise en service, « INFO » pour
     # l'exploitation. Modifiable depuis le dashboard, pour ne pas avoir à
     # ouvrir une session SSH le jour où le cadran se met à mal compter.
-    "LOG_LEVEL": {"type": "str", "default": "INFO", "choices": ["INFO", "DEBUG"],
+    "LOG_LEVEL": {"type": "str", "choices": ["INFO", "DEBUG"],
                   "niveau": NIVEAU_ADMIN_REDEMARRAGE,
                   "label": "Niveau de journalisation"},
 }
+
+for _nom, _info in MODIFIABLE_PARAMS.items():
+    _info["default"] = _DEFAUTS[_nom]
 
 
 def params_par_niveau(niveau: str) -> Dict[str, Dict[str, Any]]:
@@ -608,6 +618,11 @@ USER_PARAMS = set(params_par_niveau(NIVEAU_UTILISATEUR))
 LIVE_RELOAD_SEC = _env_float("LIVE_RELOAD_SEC", 1.0)
 
 _CONVERTERS: Dict[str, Callable[[Any], Any]] = {"int": int, "float": float, "str": str}
+
+
+def _convertir(name: str, value: Any) -> Any:
+    """Valeur convertie au type déclaré dans MODIFIABLE_PARAMS ; lève TypeError/ValueError."""
+    return _CONVERTERS[MODIFIABLE_PARAMS[name]["type"]](value)
 
 
 def _custom_mtime() -> Optional[int]:
@@ -649,7 +664,7 @@ def refresh_live_params(force: bool = False) -> Dict[str, Any]:
         if name in os.environ or name not in values:
             continue
         try:
-            value = _CONVERTERS[MODIFIABLE_PARAMS[name]["type"]](values[name])
+            value = _convertir(name, values[name])
         except (TypeError, ValueError):
             continue
         if module.get(name) != value:
@@ -658,134 +673,113 @@ def refresh_live_params(force: bool = False) -> Dict[str, Any]:
     return changes
 
 
-def _get_current_value(name: str) -> Any:
-    """Récupère la valeur actuelle d'un paramètre (d'abord custom_config, puis globale)."""
-    import sys
-    
-    # D'abord vérifier dans custom_config.json
-    try:
-        if CUSTOM_CONFIG_FILE.exists():
-            with CUSTOM_CONFIG_FILE.open("r", encoding="utf-8") as f:
-                custom_config = json.load(f)
-                if name in custom_config:
-                    return custom_config[name]
-    except (OSError, json.JSONDecodeError):
-        pass
-    
-    # Puis retourner la valeur globale si elle existe
-    # Utiliser sys.modules pour éviter la référence circulaire
-    config_module = sys.modules.get(__name__)
-    if config_module and hasattr(config_module, name):
-        return getattr(config_module, name)
-    
-    # Enfin, retourner la valeur par défaut depuis MODIFIABLE_PARAMS
-    if name in MODIFIABLE_PARAMS:
-        return MODIFIABLE_PARAMS[name]["default"]
-    
-    return None
-
-
 def get_all_config() -> Dict[str, Any]:
-    """Retourne un dictionnaire avec tous les paramètres modifiables et leurs valeurs actuelles."""
-    result = {}
-    for name, info in MODIFIABLE_PARAMS.items():
-        result[name] = _get_current_value(name)
+    """Valeur de chaque paramètre modifiable, telle que le service l'appliquera.
+
+    Même précédence qu'à l'import (en-tête du module) : variable
+    d'environnement, puis custom_config.json, puis la valeur en vigueur. Pour
+    un paramètre de niveau « admin_redemarrage », c'est donc la valeur
+    enregistrée — celle du prochain démarrage —, pas celle du processus en
+    cours. Une valeur illisible est ignorée, comme dans _param().
+
+    Limite : la variable d'environnement n'est visible que si elle est aussi
+    posée pour le processus qui appelle (le dashboard tourne dans son propre
+    service systemd).
+    """
+    custom = _read_custom_config()
+    module = globals()
+    result: Dict[str, Any] = {}
+    for name in MODIFIABLE_PARAMS:
+        for source in (os.environ, custom):
+            if name in source:
+                try:
+                    result[name] = _convertir(name, source[name])
+                    break
+                except (TypeError, ValueError):
+                    pass
+        else:
+            result[name] = module[name]
     return result
 
 
-def get_config_value(name: str) -> Any:
-    """Retourne la valeur actuelle d'un paramètre modifiable."""
-    return _get_current_value(name)
+def _echec(erreur: str, **drapeaux: bool) -> Dict[str, Any]:
+    return {"ok": False, "erreur": erreur, "params_modifies": [],
+            "redemarrage_necessaire": False, **drapeaux}
+
+
+def _valider(name: str, value: Any) -> Any:
+    """Valeur convertie et contrôlée ; lève ValueError avec le message destiné à l'utilisateur."""
+    info = MODIFIABLE_PARAMS[name]
+    try:
+        value = _convertir(name, value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Valeur invalide pour {name}: doit être un {info['type']}") from None
+
+    # Valeurs énumérées (sorties audio, niveaux LOW/HIGH). Sans ce contrôle, un
+    # AUDIO_OUTPUT_SONNERIE fantaisiste passerait et rendrait la sonnerie
+    # muette sans le moindre message.
+    choices = info.get("choices")
+    if choices and value not in choices:
+        raise ValueError(f"Valeur invalide pour {name} : attendu l'un de {', '.join(choices)}")
+
+    # Bornes : un volume à 250 % ou un nombre de sonneries négatif ne doivent
+    # pas atteindre le service, même par un appel direct à l'API.
+    minimum, maximum = info.get("min"), info.get("max")
+    if (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
+        bornes = " et ".join(filter(None, [
+            f"≥ {minimum}" if minimum is not None else "",
+            f"≤ {maximum}" if maximum is not None else "",
+        ]))
+        raise ValueError(f"Valeur invalide pour {name} : attendu {bornes}")
+    return value
 
 
 def update_config(new_values: Dict[str, Any], is_admin: bool = True) -> Dict[str, Any]:
     """Met à jour les paramètres dans custom_config.json.
 
     Args:
-        new_values: Dictionnaire {nom_param: nouvelle_valeur}
+        new_values: Dictionnaire {nom_param: nouvelle_valeur} ; les noms
+            absents de MODIFIABLE_PARAMS sont ignorés.
         is_admin: False limite l'écriture aux paramètres de niveau
             « utilisateur » ; tout autre paramètre fait échouer l'appel.
 
+    Rien n'est écrit si une seule valeur est refusée.
+
     Returns:
         Dict avec {"ok": bool, "erreur": str ou None, "params_modifies": list,
-        "redemarrage_necessaire": bool, "interdit": bool}
+        "redemarrage_necessaire": bool}, plus en cas d'échec « interdit »
+        (droits insuffisants) ou « invalide » (saisie refusée) à True.
     """
+    connus = [n for n in new_values if n in MODIFIABLE_PARAMS]
     if not is_admin:
-        interdits = [n for n in new_values if n in MODIFIABLE_PARAMS and n not in USER_PARAMS]
+        interdits = [n for n in connus if n not in USER_PARAMS]
         if interdits:
-            return {"ok": False, "interdit": True,
-                    "erreur": "Seul un administrateur peut modifier : " + ", ".join(interdits),
-                    "params_modifies": [], "redemarrage_necessaire": False}
+            return _echec("Seul un administrateur peut modifier : " + ", ".join(interdits),
+                          interdit=True)
 
-    # Lire la config existante
+    # Lecture stricte, contrairement à _read_custom_config() : un fichier
+    # corrompu ne doit pas être écrasé par les seules valeurs de ce formulaire,
+    # ce qui effacerait en silence tous les autres réglages.
     try:
-        if CUSTOM_CONFIG_FILE.exists():
-            with CUSTOM_CONFIG_FILE.open("r", encoding="utf-8") as f:
-                custom_config = json.load(f)
-        else:
-            custom_config = {}
-    except (OSError, json.JSONDecodeError) as e:
-        return {"ok": False, "erreur": f"Impossible de lire custom_config.json: {e}", "params_modifies": [], "redemarrage_necessaire": False}
-    
-    # Valider et appliquer les nouvelles valeurs
-    params_modifies = []
-    redemarrage_necessaire = False
-    
-    for name, value in new_values.items():
-        if name not in MODIFIABLE_PARAMS:
-            continue
-        
-        param_info = MODIFIABLE_PARAMS[name]
-        expected_type = param_info["type"]
-        
-        # Valider le type
+        custom_config = (json.loads(CUSTOM_CONFIG_FILE.read_text(encoding="utf-8"))
+                         if CUSTOM_CONFIG_FILE.exists() else {})
+    except (OSError, ValueError) as e:
+        return _echec(f"Impossible de lire custom_config.json: {e}")
+    if not isinstance(custom_config, dict):
+        return _echec("Impossible de lire custom_config.json: ce n'est pas un objet JSON")
+
+    valides: Dict[str, Any] = {}
+    for name in connus:
         try:
-            if expected_type == "int":
-                value = int(value)
-            elif expected_type == "float":
-                value = float(value)
-            elif expected_type == "str":
-                value = str(value)
-        except (ValueError, TypeError):
-            return {"ok": False, "erreur": f"Valeur invalide pour {name}: doit être un {expected_type}", "params_modifies": [], "redemarrage_necessaire": False}
+            valides[name] = _valider(name, new_values[name])
+        except ValueError as exc:
+            return _echec(str(exc), invalide=True)
+    custom_config.update(valides)
 
-        # Valeurs énumérées (sorties audio, niveaux LOW/HIGH). Sans ce
-        # contrôle, un AUDIO_OUTPUT_SONNERIE fantaisiste passerait et rendrait
-        # la sonnerie muette sans le moindre message.
-        choices = param_info.get("choices")
-        if choices and value not in choices:
-            return {"ok": False,
-                    "erreur": f"Valeur invalide pour {name} : attendu l'un de {', '.join(choices)}",
-                    "params_modifies": [], "redemarrage_necessaire": False}
-
-        # Bornes : un volume à 250 % ou un nombre de sonneries négatif ne
-        # doivent pas atteindre le service, même par un appel direct à l'API.
-        minimum, maximum = param_info.get("min"), param_info.get("max")
-        if (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
-            bornes = " et ".join(filter(None, [
-                f"≥ {minimum}" if minimum is not None else "",
-                f"≤ {maximum}" if maximum is not None else "",
-            ]))
-            return {"ok": False,
-                    "erreur": f"Valeur invalide pour {name} : attendu {bornes}",
-                    "params_modifies": [], "redemarrage_necessaire": False}
-
-        # Vérifier si le paramètre nécessite un redémarrage
-        if name in RESTART_REQUIRED_PARAMS:
-            redemarrage_necessaire = True
-        
-        # Mettre à jour
-        custom_config[name] = value
-        params_modifies.append(name)
-    
-    # Écrire la nouvelle configuration
     try:
-        CUSTOM_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = CUSTOM_CONFIG_FILE.with_suffix(".tmp")
-        tmp_path.write_text(json.dumps(custom_config, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp_path, CUSTOM_CONFIG_FILE)
+        fichiers.ecrire_json_atomique(CUSTOM_CONFIG_FILE, custom_config)
     except OSError as e:
-        return {"ok": False, "erreur": f"Impossible d'écrire custom_config.json: {e}", "params_modifies": [], "redemarrage_necessaire": False}
+        return _echec(f"Impossible d'écrire custom_config.json: {e}")
 
     # Le processus qui écrit (le dashboard) voit aussitôt les nouvelles
     # valeurs ; livre_dor.py les relira au prochain tour de sa boucle.
@@ -794,14 +788,6 @@ def update_config(new_values: Dict[str, Any], is_admin: bool = True) -> Dict[str
     return {
         "ok": True,
         "erreur": None,
-        "params_modifies": params_modifies,
-        "redemarrage_necessaire": redemarrage_necessaire,
+        "params_modifies": list(valides),
+        "redemarrage_necessaire": any(n in RESTART_REQUIRED_PARAMS for n in valides),
     }
-
-
-def ensure_custom_config_exists() -> None:
-    """Crée custom_config.json avec les valeurs par défaut si inexistant."""
-    if not CUSTOM_CONFIG_FILE.exists():
-        default_config = {name: info["default"] for name, info in MODIFIABLE_PARAMS.items()}
-        CUSTOM_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CUSTOM_CONFIG_FILE.write_text(json.dumps(default_config, ensure_ascii=False, indent=2), encoding="utf-8")

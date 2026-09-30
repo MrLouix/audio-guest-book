@@ -24,12 +24,11 @@ Usage :
 import datetime
 import logging
 import os
-import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import audio_io
 import config

@@ -135,16 +135,6 @@ def test_simule(rapport: Rapport) -> None:
                         not banc.audio.a_lu("message_generique.wav"),
                         f"fichiers joués : {banc.audio.noms_lus()}")
 
-    rapport.section("8. Décroché vu par le dashboard (gpio_io.get_current_status)")
-    inputs = gpio_io.PhoneInputs()
-    with harness.remplacer(gpio_io, "_phone_inputs", inputs):
-        inputs.set_hook(True)
-        rapport.egal("le dashboard lit « DECROCHE »",
-                     gpio_io.get_current_status()["hook"], "DECROCHE")
-        inputs.set_hook(False)
-        rapport.egal("le dashboard lit « raccroché »",
-                     gpio_io.get_current_status()["hook"], "raccroché")
-
 
 def test_reel(rapport: Rapport) -> None:
     """Vérification du câblage réel du crochet, sur le Raspberry Pi (§7.6 point 3)."""

@@ -1,10 +1,9 @@
 """Détection best-effort du mode réseau (wifi/AP) et de l'IP courante (§5.2).
 
 Implémentation minimale utilisée par le dashboard pour l'affichage. La
-bascule wifi/AP elle-même (nmcli, blacklist, surveillance de qualité) sera
-implémentée par wifi_or_ap.sh au Sprint 8 ; ce module ne fait aucune
-hypothèse sur son fonctionnement, il se contente de lire l'état réseau
-courant du système.
+bascule wifi/AP elle-même (nmcli, blacklist, surveillance de qualité) est
+faite par scripts/wifi_or_ap.sh ; ce module ne fait aucune hypothèse sur son
+fonctionnement, il se contente de lire l'état réseau courant du système.
 """
 
 import logging

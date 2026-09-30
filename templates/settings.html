@@ -49,44 +49,6 @@
         </p>
       </div>
 
-      {% if gpio_available and gpio_status %}
-      <div class="status-section">
-        <h3>GPIO</h3>
-        <div class="gpio-status">
-          <div class="gpio-item">
-            <span>Crochet : </span>
-            <strong id="gpio-hook">{{ gpio_status.hook or "inconnu" }}</strong>
-          </div>
-          <div class="gpio-item">
-            <span>Cadran (off-normal) : </span>
-            <strong id="gpio-dial-offnormal">{{ gpio_status.dial_offnormal or "inconnu" }}</strong>
-          </div>
-          <div class="gpio-item">
-            <span>Cadran (pulse) : </span>
-            <strong id="gpio-dial-pulse">{{ gpio_status.dial_pulse or "inconnu" }}</strong>
-          </div>
-        </div>
-      </div>
-      {% else %}
-      <div class="status-section">
-        <h3>GPIO</h3>
-        <p class="muted">GPIO non disponible (mode démo)</p>
-        <div class="gpio-status" id="gpio-demo-status">
-          <div class="gpio-item">
-            <span>Crochet : </span>
-            <strong>inconnu</strong>
-          </div>
-          <div class="gpio-item">
-            <span>Cadran (off-normal) : </span>
-            <strong>inconnu</strong>
-          </div>
-          <div class="gpio-item">
-            <span>Cadran (pulse) : </span>
-            <strong>inconnu</strong>
-          </div>
-        </div>
-      </div>
-      {% endif %}
     </section>
 
     <section class="card">
@@ -100,12 +62,17 @@
         les fichiers choisis en WAV {{ audio_rate }} Hz stéréo, prêts à être joués.
       </p>
 
-      <form id="audio-form">
+      <!-- autocomplete="off" : sans lui, Firefox restaure au rechargement les
+           listes telles qu'on les avait laissées, et non le choix enregistré. -->
+      <form id="audio-form" autocomplete="off">
         {% for role in audio_roles %}
         <label>
           {{ role.label }}
           <select name="{{ role.nom }}">
             <option value="" {% if not role.source %}selected{% endif %}>— aucun —</option>
+            {% if role.source_introuvable %}
+            <option value="{{ role.source }}" selected>{{ role.source }} (introuvable)</option>
+            {% endif %}
             {% for source in audio_sources %}
             <option value="{{ source }}" {% if role.source == source %}selected{% endif %}>{{ source }}</option>
             {% endfor %}
@@ -119,6 +86,9 @@
             <span class="badge badge-erreur">manquant</span>
             {% else %}
             <span class="badge">non converti</span>
+            {% endif %}
+            {% if role.source_introuvable %}
+            <span class="badge badge-erreur">fichier choisi introuvable</span>
             {% endif %}
             {% if role.origine == "convention" %}
             <span class="muted">repli : {{ role.source_effective }}</span>
