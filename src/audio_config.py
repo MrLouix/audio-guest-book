@@ -20,6 +20,7 @@ fonctionner sans `audio_config.json`.
 """
 
 import logging
+import unicodedata
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -126,7 +127,38 @@ def _is_safe_name(nom: str) -> bool:
     return bool(nom) and Path(nom).name == nom and nom not in (".", "..")
 
 
-def _resoudre(role: str, roles: Dict[str, str]) -> Tuple[Optional[Path], str]:
+def _forme_canonique(nom: str) -> str:
+    """Nom en forme Unicode NFC.
+
+    Un même nom accentué (« Mémé.m4a ») peut s'écrire en NFC ou en NFD selon
+    l'appareil qui l'a créé : iOS et macOS produisent du NFD, et un aller-
+    retour par le Drive peut changer la forme. Les deux sont identiques à
+    l'écran mais différents pour le système de fichiers.
+    """
+    return unicodedata.normalize("NFC", nom)
+
+
+def _fichier_source(nom: str, sources: Optional[List[str]] = None) -> Optional[Path]:
+    """Fichier de audio_src/ désigné par `nom`, à la forme Unicode près ; None s'il n'y est plus.
+
+    `sources` (available_sources()) évite de relister le dossier quand
+    l'appelant l'a déjà fait.
+    """
+    if not nom or not _is_safe_name(nom):
+        return None
+    if sources is None:
+        sources = available_sources()
+    if nom in sources:
+        return config.AUDIO_SRC_DIR / nom
+    cle = _forme_canonique(nom)
+    for candidat in sources:
+        if _forme_canonique(candidat) == cle:
+            return config.AUDIO_SRC_DIR / candidat
+    return None
+
+
+def _resoudre(role: str, roles: Dict[str, str],
+              sources: Optional[List[str]] = None) -> Tuple[Optional[Path], str]:
     """(fichier source, origine) du rôle, d'après un mapping déjà lu.
 
     Précédence :
@@ -136,9 +168,9 @@ def _resoudre(role: str, roles: Dict[str, str]) -> Tuple[Optional[Path], str]:
     3. (None, "absent") — le rôle n'a pas de source.
     """
     nom = roles.get(role)
-    if nom and _is_safe_name(nom):
-        chemin = config.AUDIO_SRC_DIR / nom
-        if chemin.is_file():
+    if nom:
+        chemin = _fichier_source(nom, sources)
+        if chemin is not None:
             return chemin, "mapping"
         logger.warning("Source %r du rôle %r introuvable : repli sur la convention "
                        "de nommage.", nom, role)
@@ -170,7 +202,7 @@ def set_role_sources(mapping: Dict[str, Optional[str]]) -> dict:
     cfg = read_config()
     roles = dict(cfg["roles"])
     modifies = []
-    sources = set(available_sources())
+    sources = available_sources()
 
     for role, nom in mapping.items():
         if role not in ROLE_NAMES:
@@ -185,11 +217,20 @@ def set_role_sources(mapping: Dict[str, Optional[str]]) -> dict:
         if not _is_safe_name(nom):
             return {"ok": False, "erreur": f"Nom de fichier invalide pour {role} : {nom}",
                     "roles_modifies": []}
-        if nom not in sources:
+        fichier = _fichier_source(nom, sources)
+        if fichier is None:
+            # Choix déjà enregistré dont le fichier a disparu (renommé ou
+            # supprimé côté Drive) : le formulaire le renvoie tel quel, il est
+            # conservé plutôt que de faire échouer l'enregistrement des autres
+            # rôles. La page le signale comme introuvable.
+            if roles.get(role) == nom:
+                continue
             return {"ok": False,
                     "erreur": f"Fichier absent de {config.AUDIO_SRC_DIR.name}/ pour "
                               f"{ROLE_LABELS.get(role, role)} : {nom}",
                     "roles_modifies": []}
+        # Nom tel qu'il existe réellement sur le disque (forme Unicode comprise).
+        nom = fichier.name
         if roles.get(role) != nom:
             roles[role] = nom
             modifies.append(role)
@@ -206,9 +247,11 @@ def set_role_sources(mapping: Dict[str, Optional[str]]) -> dict:
 def mapping_status() -> List[dict]:
     """État de chaque rôle, pour la page /settings du dashboard (§5.2)."""
     cfg = read_config()["roles"]
+    sources = available_sources()
     etat = []
     for role in ROLE_NAMES:
-        source, origine = _resoudre(role, cfg)
+        source, origine = _resoudre(role, cfg, sources)
+        choix = cfg.get(role)
         cible = target_for(role)
         cible_existe = bool(cible and cible.exists())
 
@@ -225,7 +268,12 @@ def mapping_status() -> List[dict]:
         etat.append({
             "nom": role,
             "label": ROLE_LABELS.get(role, role),
-            "source": cfg.get(role),
+            # Nom à présélectionner dans la liste : celui du fichier réel
+            # quand il est retrouvé (sa forme Unicode peut différer de celle
+            # enregistrée), sinon le nom enregistré.
+            "source": source.name if origine == "mapping" else choix,
+            # Choix enregistré mais fichier disparu de audio_src/.
+            "source_introuvable": bool(choix) and origine != "mapping",
             "source_effective": source.name if source else None,
             "origine": origine,
             "cible": cible.name if cible else None,

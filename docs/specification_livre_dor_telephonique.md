@@ -215,7 +215,7 @@ Serveur Flask écoutant sur `0.0.0.0:5000`, accessible via `http://livredor.loca
 | `/api/wifi/add` | POST | Crée le profil WiFi via `nmcli` et tente la connexion. **Avertissement affiché dans l'UI** : si le Pi est en mode AP au moment de la confirmation, le téléphone de l'utilisateur perd sa connexion en cours de requête (une seule antenne, impossible de tenir les deux réseaux) ; se reconnecter ensuite au nouveau WiFi et rouvrir `livredor.local` |
 | `/rclone` | GET/POST | Configuration des deux jambes de synchronisation Google Drive (voir §5.4) |
 | `/api/rclone/resync` | POST | **Administrateur.** Réinitialise (`--resync`) la synchronisation bidirectionnelle de `audio_src/` |
-| `/settings` | GET | Statut matériel (carte son, sortie active du codec, GPIO), **choix des fichiers audio** et paramètres de fonctionnement |
+| `/settings` | GET | Statut matériel (carte son, sortie active du codec ; l’état des GPIO se lit avec `livre_dor.py --test`), **choix des fichiers audio** et paramètres de fonctionnement |
 | `/api/audio/sources` | GET | JSON : fichiers de `audio_src/` et état de chaque rôle (converti / périmé / absent, origine du choix) |
 | `/api/audio/roles` | POST | **Administrateur.** Enregistre le fichier choisi pour chaque rôle, puis convertit les seuls rôles modifiés |
 | `/api/audio/reconvert` | POST | **Administrateur.** Reconvertit tous les rôles depuis `audio_src/` (après une synchro Drive) |

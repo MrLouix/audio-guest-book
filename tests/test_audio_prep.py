@@ -22,6 +22,7 @@ Usage :
     python3 tests/test_audio_prep.py
 """
 
+import unicodedata
 import wave
 from pathlib import Path
 from typing import List
@@ -124,6 +125,38 @@ def test_mapping(rapport: Rapport) -> None:
                      audio_config.origin_for("message_4"), "absent")
         rapport.verifie("et n'a pas de source",
                         audio_config.source_for("message_4") is None)
+
+    rapport.section("1 bis. Choix conservé et affiché d'une session à l'autre (§5.2)")
+    with Banc(machine=False, chiffres_maries=[]):
+        nfd = unicodedata.normalize("NFD", "Mémé.m4a")
+        nfc = unicodedata.normalize("NFC", "Mémé.m4a")
+        (config.AUDIO_SRC_DIR / nfd).write_bytes(b"")
+        (config.AUDIO_SRC_DIR / "cloches.mp3").write_bytes(b"")
+        audio_config.set_role_sources({"message_1": nfd, "sonnerie": "cloches.mp3"})
+
+        def etat(role):
+            return next(r for r in audio_config.mapping_status() if r["nom"] == role)
+
+        # Aller-retour par le Drive : même nom à l'écran, autre forme Unicode.
+        (config.AUDIO_SRC_DIR / nfd).rename(config.AUDIO_SRC_DIR / nfc)
+        sources = audio_config.available_sources()
+        rapport.verifie("un nom accentué renormalisé (NFD -> NFC) reste le choix du rôle",
+                        audio_config.origin_for("message_1") == "mapping")
+        rapport.verifie("et la page présélectionne le fichier tel qu'il est listé",
+                        etat("message_1")["source"] in sources,
+                        f"source : {etat('message_1')['source']!r}, liste : {sources!r}")
+
+        (config.AUDIO_SRC_DIR / "cloches.mp3").unlink()
+        rapport.verifie("un choix dont le fichier a disparu reste affiché, signalé introuvable",
+                        etat("sonnerie")["source"] == "cloches.mp3"
+                        and etat("sonnerie")["source_introuvable"])
+        resultat = audio_config.set_role_sources({"sonnerie": "cloches.mp3", "message_1": nfc})
+        rapport.verifie("le renvoyer tel quel n'empêche pas d'enregistrer les autres rôles",
+                        resultat["ok"], resultat["erreur"])
+        rapport.egal("et il n'est pas effacé du mapping",
+                     audio_config.read_config()["roles"].get("sonnerie"), "cloches.mp3")
+        resultat = audio_config.set_role_sources({"message_2": "absent.mp3"})
+        rapport.verifie("un nouveau choix de fichier absent reste refusé", not resultat["ok"])
 
     rapport.section("2. Validation des noms venus du dashboard (§6)")
     with Banc(machine=False, chiffres_maries=[]):

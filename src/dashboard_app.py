@@ -25,7 +25,6 @@ import audio_io
 import auth
 import config
 import fichiers
-import gpio_io
 import mode_io
 import network_info
 import qr_utils
@@ -98,6 +97,15 @@ def require_login():
     if request.query_string:
         next_target += "?" + request.query_string.decode("utf-8", errors="ignore")
     return redirect(url_for("login", next=next_target))
+
+
+@app.after_request
+def pages_sans_cache(response):
+    """Les pages HTML reflètent un état qui change (choix audio, mode, réglages) :
+    jamais servies depuis un cache ou l'historique du navigateur."""
+    if response.mimetype == "text/html":
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -350,8 +358,6 @@ def settings_page():
             for niveau in config.NIVEAUX
         ],
         is_admin=_is_admin(),
-        gpio_status=gpio_io.get_current_status(),
-        gpio_available=gpio_io.is_gpio_available(),
         sound_card=config.SOUND_CARD,
         sound_card_available=audio_io.sound_card_available(),
         audio_roles=audio_config.mapping_status(),
@@ -371,7 +377,6 @@ def api_settings_get():
                 "name": config.SOUND_CARD,
                 "available": audio_io.sound_card_available(),
             },
-            **_gpio_payload(),
         },
     })
 
@@ -406,17 +411,6 @@ def api_settings_post():
         response["redemarrage_necessaire"] = True
     
     return jsonify(response)
-
-
-@app.route("/api/gpio-status")
-def api_gpio_status():
-    """Retourne l'état actuel des GPIO en JSON."""
-    return jsonify(_gpio_payload())
-
-
-def _gpio_payload() -> dict:
-    return {"gpio": gpio_io.get_current_status(),
-            "gpio_available": gpio_io.is_gpio_available()}
 
 
 # --- Choix et conversion des fichiers audio (§4.2, §5.2) ----------------
