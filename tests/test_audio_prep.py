@@ -22,6 +22,9 @@ Usage :
     python3 tests/test_audio_prep.py
 """
 
+import re
+import shutil
+import subprocess
 import unicodedata
 import wave
 from pathlib import Path
@@ -47,6 +50,14 @@ def _ecrire_source(nom: str, duree_ms: int = 400, frequence: int = 440,
     chemin = config.AUDIO_SRC_DIR / nom
     Sine(frequence).to_audio_segment(duration=duree_ms).export(chemin, format=format_)
     return chemin
+
+
+def _sonie_lufs(chemin: Path) -> float:
+    """Sonie intégrée EBU R128 mesurée par ffmpeg (filtre ebur128)."""
+    sortie = subprocess.run(
+        ["ffmpeg", "-nostats", "-i", str(chemin), "-af", "ebur128", "-f", "null", "-"],
+        capture_output=True, text=True, check=True).stderr
+    return float(re.findall(r"I:\s+(-?[\d.]+) LUFS", sortie)[-1])
 
 
 def _lire_wav(chemin: Path) -> dict:
@@ -293,6 +304,57 @@ def test_conversion(rapport: Rapport) -> None:
         infos = _lire_wav(config.MESSAGE_GENERIQUE_WAV)
         rapport.verifie("et le fichier reste lisible de bout en bout",
                         infos["cadence"] == 48000 and infos["pistes_identiques"])
+
+    rapport.section("5 bis. Normalisation des messages")
+    with Banc(machine=False, chiffres_maries=[]):
+        from pydub import AudioSegment  # noqa: E402
+
+        # Voix faible (-35 dBFS), cas réel d'un message générique enregistré
+        # au smartphone : sans normalisation, le bip la couvrait de 17 dB.
+        faible = (AudioSegment.silent(duration=300)
+                  + Sine(300).to_audio_segment(duration=800, volume=-35))
+        faible.export(config.AUDIO_SRC_DIR / "faible.wav", format="wav")
+        # Voix forte, à crête proche du plein échelle.
+        _ecrire_source("fort.wav", duree_ms=800, frequence=300)
+        audio_config.set_role_sources({"message_generique": "faible.wav",
+                                       "message_1": "fort.wav"})
+        prepare_audio.prepare_all()
+
+        for nom, cible in (("faible", config.MESSAGE_GENERIQUE_WAV),
+                           ("forte", audio_config.target_for("message_1"))):
+            produit = AudioSegment.from_file(cible)
+            niveau = prepare_audio.niveau_voix_dbfs(produit)
+            rapport.verifie(f"une voix {nom} est ramenée à la cible",
+                            abs(niveau - prepare_audio.MESSAGE_NIVEAU_VOIX_DBFS) < 0.5,
+                            f"niveau obtenu : {niveau:.1f} dBFS")
+            rapport.verifie(f"sans écrêter (voix {nom})",
+                            produit.max_dBFS <= prepare_audio.MESSAGE_CRETE_MAX_DBFS + 0.1,
+                            f"crête : {produit.max_dBFS:.1f} dBFS")
+
+        # Une sinusoïde à crête -1 dBFS a un niveau efficace de -4 dBFS : la
+        # crête interdit d'atteindre une cible plus haute.
+        bornee = Sine(300).to_audio_segment(duration=800, volume=-30)
+        with harness.remplacer(prepare_audio, "MESSAGE_NIVEAU_VOIX_DBFS", 0.0):
+            gain = prepare_audio.gain_normalisation(bornee)
+        rapport.verifie("le gain est borné par la crête, jamais d'écrêtage",
+                        abs(gain - 29.0) < 0.2, f"gain : {gain:.1f} dB")
+        rapport.egal("un message muet n'est pas amplifié",
+                     prepare_audio.gain_normalisation(AudioSegment.silent(duration=500)), 0.0)
+
+        # La sonie perçue (LUFS) est la bonne mesure entre une voix et une
+        # sinusoïde : à niveau efficace égal, elles ne s'entendent pas pareil.
+        if shutil.which("ffmpeg") is None:
+            rapport.ignore("sonie de la tonalité et du bip", "ffmpeg absent")
+        else:
+            prepare_audio.generate_synthesized()
+            tonalite = _sonie_lufs(config.TONALITE_WAV)
+            bip = _sonie_lufs(config.BIP_WAV)
+            rapport.verifie("la tonalité et le bip ont la même sonie (à 1 LU près)",
+                            abs(tonalite - bip) <= 1.0,
+                            f"tonalité {tonalite:.1f} LUFS, bip {bip:.1f} LUFS")
+            rapport.verifie("au niveau des messages normalisés (-17 LUFS à 1 LU près)",
+                            abs(tonalite + 17) <= 1.0 and abs(bip + 17) <= 1.0,
+                            f"tonalité {tonalite:.1f} LUFS, bip {bip:.1f} LUFS")
 
     rapport.section("6. Sortie associée à chaque rôle (§4.1)")
     with Banc(machine=False, chiffres_maries=[]):

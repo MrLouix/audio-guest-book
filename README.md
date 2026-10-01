@@ -88,7 +88,7 @@ python3 src/prepare_audio.py --role sonnerie  # un seul rôle
 python3 src/prepare_audio.py --play-all       # rejoue chaque fichier sur SA sortie
 ```
 
-`tonalite.wav` (440 Hz continu) et `bip.wav` (800 Hz, 600 ms, encadré de silence) sont générés par synthèse, sans fichier source. Un rôle sans source est simplement ignoré : `livre_dor.py` retombe sur `message_generique.wav`. Chaque fichier est écrit via un temporaire puis `os.replace()` — une reconversion déclenchée depuis le dashboard ne peut donc pas faire lire un WAV tronqué à `aplay`.
+`tonalite.wav` (440 Hz continu) et `bip.wav` (800 Hz, 600 ms, encadré de silence) sont générés par synthèse, sans fichier source. Les messages (générique, 0 à 9, « aucun message ») sont **normalisés** : la voix (95e centile des blocs de 20 ms) est ramenée à −16 dBFS, soit environ −17 LUFS, la sonie du bip et de la tonalité (synthétisés à −9 et −10,5 dB) — gain plafonné à +30 dB et borné par la crête (−1 dBFS) pour ne jamais écrêter. Sans cela, un message enregistré au smartphone sortait 17 dB sous le bip. La sonnerie n'est pas normalisée. Un rôle sans source est simplement ignoré : `livre_dor.py` retombe sur `message_generique.wav`. Chaque fichier est écrit via un temporaire puis `os.replace()` — une reconversion déclenchée depuis le dashboard ne peut donc pas faire lire un WAV tronqué à `aplay`.
 
 Les primitives de lecture/enregistrement bas niveau (`audio_io.py`) peuvent être testées isolément :
 

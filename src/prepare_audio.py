@@ -22,6 +22,12 @@ Contenu généré :
   dashboard, ou, à défaut, du fichier portant le nom du rôle
   (`audio_src/sonnerie.*`) — cf. `audio_config.source_for()`.
 
+Les messages (générique, chiffres, « aucun message ») sont **normalisés** :
+une source enregistrée au smartphone peut sortir 15 à 20 dB sous le bip de
+synthèse, et l'invité entendait alors un message à peine audible suivi d'un
+bip qui claque. La voix est ramenée au niveau perçu du bip, sans jamais
+écrêter.
+
 Usage :
     python3 prepare_audio.py                 # (re)génère tout dans audio/
     python3 prepare_audio.py --role sonnerie  # un seul rôle
@@ -30,6 +36,7 @@ Usage :
 
 import argparse
 import logging
+import math
 import os
 import threading
 from pathlib import Path
@@ -49,10 +56,26 @@ logger = logging.getLogger(__name__)
 FRAME_RATE = config.AUDIO_RATE_HZ      # 48 000 Hz
 SAMPLE_WIDTH = 2                       # 16 bits (S16_LE)
 
-MESSAGE_GAIN_DB = -9
 RING_GAIN_DB = 0
-TONALITE_GAIN_DB = -12
-BIP_GAIN_DB = -6
+# -10,5 dB : la tonalité tombe vers -17 LUFS, comme le bip et les messages
+# normalisés. À -12 dB, elle sortait à -18,7 LUFS, un peu en retrait.
+TONALITE_GAIN_DB = -10.5
+# -9 dB : à l'oreille, le bip tombe au niveau d'un message normalisé et de
+# la tonalité (-17 LUFS tous les trois). À -6 dB, il dominait de 3 à 4 LU.
+BIP_GAIN_DB = -9
+
+# Normalisation des messages. Le niveau de la voix est le 95e centile des
+# blocs de 20 ms, comme pour les messages des invités (traitement_audio) :
+# les pauses et le silence de tête ne comptent pas, un claquement bref non
+# plus. -16 dBFS donne une voix vers -17 LUFS, la sonie du bip (mesuré sur un
+# message générique réel : sans normalisation, la voix sortait à -35 dBFS
+# efficaces et le bip la couvrait de 17 dB). Le gain est ensuite borné par la
+# crête du signal : jamais d'écrêtage, quitte à rester un peu sous la cible
+# pour une source très dynamique.
+MESSAGE_NIVEAU_VOIX_DBFS = -16.0
+MESSAGE_GAIN_MAX_DB = 30.0
+MESSAGE_CRETE_MAX_DBFS = -1.0
+NORMALISATION_BLOC_MS = 20
 
 # Tonalité d'invitation à numéroter du réseau français : **440 Hz seul**, et
 # non le mélange 440 + 480 Hz du réseau nord-américain, dont le battement à
@@ -91,19 +114,19 @@ MAX_SOURCE_DURATION_SEC = 300
 _conversion_lock = threading.Lock()
 
 
-def roles() -> Dict[str, Tuple[Path, float]]:
-    """rôle -> (fichier cible, gain dB).
+def roles() -> Dict[str, Tuple[Path, Optional[float]]]:
+    """rôle -> (fichier cible, gain dB) ; gain None = message normalisé.
 
     Fonction et non constante de module : tests/harness.py réassigne
     config.RING_OUT_WAV & co. à l'entrée de chaque scénario, une table figée à
     l'import écrirait dans le vrai dossier audio/.
     """
-    table: Dict[str, Tuple[Path, float]] = {}
+    table: Dict[str, Tuple[Path, Optional[float]]] = {}
     for role in audio_config.ROLE_NAMES:
         cible = audio_config.target_for(role)
         if cible is None:
             continue
-        gain = RING_GAIN_DB if role == audio_config.ROLE_SONNERIE else MESSAGE_GAIN_DB
+        gain = RING_GAIN_DB if role == audio_config.ROLE_SONNERIE else None
         table[role] = (cible, gain)
     return table
 
@@ -137,6 +160,33 @@ def _to_dual_mono(segment: AudioSegment, gain_db: float = 0.0,
     if lead_silence_ms:
         mono = AudioSegment.silent(duration=lead_silence_ms, frame_rate=FRAME_RATE) + mono
     return AudioSegment.from_mono_audiosegments(mono, mono)
+
+
+def niveau_voix_dbfs(segment: AudioSegment) -> Optional[float]:
+    """Niveau de la voix : 95e centile des blocs de 20 ms ; None si muet."""
+    mono = segment.set_channels(1)
+    niveaux = sorted(
+        bloc.dBFS
+        for bloc in (mono[i:i + NORMALISATION_BLOC_MS]
+                     for i in range(0, len(mono) - NORMALISATION_BLOC_MS + 1,
+                                    NORMALISATION_BLOC_MS))
+        if not math.isinf(bloc.dBFS))
+    if not niveaux:
+        return None
+    return niveaux[round(0.95 * (len(niveaux) - 1))]
+
+
+def gain_normalisation(segment: AudioSegment) -> float:
+    """Gain (dB) qui amène la voix à MESSAGE_NIVEAU_VOIX_DBFS, sans écrêter.
+
+    Plafonné à MESSAGE_GAIN_MAX_DB (une source quasi muette ne doit pas
+    devenir un souffle à plein volume) et par la crête du signal.
+    """
+    niveau = niveau_voix_dbfs(segment)
+    if niveau is None:
+        return 0.0
+    gain = min(MESSAGE_NIVEAU_VOIX_DBFS - niveau, MESSAGE_GAIN_MAX_DB)
+    return min(gain, MESSAGE_CRETE_MAX_DBFS - segment.set_channels(1).max_dBFS)
 
 
 def _generate_dial_tone() -> AudioSegment:
@@ -214,6 +264,9 @@ def convert_role(role: str) -> dict:
                 "message": (f"source trop longue ({len(segment) // 1000} s, maximum "
                             f"{MAX_SOURCE_DURATION_SEC} s)")}
 
+    if gain_db is None:
+        gain_db = gain_normalisation(segment)
+
     try:
         _export_atomic(_to_dual_mono(segment, gain_db), target)
     except (OSError, ValueError) as exc:
@@ -221,9 +274,9 @@ def convert_role(role: str) -> dict:
         return {"ok": False, "role": role, "source": source.name, "cible": target.name,
                 "message": f"écriture impossible ({exc})"}
 
-    logger.info("Généré : %s (source %s, gain %.1f dB)", target, source.name, gain_db)
+    logger.info("Généré : %s (source %s, gain %+.1f dB)", target, source.name, gain_db)
     return {"ok": True, "role": role, "source": source.name, "cible": target.name,
-            "message": f"converti depuis {source.name}"}
+            "message": f"converti depuis {source.name} (gain {gain_db:+.1f} dB)"}
 
 
 def generate_synthesized() -> None:
