@@ -153,7 +153,7 @@ Deux dossiers, deux rôles distincts :
 **Points d'implémentation :**
 - chaque fichier est écrit via un temporaire puis `os.replace()` : une reconversion lancée depuis le dashboard peut tomber pendant que `livre_dor.py` joue ce même fichier, et `aplay` ne doit jamais lire un WAV tronqué ;
 - une source illisible n'interrompt pas le lot : les autres rôles sont convertis, l'échec est remonté rôle par rôle ;
-- les messages (générique, 0 à 9, « aucun message ») sont normalisés : niveau de la voix (95e centile des blocs de 20 ms) ramené à −16 dBFS, soit environ −17 LUFS comme le bip (synthétisé à −9 dB), gain plafonné à +30 dB et borné par la crête (−1 dBFS), sans écrêtage. La sonnerie garde son niveau d'origine ;
+- les messages (générique, 0 à 9, « aucun message ») sont normalisés : niveau de la voix (95e centile des blocs de 20 ms) ramené à −16 dBFS, soit environ −17 LUFS comme le bip et la tonalité (synthétisés à −9 et −10,5 dB), gain plafonné à +30 dB et borné par la crête (−1 dBFS), sans écrêtage. La sonnerie garde son niveau d'origine ;
 - un silence de tête de 20 ms absorbe le « pop » de l'ampli au moment de la commutation de sortie ;
 - garde-fou mémoire : une source de plus de 5 minutes est refusée proprement (pydub charge tout en RAM, le Pi Zero 2 W n'a que 512 Mo).
 

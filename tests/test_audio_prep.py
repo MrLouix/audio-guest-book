@@ -22,6 +22,9 @@ Usage :
     python3 tests/test_audio_prep.py
 """
 
+import re
+import shutil
+import subprocess
 import unicodedata
 import wave
 from pathlib import Path
@@ -47,6 +50,14 @@ def _ecrire_source(nom: str, duree_ms: int = 400, frequence: int = 440,
     chemin = config.AUDIO_SRC_DIR / nom
     Sine(frequence).to_audio_segment(duration=duree_ms).export(chemin, format=format_)
     return chemin
+
+
+def _sonie_lufs(chemin: Path) -> float:
+    """Sonie intégrée EBU R128 mesurée par ffmpeg (filtre ebur128)."""
+    sortie = subprocess.run(
+        ["ffmpeg", "-nostats", "-i", str(chemin), "-af", "ebur128", "-f", "null", "-"],
+        capture_output=True, text=True, check=True).stderr
+    return float(re.findall(r"I:\s+(-?[\d.]+) LUFS", sortie)[-1])
 
 
 def _lire_wav(chemin: Path) -> dict:
@@ -329,6 +340,21 @@ def test_conversion(rapport: Rapport) -> None:
                         abs(gain - 29.0) < 0.2, f"gain : {gain:.1f} dB")
         rapport.egal("un message muet n'est pas amplifié",
                      prepare_audio.gain_normalisation(AudioSegment.silent(duration=500)), 0.0)
+
+        # La sonie perçue (LUFS) est la bonne mesure entre une voix et une
+        # sinusoïde : à niveau efficace égal, elles ne s'entendent pas pareil.
+        if shutil.which("ffmpeg") is None:
+            rapport.ignore("sonie de la tonalité et du bip", "ffmpeg absent")
+        else:
+            prepare_audio.generate_synthesized()
+            tonalite = _sonie_lufs(config.TONALITE_WAV)
+            bip = _sonie_lufs(config.BIP_WAV)
+            rapport.verifie("la tonalité et le bip ont la même sonie (à 1 LU près)",
+                            abs(tonalite - bip) <= 1.0,
+                            f"tonalité {tonalite:.1f} LUFS, bip {bip:.1f} LUFS")
+            rapport.verifie("au niveau des messages normalisés (-17 LUFS à 1 LU près)",
+                            abs(tonalite + 17) <= 1.0 and abs(bip + 17) <= 1.0,
+                            f"tonalité {tonalite:.1f} LUFS, bip {bip:.1f} LUFS")
 
     rapport.section("6. Sortie associée à chaque rôle (§4.1)")
     with Banc(machine=False, chiffres_maries=[]):

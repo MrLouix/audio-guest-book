@@ -57,9 +57,11 @@ FRAME_RATE = config.AUDIO_RATE_HZ      # 48 000 Hz
 SAMPLE_WIDTH = 2                       # 16 bits (S16_LE)
 
 RING_GAIN_DB = 0
-TONALITE_GAIN_DB = -12
-# -9 dB : à l'oreille, le bip tombe au niveau d'un message normalisé
-# (-17 LUFS l'un et l'autre). À -6 dB, il dominait de 3 à 4 LU.
+# -10,5 dB : la tonalité tombe vers -17 LUFS, comme le bip et les messages
+# normalisés. À -12 dB, elle sortait à -18,7 LUFS, un peu en retrait.
+TONALITE_GAIN_DB = -10.5
+# -9 dB : à l'oreille, le bip tombe au niveau d'un message normalisé et de
+# la tonalité (-17 LUFS tous les trois). À -6 dB, il dominait de 3 à 4 LU.
 BIP_GAIN_DB = -9
 
 # Normalisation des messages. Le niveau de la voix est le 95e centile des
