@@ -1,26 +1,28 @@
 """Traitement des messages des invités après enregistrement.
 
-Chaîne validée au banc du 22 au 25/09/2026 (docs/banc_audio/JOURNAL.md), sur
-le micro électret du jack MIC :
+Chaîne volontairement légère (02/10/2026) : la chaîne du banc (declip,
+despike, coupe-bandes Q 25 à -45 dB, sox noisered, expandeur) rendait une
+voix faussée et métallique. Mesuré sur les prises du 02/10, téléphone monté
+(silence et messages réels) : 94 % de l'énergie du bruit de fond est du
+ronflement secteur, 50 Hz et ses harmoniques jusqu'à 4 kHz ; le souffle
+restant est faible. Il suffit donc de :
 
-1. **declip** : les zones saturées (|signal| >= 95 %) — charge du bias au
-   démarrage, parasites d'alimentation — sont inexploitables électriquement ;
-   on les remplace par une interpolation linéaire ;
-2. **despike** : les clics électriques courts (<= 5 ms, saut > 0,05 entre deux
-   échantillons) sont interpolés de la même façon ;
-3. **passe-haut 80 Hz + coupe-bandes 50/100/150 Hz** (Q 25, -45 dB) contre le
-   hum secteur, capté sur la ligne micro en amont du codec ;
-4. **sox noisered** (0,25), avec un profil pris sur la fenêtre de 1,5 s la
-   plus calme et sans clic ;
-5. **expandeur doux** (mcompand) : abaisse les pauses pour effacer le
-   « scintillement » que laisse noisered, sans toucher la voix ;
-6. **normalisation** : le niveau de la voix est ramené à -20 dBFS (gain
-   plafonné, limiteur contre les claquements). Ajoutée après le banc : sans
-   elle, la voix débruitée sortait vers -46 dBFS, trop faible à la réécoute.
+1. **anti-ronflement** : le ronflement est modélisé comme une somme
+   d'harmoniques de la fréquence secteur, suivie trame par trame (elle
+   dérive de ± 0,05 Hz autour de 50 Hz), puis soustrait. Chaque harmonique
+   n'est retirée que sur ~1 Hz de large : la voix entre les raies n'est pas
+   touchée, contrairement à un peigne de coupe-bandes ;
+2. **débruitage léger** : atténuation spectrale (Wiener, décision dirigée)
+   plafonnée à TRAITEMENT_DEBRUITAGE_DB, sur un bruit estimé dans les
+   passages les plus calmes. Le plafond et le lissage évitent le « bruit
+   musical » et le timbre métallique de noisered ;
+3. **normalisation** : le niveau de la voix est ramené à -20 dBFS (gain
+   plafonné, limiteur contre les claquements). Un simple gain : le timbre
+   n'est pas modifié.
 
-Rejetés au banc : RNNoise (détruit les transitoires), afftdn (inefficace sur
-le 50 Hz), peigne de coupe-bandes harmoniques et passe-bas 4 kHz (perte de
-voix pour rien).
+Plus de declip ni de despike : sur les prises réelles, les « saturations » et
+les « clics » détectés étaient surtout la voix elle-même (micro proche, fort
+niveau), et leur interpolation la déformait.
 
 Le brut est d'abord copié dans `messages/brut/`, puis le fichier traité
 remplace atomiquement `messages/<nom>.wav` : restitution, transcription et
@@ -63,25 +65,27 @@ logger = logging.getLogger(__name__)
 
 BRUT_DIRNAME = "brut"
 
-# Constantes du banc (pipeline_v2.py), exprimées en temps pour ne pas dépendre
-# de la cadence : 80 échantillons à 16 kHz = 5 ms, blocs de 320 = 20 ms.
-SEUIL_CLIC = 0.05            # saut entre deux échantillons (-26 dBFS)
-CLIC_FUSION_MS = 5.0         # deux sauts plus proches appartiennent au même clic
-CLIC_DUREE_MAX_MS = 5.0      # au-delà, c'est de la parole
-CLIC_MARGE_MS = 1.25         # marge interpolée autour d'un clic (20 éch. à 16 kHz)
-SEUIL_SATURATION = 0.95
-SATURATION_MARGE_MS = 5.0
 BLOC_MS = 20.0
-PROFIL_DUREE_SEC = 1.5
-# Écart minimal entre la parole (95e centile des blocs) et la fenêtre de
-# profil : en deçà, la fenêtre « la plus calme » contient de la voix, et
-# noisered la retirerait avec le bruit. Volontairement bas : sur le jack MIC
-# la voix ne dépasse le bruit brut que de 7 à 9 dB (banc du 25/09, premiers
-# messages du 28/09), et c'est précisément là que noisered est indispensable.
-PROFIL_ECART_MIN_DB = 6.0
 
-EXPANDEUR = "0.001,0.12 -82,-105,-60,-60,-40,-40,-20,-20"
-NOTCH_FREQUENCES = (50, 100, 150)
+# Anti-ronflement. Trames de 1 s à 50 % de recouvrement : assez longues pour
+# que chaque raie ne retire que ~1 Hz de spectre, assez courtes pour suivre
+# la dérive du secteur et les variations d'amplitude du ronflement.
+SECTEUR_HZ = 50.0
+SECTEUR_ECART_MAX_HZ = 0.15     # recherche de la fréquence secteur à ± 0,15 Hz
+SECTEUR_PAS_HZ = 0.002
+RONFLEMENT_TRAME_SEC = 1.0
+RONFLEMENT_FMAX_HZ = 4000.0     # au-delà, plus aucune raie au-dessus du souffle
+RONFLEMENT_LISSAGE = 5          # médiane glissante de la fréquence, en trames
+
+# Débruitage : STFT 32 ms / pas 8 ms à 16 kHz.
+STFT_MS = 32.0
+STFT_PAS_MS = 8.0
+BRUIT_PART_CALME = 0.2          # bruit = moyenne des 20 % de trames les plus calmes
+DD_ALPHA = 0.98                 # lissage « décision dirigée » (anti bruit musical)
+# Écart minimal entre la parole (95e centile des trames) et les trames
+# calmes : en deçà, le message est parlé d'un bout à l'autre, le « bruit »
+# estimé contiendrait de la voix, et le débruitage est sauté.
+BRUIT_ECART_MIN_DB = 6.0
 
 
 class ErreurTraitement(Exception):
@@ -125,49 +129,6 @@ def ecrire(path: Path, d: "np.ndarray", sr: int, canaux: int = 2) -> None:
         w.writeframes(np.repeat(pcm, canaux).tobytes())
 
 
-def _plages(indices: "np.ndarray", ecart_max: int) -> List[Tuple[int, int]]:
-    """Regroupe des indices croissants en plages [début, fin] séparées de plus de ecart_max."""
-    plages: List[Tuple[int, int]] = []
-    for i in indices:
-        if plages and i - plages[-1][1] <= ecart_max:
-            plages[-1] = (plages[-1][0], int(i))
-        else:
-            plages.append((int(i), int(i)))
-    return plages
-
-
-def _interpoler(d: "np.ndarray", a: int, b: int) -> None:
-    if b > a:
-        d[a:b] = np.linspace(d[a], d[b - 1], b - a)
-
-
-def declip(d: "np.ndarray", sr: int) -> int:
-    """Interpole les zones saturées ; retourne leur nombre."""
-    marge = _echantillons(SATURATION_MARGE_MS, sr)
-    plages = _plages(np.where(np.abs(d) >= SEUIL_SATURATION)[0], 1)
-    for a, b in plages:
-        _interpoler(d, max(0, a - marge), min(len(d), b + marge))
-    return len(plages)
-
-
-def clics(d: "np.ndarray", sr: int, debut: int = 0) -> List[Tuple[int, int]]:
-    """Clics courts : sauts brusques groupés en événements de moins de 5 ms.
-
-    Les événements plus longs sont de la parole ; ceux qui commencent avant
-    `debut` tombent dans la rampe du bias, laissée au declip.
-    """
-    plages = _plages(np.where(np.abs(np.diff(d)) > SEUIL_CLIC)[0],
-                     _echantillons(CLIC_FUSION_MS, sr) - 1)
-    duree_max = _echantillons(CLIC_DUREE_MAX_MS, sr)
-    return [(a, b) for a, b in plages if b - a <= duree_max and a >= debut]
-
-
-def despike(d: "np.ndarray", evenements: List[Tuple[int, int]], sr: int) -> None:
-    marge = _echantillons(CLIC_MARGE_MS, sr)
-    for a, b in evenements:
-        _interpoler(d, max(0, a - marge), min(len(d), b + marge))
-
-
 def niveaux_blocs(d: "np.ndarray", taille: int) -> "np.ndarray":
     """Niveau RMS en dBFS de chaque bloc complet."""
     n = len(d) // taille
@@ -177,50 +138,130 @@ def niveaux_blocs(d: "np.ndarray", taille: int) -> "np.ndarray":
     return 20 * np.log10(np.sqrt((blocs ** 2).mean(axis=1)) + 1e-12)
 
 
-def fenetre_profil(d: "np.ndarray", evenements: List[Tuple[int, int]], sr: int,
-                   debut_sec: float) -> Optional[float]:
-    """Début (s) de la fenêtre de 1,5 s la plus calme après debut_sec.
+def _hann(n: int) -> "np.ndarray":
+    """Fenêtre de Hann périodique : à 50 % de recouvrement, sa somme vaut 1."""
+    return 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(n) / n)
 
-    Une fenêtre sans clic est préférée ; s'il n'y en a aucune (micro qui
-    craque souvent), la plus calme est retenue quand même — le signal reçu
-    est déjà despiké. None si le message est trop court, ou si même la
-    fenêtre la plus calme n'est pas nettement sous le niveau de parole
-    (message parlé d'un bout à l'autre) : mieux vaut alors ne pas débruiter
-    que retirer de la voix.
+
+# --- Anti-ronflement ---------------------------------------------------------
+
+
+def frequence_secteur(trame: "np.ndarray", sr: int) -> float:
+    """Fréquence secteur (Hz) d'une trame, par maximum d'énergie des raies 1 et 3.
+
+    Les raies 50 et 150 Hz sont les plus fortes du ronflement et la voix y
+    est faible. Chaque raie est d'abord démodulée autour de sa valeur
+    nominale puis moyennée par paquets de 10 ms (l'écart cherché, < 0,5 Hz,
+    n'y tourne que de quelques centièmes de radian) : la recherche fine ne
+    porte alors que sur ~100 points par trame, ce qui la rend négligeable
+    même sur le Pi Zero.
     """
-    taille = _echantillons(BLOC_MS, sr)
-    db = niveaux_blocs(d, taille)
-    largeur = int(round(PROFIL_DUREE_SEC * 1000 / BLOC_MS))
-    premier = int(round(debut_sec * 1000 / BLOC_MS))
-    if len(db) - premier < largeur:
-        return None
+    n = len(trame)
+    t = np.arange(n) / sr
+    x = trame * _hann(n)
+    paquet = _echantillons(10.0, sr)
+    m = n // paquet
+    t_paquets = (np.arange(m) * paquet + (paquet - 1) / 2) / sr
+    grille = SECTEUR_HZ + np.arange(-SECTEUR_ECART_MAX_HZ,
+                                    SECTEUR_ECART_MAX_HZ + SECTEUR_PAS_HZ / 2, SECTEUR_PAS_HZ)
+    energie = np.zeros(len(grille))
+    for k in (1, 3):
+        y = x * np.exp(-2j * np.pi * k * SECTEUR_HZ * t)
+        y = y[: m * paquet].reshape(m, paquet).sum(axis=1)
+        rot = np.exp(-2j * np.pi * k * np.outer(grille - SECTEUR_HZ, t_paquets))
+        energie += np.abs(rot @ y) ** 2
+    return float(grille[int(np.argmax(energie))])
 
-    avec_clic = np.zeros(len(db), dtype=bool)
-    for a, b in evenements:
-        avec_clic[max(0, a // taille - 1): min(len(db), b // taille + 2)] = True
 
-    meilleur = meilleur_avec_clic = None
-    for i in range(premier, len(db) - largeur + 1):
-        m = db[i:i + largeur].mean()
-        if not avec_clic[i:i + largeur].any():
-            if meilleur is None or m < meilleur[0]:
-                meilleur = (m, i)
-        elif meilleur_avec_clic is None or m < meilleur_avec_clic[0]:
-            meilleur_avec_clic = (m, i)
-    meilleur = meilleur or meilleur_avec_clic
-    if meilleur is None:
+def anti_ronflement(d: "np.ndarray", sr: int) -> Tuple["np.ndarray", float]:
+    """Retire le ronflement secteur ; retourne le signal et la fréquence médiane.
+
+    Sur chaque trame de 1 s, l'amplitude et la phase de chaque harmonique
+    (et la composante continue) sont mesurées à la fréquence secteur de la
+    trame, puis le modèle est retranché par recouvrement-addition (Hann à
+    50 %). Les harmoniques d'une même trame étant orthogonales, une simple
+    projection suffit : pas de moindres carrés.
+    """
+    taille = int(RONFLEMENT_TRAME_SEC * sr)
+    pas = taille // 2
+    n_trames = max(1, -(-(len(d) - pas) // pas)) + 1
+    x = np.concatenate([np.zeros(pas), d, np.zeros(n_trames * pas + taille - len(d) - pas)])
+    trames = [x[i * pas:i * pas + taille] for i in range(n_trames)]
+
+    f0 = np.array([frequence_secteur(tr, sr) for tr in trames])
+    demi = RONFLEMENT_LISSAGE // 2
+    f0 = np.array([np.median(f0[max(0, i - demi):i + demi + 1]) for i in range(len(f0))])
+
+    fen = _hann(taille)
+    poids = fen / fen.sum()
+    t = np.arange(taille) / sr
+    ronflement = np.zeros(len(x))
+    for i, (tr, f) in enumerate(zip(trames, f0)):
+        tw = tr * poids
+        modele = np.full(taille, tw.sum())                # composante continue
+        base = np.exp(2j * np.pi * f * t)
+        z = np.ones(taille, dtype=complex)
+        for _ in range(int(RONFLEMENT_FMAX_HZ // f)):
+            z *= base
+            modele += np.real(2 * np.dot(tw, np.conj(z)) * z)
+        ronflement[i * pas:i * pas + taille] += modele * fen
+    return d - ronflement[pas:pas + len(d)], float(np.median(f0))
+
+
+# --- Débruitage léger --------------------------------------------------------
+
+
+def debruitage(d: "np.ndarray", sr: int, attenuation_max_db: float,
+               debut_sec: float) -> Optional["np.ndarray"]:
+    """Atténuation spectrale plafonnée ; None si le message n'a pas de pause.
+
+    Bruit = spectre moyen des trames les plus calmes après debut_sec (la
+    première demi-seconde porte la charge du bias). Gain de Wiener à rapport
+    signal/bruit « décision dirigée » (Ephraim-Malah), borné à
+    -attenuation_max_db : le souffle est abaissé sans trous ni gazouillis.
+    """
+    n = _echantillons(STFT_MS, sr)
+    pas = _echantillons(STFT_PAS_MS, sr)
+    fen = np.sqrt(_hann(n) * 2 / (n // pas))   # analyse × synthèse : somme = 1 à 75 %
+    x = np.concatenate([np.zeros(n), d, np.zeros(2 * n)])
+    n_trames = (len(x) - n) // pas + 1
+    spectres = np.fft.rfft(np.stack([x[i * pas:i * pas + n] * fen
+                                     for i in range(n_trames)]), axis=1)
+    puissance = np.abs(spectres) ** 2
+
+    premiere = int((debut_sec * sr + n) / pas)
+    utiles = puissance[premiere:int((len(d) + n) / pas)]
+    if len(utiles) < 10:
         return None
-    if np.percentile(db[premier:], 95) - meilleur[0] < PROFIL_ECART_MIN_DB:
+    energie_db = 10 * np.log10(utiles.sum(axis=1) + 1e-20)
+    calmes = np.argsort(energie_db)[: max(5, int(len(utiles) * BRUIT_PART_CALME))]
+    if np.percentile(energie_db, 95) - energie_db[calmes].mean() < BRUIT_ECART_MIN_DB:
         return None
-    return meilleur[1] * BLOC_MS / 1000
+    bruit = utiles[calmes].mean(axis=0) + 1e-20
+
+    g_min = 10 ** (-attenuation_max_db / 20)
+    gain = np.ones(puissance.shape[1])
+    snr_prec = np.ones(puissance.shape[1])
+    for i in range(n_trames):
+        snr = puissance[i] / bruit
+        xi = DD_ALPHA * gain ** 2 * snr_prec + (1 - DD_ALPHA) * np.maximum(snr - 1, 0)
+        gain = np.maximum(xi / (1 + xi), g_min)
+        spectres[i] *= gain
+        snr_prec = snr
+
+    trames = np.fft.irfft(spectres, n, axis=1) * fen
+    y = np.zeros(len(x))
+    for i in range(n_trames):
+        y[i * pas:i * pas + n] += trames[i]
+    return y[n:n + len(d)]
 
 
 def gain_normalisation(d: "np.ndarray", sr: int) -> Optional[float]:
     """Gain (dB) qui amène la voix à TRAITEMENT_NIVEAU_VOIX_DBFS, plafonné.
 
     Niveau de la voix = 95e centile des blocs de 20 ms : robuste aux
-    claquements brefs, et les pauses (abaissées par l'expandeur) ne comptent
-    pas. None si le signal est vide.
+    claquements brefs, et les pauses ne comptent pas. None si le signal est
+    vide.
     """
     db = niveaux_blocs(d, _echantillons(BLOC_MS, sr))
     if len(db) == 0:
@@ -244,64 +285,40 @@ def _sox(*args: str) -> None:
 def _chaine(source: Path, sortie: Path, tmp: Path) -> str:
     """Applique la chaîne complète de source vers sortie ; retourne un résumé pour le journal."""
     d, sr = charger(source)
-    debut = int(config.TRAITEMENT_PROFIL_DEBUT_SEC * sr)
+    resume = []
 
-    n_sat = declip(d, sr)
-    evenements = clics(d, sr, debut)
-    despike(d, evenements, sr)
-    # sox travaille en mono (les deux pistes sont identiques) : traiter les
-    # deux canaux séparément les ferait diverger par le dither. Silence
-    # ajouté en fin, retiré à la fin : noisered ampute la fin du signal d'une
-    # demi-fenêtre (1024 échantillons, 64 ms à 16 kHz) — le banc perdait ainsi
-    # la fin de chaque message.
-    f_des = tmp / "despike.wav"
-    ecrire(f_des, np.concatenate([d, np.zeros(sr // 4)]), sr, canaux=1)
-
-    f_courant = tmp / "notch.wav"
-    args = [str(f_des), str(f_courant), "highpass", "80"]
-    if config.TRAITEMENT_NOTCH:
-        for f in NOTCH_FREQUENCES:
-            args += ["equalizer", str(f), "25q", "-45"]
-    _sox(*args)
-
-    t0 = fenetre_profil(d, evenements, sr, config.TRAITEMENT_PROFIL_DEBUT_SEC)
-    if t0 is None:
-        profil_txt = "noisered sauté (pas de silence exploitable)"
-    elif config.TRAITEMENT_NR > 0:
-        # Profil pris sur le signal despiké, avant les coupe-bandes : c'est la
-        # combinaison validée à l'écoute au banc.
-        prof = tmp / "profil"
-        _sox(str(f_des), "-n", "trim", f"{t0:.2f}", f"{PROFIL_DUREE_SEC}", "noiseprof", str(prof))
-        f_nr = tmp / "noisered.wav"
-        _sox(str(f_courant), str(f_nr), "noisered", str(prof), f"{config.TRAITEMENT_NR:.2f}")
-        f_courant = f_nr
-        profil_txt = f"noisered {config.TRAITEMENT_NR:.2f}, profil {t0:.2f}-{t0 + PROFIL_DUREE_SEC:.2f} s"
+    if config.TRAITEMENT_ANTI_RONFLEMENT:
+        d, f0 = anti_ronflement(d, sr)
+        resume.append(f"ronflement secteur retiré ({f0:.2f} Hz)")
     else:
-        profil_txt = "noisered désactivé"
+        resume.append("sans anti-ronflement")
 
-    if config.TRAITEMENT_EXPANDEUR:
-        f_exp = tmp / "expandeur.wav"
-        _sox(str(f_courant), str(f_exp), "mcompand", EXPANDEUR)
-        f_courant = f_exp
+    if config.TRAITEMENT_DEBRUITAGE_DB > 0:
+        y = debruitage(d, sr, config.TRAITEMENT_DEBRUITAGE_DB,
+                       config.TRAITEMENT_PROFIL_DEBUT_SEC)
+        if y is None:
+            resume.append("débruitage sauté (pas de pause exploitable)")
+        else:
+            d = y
+            resume.append(f"débruitage {config.TRAITEMENT_DEBRUITAGE_DB:g} dB max")
+    else:
+        resume.append("débruitage désactivé")
 
-    norm_txt = ""
     if config.TRAITEMENT_NORMALISATION:
-        x, _ = charger(f_courant)
-        gain = gain_normalisation(x[debut:len(d)], sr)
+        debut = int(config.TRAITEMENT_PROFIL_DEBUT_SEC * sr)
+        gain = gain_normalisation(d[debut:], sr)
         if gain is not None:
-            f_norm = tmp / "normalisation.wav"
-            # -l : limiteur de sox, les crêtes (claquement du raccroché)
-            # sont écrasées au lieu d'écrêter.
-            _sox(str(f_courant), str(f_norm), "gain", "-l", f"{gain:.1f}")
-            f_courant = f_norm
-            norm_txt = f", gain {gain:+.1f} dB"
+            # sox travaille en mono (les deux pistes sont identiques) ; -l :
+            # limiteur, les crêtes (claquement du raccroché) sont écrasées au
+            # lieu d'écrêter.
+            f_in, f_out = tmp / "traite.wav", tmp / "normalisation.wav"
+            ecrire(f_in, d, sr, canaux=1)
+            _sox(str(f_in), str(f_out), "gain", "-l", f"{gain:.1f}")
+            d, _ = charger(f_out)
+            resume.append(f"gain {gain:+.1f} dB")
 
-    resultat, _ = charger(f_courant)
-    resultat = np.concatenate([resultat, np.zeros(max(0, len(d) - len(resultat)))])[:len(d)]
-    ecrire(sortie, resultat, sr)
-    return (f"{n_sat} zone(s) saturée(s), {len(evenements)} clic(s), {profil_txt}{norm_txt}"
-            f"{'' if config.TRAITEMENT_NOTCH else ', sans coupe-bandes'}"
-            f"{'' if config.TRAITEMENT_EXPANDEUR else ', sans expandeur'}")
+    ecrire(sortie, d, sr)
+    return ", ".join(resume)
 
 
 def traiter(path: Path) -> bool:

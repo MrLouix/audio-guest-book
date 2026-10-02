@@ -182,9 +182,9 @@ Un paramètre fixé par variable d'environnement n'est donc pas modifiable depui
 | `AUDIO_RATE_HZ` / `AUDIO_CHANNELS` | 48000 / 2 | Format de lecture (fichiers de `audio/`) |
 | `RECORD_RATE_HZ` / `RECORD_CHANNELS` | 16000 / 2 | Format de capture : 16 kHz = plancher de bruit le plus bas du micro électret |
 | `TRAITEMENT_ACTIF` | `True` | Traitement de chaque message après enregistrement (brut conservé dans `messages/brut/`) |
-| `TRAITEMENT_NR` / `TRAITEMENT_NOTCH` / `TRAITEMENT_EXPANDEUR` | 0.25 / `True` / `True` | Force du débruitage, coupe-bandes 50/100/150 Hz (inutiles sur alimentation bruyante large bande), expandeur des pauses |
+| `TRAITEMENT_ANTI_RONFLEMENT` / `TRAITEMENT_DEBRUITAGE_DB` | `True` / 10 | Soustraction du 50 Hz secteur et de ses harmoniques ; atténuation maximale du débruitage léger (0 le désactive) |
 | `TRAITEMENT_NORMALISATION` / `TRAITEMENT_NIVEAU_VOIX_DBFS` / `TRAITEMENT_GAIN_MAX_DB` | `True` / -20 / 30 | Niveau final de la voix (dBFS) et gain maximal ; limiteur contre les claquements |
-| `TRAITEMENT_PROFIL_DEBUT_SEC` | 0.5 | Début de la recherche du silence servant de profil de bruit (la 1re demi-seconde porte la charge du bias) |
+| `TRAITEMENT_PROFIL_DEBUT_SEC` | 0.5 | Début de la zone d'estimation du bruit de fond (la 1re demi-seconde porte la charge du bias) |
 | `RCLONE_SOURCES_FOLDER` | `MariageGuestBookSources` | Dossier Drive de `audio_src/`, synchronisé **dans les deux sens**. Doit être distinct de celui des enregistrements |
 
 ### Dashboard & authentification

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Traitement des messages après enregistrement (src/traitement_audio.py).
 
-Vérifie, sur un message synthétique (bruit de fond, hum 50 Hz, « voix »
-tonale, clics courts, zone saturée au démarrage) :
+Vérifie, sur un message synthétique (souffle, ronflement secteur légèrement
+décalé de 50 Hz avec harmoniques, « voix » tonale hors des raies) :
 
 1. le format produit : même cadence, stéréo, même durée ;
 2. le brut conservé à l'identique dans messages/brut/, le message remplacé
    atomiquement (aucun fichier intermédiaire ne traîne) ;
-3. l'effet de la chaîne : hum 50 Hz atténué, clics et saturation effacés,
-   voix préservée ;
+3. l'effet de la chaîne : ronflement et harmoniques retirés, souffle des
+   pauses abaissé, voix préservée ;
 4. qu'un retraitement repart du brut (résultat identique) ;
-5. le choix de la fenêtre de profil : message court ou parlé d'un bout à
-   l'autre -> noisered sauté, sans échec ;
+5. le débruitage : sauté sur un message parlé d'un bout à l'autre ou trop
+   court, sans échec ; suivi de la fréquence secteur ;
 6. les échecs sans perte : sox absent, fichier illisible -> brut intact ;
 7. la liste des messages en attente et le lancement en arrière-plan ;
 8. la normalisation : voix faible ramenée à la cible, sans écrêtage.
@@ -36,6 +36,7 @@ import traitement_audio              # noqa: E402
 
 np = traitement_audio.np
 SR = 16000
+SECTEUR = 49.97
 
 
 def _message(chemin: Path, secondes: float = 12.0, parole_continue: bool = False,
@@ -44,17 +45,16 @@ def _message(chemin: Path, secondes: float = 12.0, parole_continue: bool = False
     rng = np.random.default_rng(1)
     t = np.arange(int(secondes * SR)) / SR
     d = rng.normal(0, 0.001, len(t))                     # plancher ~ -60 dBFS
-    d += 0.01 * np.sin(2 * np.pi * 50 * t)               # hum 50 Hz ~ -43 dBFS
-    voix = amplitude_voix * (np.sin(2 * np.pi * 300 * t) + 0.5 * np.sin(2 * np.pi * 800 * t))
+    for k, a in ((1, 0.01), (3, 0.005), (7, 0.002)):     # secteur à 49,97 Hz ~ -42 dBFS
+        d += a * np.sin(2 * np.pi * k * SECTEUR * t + k)
+    # Raies de « voix » hors des harmoniques du secteur, comme une vraie voix
+    # dont la hauteur ne coïncide jamais longtemps avec un multiple de 50 Hz.
+    voix = amplitude_voix * (np.sin(2 * np.pi * 310 * t) + 0.5 * np.sin(2 * np.pi * 825 * t))
     if parole_continue:
         d += voix
     else:
         for a, b in ((2.5, 4.5), (9.0, 10.5)):
             d[int(a * SR):int(b * SR)] += voix[int(a * SR):int(b * SR)]
-        for instant in (6.0, 7.0):                       # clics dans le silence
-            if instant < secondes:
-                d[int(instant * SR)] += 0.4
-        d[int(0.1 * SR):int(0.1 * SR) + 50] = 0.99       # saturation au démarrage
     if claquement:                                       # raccroché : choc bref et fort
         d[int((secondes - 0.5) * SR):int((secondes - 0.45) * SR)] += 0.5
     traitement_audio.ecrire(chemin, d, SR)
@@ -102,16 +102,18 @@ def test_chaine(rapport: Rapport, dossier: Path) -> None:
     rapport.section("3. Effet de la chaîne")
     avant = _canaux(brut)[2][:, 0] / 32768
     apres = pcm[:, 0] / 32768
-    gain_50 = _raie(avant, 50, 5.0, 8.5) - _raie(apres, 50, 5.0, 8.5)
-    rapport.verifie("hum 50 Hz atténué d'au moins 30 dB", gain_50 >= 30, f"{gain_50:.1f} dB")
-    pic = max(np.abs(apres[int(5.99 * SR):int(6.01 * SR)]).max(),
-              np.abs(apres[int(6.99 * SR):int(7.01 * SR)]).max())
-    rapport.verifie("clics effacés", pic < 0.02, f"pic résiduel : {pic:.3f}")
-    rapport.verifie("saturation du démarrage effacée",
-                    np.abs(apres[:int(0.3 * SR)]).max() < traitement_audio.SEUIL_SATURATION)
-    perte = _rms(avant, 2.7, 4.3) - _rms(apres, 2.7, 4.3)
-    rapport.verifie("voix préservée (perte < 3 dB)", perte < 3, f"perte : {perte:.1f} dB")
-    bruit = _rms(avant, 5.0, 8.5) - _rms(apres, 5.0, 8.5)
+    for k in (1, 3, 7):
+        f = k * SECTEUR
+        gain = _raie(avant, f, 5.0, 8.5) - _raie(apres, f, 5.0, 8.5)
+        rapport.verifie(f"raie secteur {f:.0f} Hz atténuée d'au moins 30 dB", gain >= 30,
+                        f"{gain:.1f} dB")
+    # Normalisation retirée de la comparaison : seul le timbre compte ici.
+    gain_norm = _rms(apres, 9.2, 10.3) - _rms(avant, 9.2, 10.3)
+    for f in (310, 825):
+        perte = _raie(avant, f, 2.7, 4.3) - (_raie(apres, f, 2.7, 4.3) - gain_norm)
+        rapport.verifie(f"voix préservée à {f} Hz (écart < 1 dB)", abs(perte) < 1,
+                        f"écart : {perte:+.2f} dB")
+    bruit = _rms(avant, 5.0, 8.5) - (_rms(apres, 5.0, 8.5) - gain_norm)
     rapport.verifie("bruit de fond des pauses abaissé d'au moins 20 dB", bruit >= 20,
                     f"{bruit:.1f} dB")
 
@@ -122,27 +124,25 @@ def test_chaine(rapport: Rapport, dossier: Path) -> None:
     rapport.verifie("le brut n'est pas écrasé", brut.read_bytes() == original)
 
 
-def test_profil(rapport: Rapport, dossier: Path) -> None:
-    rapport.section("5. Fenêtre de profil de bruit")
-    d = np.zeros(SR)
-    rapport.egal("message de 1 s : pas de fenêtre",
-                 traitement_audio.fenetre_profil(d, [], SR, 0.5), None)
+def test_debruitage(rapport: Rapport, dossier: Path) -> None:
+    rapport.section("5. Débruitage et suivi du secteur")
     continu = dossier / "continu.wav"
     _message(continu, secondes=6.0, parole_continue=True)
     d, _ = traitement_audio.charger(continu)
-    rapport.egal("parole continue : pas de fenêtre (on ne débruite pas la voix)",
-                 traitement_audio.fenetre_profil(d, [], SR, 0.5), None)
+    rapport.egal("parole continue : débruitage sauté (on ne débruite pas la voix)",
+                 traitement_audio.debruitage(d, SR, 10.0, 0.5), None)
     rapport.verifie("parole continue : le traitement réussit quand même",
                     traitement_audio.traiter(continu))
+    rapport.egal("message de 0,5 s : débruitage sauté",
+                 traitement_audio.debruitage(np.zeros(SR // 2), SR, 10.0, 0.5), None)
     court = dossier / "court.wav"
     _message(court, secondes=1.0)
     rapport.verifie("message de 1 s : le traitement réussit",
                     traitement_audio.traiter(court))
     d, _ = traitement_audio.charger(dossier / "brut" / "message_2026-06-20_14-00-00.wav")
-    t0 = traitement_audio.fenetre_profil(d, [], SR, 0.5)
-    hors_parole = t0 is not None and (t0 + 1.5 <= 2.5 or 4.5 <= t0 <= 9.0 - 1.5)
-    rapport.verifie("message nominal : fenêtre prise hors parole", hors_parole,
-                    f"début : {t0}")
+    f0 = traitement_audio.frequence_secteur(d[5 * SR:6 * SR], SR)
+    rapport.verifie("fréquence secteur retrouvée à 0,01 Hz près", abs(f0 - SECTEUR) <= 0.01,
+                    f"{f0:.3f} Hz pour {SECTEUR} Hz")
 
 
 def test_echecs(rapport: Rapport, dossier: Path) -> None:
@@ -214,14 +214,14 @@ def main() -> None:
     parser = harness.parseur(__doc__, reel=False)
     parser.parse_args()
     rapport = Rapport("TRAITEMENT DES MESSAGES",
-                      "declip, clics, 50 Hz, noisered, expandeur — brut conservé")
+                      "ronflement secteur, débruitage léger, niveau — brut conservé")
     if np is None or shutil.which("sox") is None:
         rapport.ignore("chaîne de traitement", "sox ou numpy absent")
         rapport.conclure()
     dossier = Path(tempfile.mkdtemp(prefix="livredor_test_traitement_"))
     try:
         test_chaine(rapport, dossier)
-        test_profil(rapport, dossier)
+        test_debruitage(rapport, dossier)
         test_echecs(rapport, dossier)
         test_attente(rapport, dossier)
         test_normalisation(rapport, dossier)

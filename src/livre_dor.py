@@ -749,7 +749,7 @@ class GuestBookStateMachine:
             if duration < config.SHORT_RECORDING_THRESHOLD_SEC:
                 logger.warning("Enregistrement très court conservé (%.1fs < %.0fs), non supprimé : %s",
                                 duration, config.SHORT_RECORDING_THRESHOLD_SEC, path.name)
-            # Traitement (declip, clics, 50 Hz, bruit de fond) dans un processus
+            # Traitement (ronflement 50 Hz, souffle, niveau) dans un processus
             # séparé, brut conservé dans messages/brut/ : la machine retourne
             # aussitôt en attente, un invité suivant peut décrocher.
             if config.TRAITEMENT_ACTIF and duration > 0:
