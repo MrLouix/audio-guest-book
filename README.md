@@ -383,3 +383,11 @@ python3 tests/run_tous.py --reel             # recette physique complète
 ## Statut
 
 Développement terminé — les 12 sprints du plan de développement sont réalisés, plus le Sprint 13 (mode restitution, à activer après l'événement). La checklist de mise en service reste à dérouler sur le matériel physique assemblé avant l'événement, et sa section 9bis après (voir [`docs/checklist_mise_en_service.md`](docs/checklist_mise_en_service.md)).
+
+## Contribuer
+
+Les contributions sont bienvenues : voir [`CONTRIBUTING.md`](CONTRIBUTING.md) et le [code de conduite](CODE_OF_CONDUCT.md). Une faille de sécurité se signale en privé (voir [`SECURITY.md`](SECURITY.md)).
+
+## Licence
+
+[MIT](LICENSE) © 2026 MrLouix. `static/jsQR.min.js` est distribué sous licence Apache 2.0 (voir `static/jsQR.LICENSE.txt`).
