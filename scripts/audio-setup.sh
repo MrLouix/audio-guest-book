@@ -18,6 +18,9 @@
 #   ./audio-setup.sh switch-both           -> idem, les deux sorties
 #   ./audio-setup.sh switch-lineout 60     -> idem, volume a 60 %
 #
+#   ./audio-setup.sh mic-gain              -> gain de prise du micro seul
+#                                             (ALSA_MIC_GAIN_DB, rapide)
+#
 # Les modes switch-* ne touchent ni a l'entree ni au routage et n'ecrivent
 # jamais asound.state : c'est ce que src/alsa_io.py appelle avant chaque
 # lecture pour envoyer la sonnerie sur le line out et le reste sur le casque.
@@ -33,6 +36,13 @@
 #   ALSA_LO_MAX_DB  line out entier -48..+15 (defaut 0,  valeur brute 48)
 # Les defauts reproduisent les reglages du banc.
 #
+# Gain de prise du micro, en dB, par variable d'environnement — fixee par
+# src/alsa_io.py depuis config.MICRO_GAIN_DB (curseur du dashboard) :
+#   ALSA_MIC_GAIN_DB  entier 0..42 (defaut 24)
+# Reparti entre Mic 1 (pas de 6 dB) et Mixin PGA (pas de 1,5 dB) : Mic 1
+# prend le multiple de 6 dB inferieur, le PGA le reste, arrondi au cran de
+# 1,5 dB le plus proche. 24 -> Mic +24 / PGA 0 ; 42 -> Mic +36 / PGA +6.
+#
 # Cablage du livre d'or (cf. README, "Sorties audio") :
 #   - line out   -> 1 haut-parleur mono de sonnerie, qui lit la piste gauche
 #   - headphone  -> ecouteur du combine (L) + ecouteur secondaire (R)
@@ -45,7 +55,7 @@
 #   - numid=76 (MIC Jack Switch) indispensable : chemin DAPM complet
 #   - numid=79 (Mic 1 Amp Source MUX) sur MIC_P (1) : Differential (0)
 #     perd 22 dB de signal, MIC_N (2) ne capte rien
-#   - gain total 24 dB (Mic 1 +24, PGA 0), abaisse le 02/10/2026 depuis
+#   - gain total 24 dB par defaut (Mic 1 +24, PGA 0), abaisse le 02/10/2026 depuis
 #     42 dB : telephone monte, la voix ecretait franchement (8 a 15 % des
 #     tranches de 100 ms a pleine echelle sur des messages normaux, jusqu'a
 #     60 % en parlant fort), ecretage irreparable au traitement. Baisser le
@@ -120,17 +130,35 @@ setup_input() {
     set_ctl 76 on           # MIC Jack Switch — alimente le chemin DAPM
     set_ctl 23 on           # Mic 1 Switch
     set_ctl 79 1            # Mic 1 Amp Source MUX -> MIC_P
-    set_ctl 1  5            # Mic 1 Volume         +24 dB
     set_ctl 82 on           # Mixin Left  <- Mic 1
     set_ctl 87 on           # Mixin Right <- Mic 1
     set_ctl 26 on,on        # Mixin PGA Switch
-    set_ctl 4  3,3          # Mixin PGA Volume       0 dB (total 24 dB)
+    mic_gain                # Mic 1 Volume + Mixin PGA Volume
     set_ctl 27 on,on        # ADC Switch
     set_ctl 5  112,112      # ADC Volume             0 dB
     set_ctl 15 on           # ADC HPF Switch (anti-DC)
     set_ctl 16 0            # ADC HPF Cutoff Fs/24000
     set_ctl 17 off          # ADC Voice Mode — aucun gain mesurable
     set_ctl 60 off,off      # ALC off — sinon saturation du plancher
+}
+
+# Gain de prise (cf. en-tete) : seuls numid=1 (Mic 1) et numid=4 (PGA).
+MIC_GAIN_DB="${ALSA_MIC_GAIN_DB:-24}"
+MIC_GAIN_MIN=0; MIC_GAIN_MAX=42
+
+mic_gain() {
+    local mic_v mic_db pga_v
+    # Mic 1 : dB = -6 + v*6 ; multiple de 6 dB inferieur ou egal, v <= 7.
+    mic_v=$(( MIC_GAIN_DB / 6 + 1 ))
+    [ "$mic_v" -gt 7 ] && mic_v=7
+    mic_db=$(( mic_v * 6 - 6 ))
+    # PGA : dB = -4.5 + v*1.5, soit v = (reste + 4.5) / 1.5 = (2*reste + 9) / 3,
+    # arrondi au plus proche.
+    pga_v=$(( (2 * (MIC_GAIN_DB - mic_db) + 9 + 1) / 3 ))
+    [ "$pga_v" -gt 15 ] && pga_v=15
+    set_ctl 1 "$mic_v"          # Mic 1 Volume
+    set_ctl 4 "$pga_v,$pga_v"   # Mixin PGA Volume
+    echo "Micro   : gain $MIC_GAIN_DB dB (Mic 1 +$mic_db dB, PGA v=$pga_v)"
 }
 
 disable_unused_inputs() {
@@ -195,6 +223,7 @@ check_levels() {
 compute_refs() {
     check_levels ALSA_HP_MAX_DB "$HP_MAX_DB" "$HP_DB_MIN" "$HP_DB_MAX"
     check_levels ALSA_LO_MAX_DB "$LO_MAX_DB" "$LO_DB_MIN" "$LO_DB_MAX"
+    check_levels ALSA_MIC_GAIN_DB "$MIC_GAIN_DB" "$MIC_GAIN_MIN" "$MIC_GAIN_MAX"
     HP_VOL_REF=$(( HP_MAX_DB - HP_DB_MIN ))
     LO_VOL_REF=$(( LO_MAX_DB - LO_DB_MIN ))
 }
@@ -301,6 +330,7 @@ Usage : audio-setup.sh [--no-store] {headphone|lineout|both|status|switch-*}
   switch-lineout    idem, vers le line out
   switch-both       idem, les deux sorties
   switch-* VOLUME   idem, volume en % du niveau maximum (0-100, 0 = coupe)
+  mic-gain          gain de prise du micro seul (ALSA_MIC_GAIN_DB)
 
   --no-store        ne pas sauvegarder dans asound.state
 
@@ -308,6 +338,7 @@ Variables d'environnement :
   ALSA_CARD       numero de carte (defaut 1)
   ALSA_HP_MAX_DB  niveau maximum du casque, dB entier -57..+6 (defaut 6)
   ALSA_LO_MAX_DB  niveau maximum du line out, dB entier -48..+15 (defaut 0)
+  ALSA_MIC_GAIN_DB gain de prise du micro, dB entier 0..42 (defaut 24)
 EOF
 }
 
@@ -340,6 +371,12 @@ case "$MODE" in
             lineout)   output_lineout   ;;
             both)      output_both      ;;
         esac
+        ;;
+    mic-gain)
+        # Reglage rapide du gain de prise, appele par src/alsa_io.py avant
+        # un enregistrement quand le curseur du dashboard a change.
+        STORE=0
+        mic_gain
         ;;
     switch-headphone|switch-lineout|switch-both)
         # Bascule rapide : uniquement les numids de sortie (28/29/75/7/8).

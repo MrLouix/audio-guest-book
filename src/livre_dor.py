@@ -730,6 +730,9 @@ class GuestBookStateMachine:
         path = timestamped_recording_path()
         logger.info("Début de l'enregistrement : %s", path.name)
 
+        # Gain de prise réglable à chaud depuis le dashboard : réappliqué
+        # ici s'il a changé depuis le dernier enregistrement.
+        alsa_io.set_mic_gain()
         confirmer = HangupConfirmer(self.inputs)
 
         def combined_should_continue() -> bool:

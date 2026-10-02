@@ -438,6 +438,27 @@ def test_commutation(rapport: Rapport) -> None:
                          len(appels), nb + 1)
         finally:
             config.AUDIO_MAX_DB_CASQUE, config.AUDIO_MAX_DB_LINEOUT = casque, lineout
+        # Gain de prise du micro (MICRO_GAIN_DB) : réglage utilisateur à
+        # chaud, transmis par l'environnement, réappliqué seulement s'il change.
+        gain = config.MICRO_GAIN_DB
+        try:
+            rapport.egal("le gain micro par défaut est de 24 dB",
+                         alsa_io._script_env()["ALSA_MIC_GAIN_DB"], "24")
+            alsa_io.set_mic_gain(force=True)
+            rapport.egal("le gain micro passe par le mode rapide du script",
+                         appels[-1], ["mic-gain"])
+            nb = len(appels)
+            alsa_io.set_mic_gain()
+            rapport.egal("un gain inchangé ne relance rien", len(appels), nb)
+            config.MICRO_GAIN_DB = 30
+            alsa_io.set_mic_gain()
+            rapport.egal("un gain modifié est réappliqué", len(appels), nb + 1)
+            rapport.egal("avec la nouvelle valeur",
+                         alsa_io._script_env()["ALSA_MIC_GAIN_DB"], "30")
+            config.MICRO_GAIN_DB = 99
+            rapport.egal("un gain hors bornes est ramené à 0..42", alsa_io.mic_gain_db(), 42)
+        finally:
+            config.MICRO_GAIN_DB = gain
         rapport.egal("la dernière sortie appliquée est mémorisée",
                      alsa_io.last_output(), "headphone")
 

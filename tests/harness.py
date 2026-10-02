@@ -16,7 +16,7 @@ Principe des tests simulés, repris de src/restitution_test.py :
   journalisent leurs appels au lieu de lancer aplay/arecord — sans elles,
   aplay étant absent d'un poste de développement, play() renverrait « error »
   immédiatement et tous les délais seraient faux ;
-- `alsa_io.select_output` / `setup_card` sont eux aussi doublés : sans ça,
+- `alsa_io.select_output` / `setup_card` / `set_mic_gain` sont eux aussi doublés : sans ça,
   chaque lecture tenterait de lancer scripts/audio-setup.sh, qui échouerait
   faute de carte et de `amixer` ;
 - `traitement_audio.lancer_en_arriere_plan` est doublé : chaque
@@ -466,6 +466,7 @@ class AlsaFactice:
         self.bascules: List[str] = []
         self.volumes: List[Optional[int]] = []
         self.setups: List[str] = []
+        self.gains_micro: List[int] = []
 
     def select_output(self, output: str, force: bool = False,
                       volume: Optional[int] = None) -> bool:
@@ -475,6 +476,10 @@ class AlsaFactice:
 
     def setup_card(self, mode: str = "headphone", store: bool = False) -> bool:
         self.setups.append(mode)
+        return not self.echouer
+
+    def set_mic_gain(self, force: bool = False) -> bool:
+        self.gains_micro.append(alsa_io.mic_gain_db())
         return not self.echouer
 
     def is_available(self) -> bool:
@@ -487,6 +492,7 @@ class AlsaFactice:
         self.bascules.clear()
         self.volumes.clear()
         self.setups.clear()
+        self.gains_micro.clear()
 
 
 # --- Remplacement temporaire d'un attribut ------------------------------
@@ -585,6 +591,7 @@ _PARAMS_SAUVEGARDES = (
     "RECORD_RATE_HZ", "RECORD_CHANNELS",
     "AUDIO_OUTPUT_SONNERIE", "AUDIO_OUTPUT_COMBINE", "AUDIO_SETUP_SCRIPT",
     "VOLUME_SONNERIE", "VOLUME_COMBINE", "AUDIO_MAX_DB_CASQUE", "AUDIO_MAX_DB_LINEOUT",
+    "MICRO_GAIN_DB",
     # Paramètres modifiables à chaud : sans redirection, refresh_live_params()
     # appliquerait le vrai custom_config.json du Pi au milieu d'un scénario.
     "CUSTOM_CONFIG_FILE",
@@ -657,6 +664,8 @@ class Banc:
         self._alsa_select, self._alsa_setup = alsa_io.select_output, alsa_io.setup_card
         alsa_io.select_output = self.alsa.select_output
         alsa_io.setup_card = self.alsa.setup_card
+        self._alsa_mic = alsa_io.set_mic_gain
+        alsa_io.set_mic_gain = self.alsa.set_mic_gain
         alsa_io.invalidate_cache()
         self._lancer_traitement = traitement_audio.lancer_en_arriere_plan
         traitement_audio.lancer_en_arriere_plan = self.traitements.append
@@ -743,6 +752,7 @@ class Banc:
             self._thread.join(timeout=5.0)
         audio_io.play, audio_io.record = self._play, self._record
         alsa_io.select_output, alsa_io.setup_card = self._alsa_select, self._alsa_setup
+        alsa_io.set_mic_gain = self._alsa_mic
         alsa_io.invalidate_cache()
         traitement_audio.lancer_en_arriere_plan = self._lancer_traitement
         for nom, valeur in self._sauvegarde.items():

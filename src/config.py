@@ -183,6 +183,15 @@ VOLUME_COMBINE = _env_int("VOLUME_COMBINE", 100)
 AUDIO_MAX_DB_CASQUE = _env_int("AUDIO_MAX_DB_CASQUE", 6)
 AUDIO_MAX_DB_LINEOUT = _env_int("AUDIO_MAX_DB_LINEOUT", 0)
 
+# Gain de prise du micro (jack MIC du codec), en dB de 0 à 42. Passé à
+# audio-setup.sh (ALSA_MIC_GAIN_DB), qui le répartit entre le préampli Mic 1 et
+# le PGA, au cran de 1,5 dB le plus proche. 24 dB : réglage du 02/10/2026 ; à
+# 42 dB (ancien réglage) la voix écrêtait franchement. Appliqué avant chaque
+# enregistrement, donc à chaud. Le traitement normalise ensuite le niveau :
+# ce gain ne sert qu'à éviter la saturation (trop haut) sans descendre dans
+# le bruit du convertisseur (bien plus bas que le ronflement, jusqu'à 0 dB).
+MICRO_GAIN_DB = _env_int("MICRO_GAIN_DB", 24)
+
 # Garde-fous sur les appels au script (amixer peut se bloquer sur une carte
 # qui vient d'être débranchée).
 AUDIO_SWITCH_TIMEOUT_SEC = _env_float("AUDIO_SWITCH_TIMEOUT_SEC", 3.0)
@@ -509,6 +518,10 @@ MODIFIABLE_PARAMS = {
     "VOLUME_COMBINE": {"type": "int", "min": 0, "max": 100,
                        "niveau": NIVEAU_UTILISATEUR,
                        "label": "Volume du combiné et de l'écouteur secondaire (%, 0 = coupé)"},
+    "MICRO_GAIN_DB": {"type": "int", "min": 0, "max": 42,
+                      "niveau": NIVEAU_UTILISATEUR,
+                      "label": "Volume de prise du micro (gain en dB, 24 conseillé ; "
+                               "plus haut, les voix fortes saturent)"},
     "RING_INTERVAL_SEC": {"type": "int", "min": 0,
                           "niveau": NIVEAU_UTILISATEUR,
                           "label": "Intervalle de sonnerie (secondes, 0 = ne sonne jamais)"},
