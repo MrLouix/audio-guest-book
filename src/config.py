@@ -225,7 +225,7 @@ TRAITEMENT_ANTI_RONFLEMENT = _env_bool("TRAITEMENT_ANTI_RONFLEMENT", True)
 # Atténuation maximale (dB) du débruitage spectral ; 0 le désactive. Plus le
 # plafond est haut, plus le souffle baisse, mais plus le timbre risque de
 # s'altérer : 10 dB reste léger.
-TRAITEMENT_DEBRUITAGE_DB = _env_float("TRAITEMENT_DEBRUITAGE_DB", 10.0)
+TRAITEMENT_DEBRUITAGE_DB = _env_float("TRAITEMENT_DEBRUITAGE_DB", 5.0)
 # Début de la zone où le bruit de fond est estimé (et la voix mesurée pour la
 # normalisation) : la première demi-seconde porte la charge du bias de
 # l'électret.
