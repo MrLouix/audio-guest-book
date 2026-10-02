@@ -45,9 +45,16 @@
 #   - numid=76 (MIC Jack Switch) indispensable : chemin DAPM complet
 #   - numid=79 (Mic 1 Amp Source MUX) sur MIC_P (1) : Differential (0)
 #     perd 22 dB de signal, MIC_N (2) ne capte rien
-#   - gain total 42 dB (Mic 1 +36, PGA +6) : le hum 50 Hz suit le gain au dB
-#     pres (il entre sur la ligne micro), monter le gain n'ameliore donc pas
-#     le SNR et les claquements saturaient a 54 dB
+#   - gain total 24 dB (Mic 1 +24, PGA 0), abaisse le 02/10/2026 depuis
+#     42 dB : telephone monte, la voix ecretait franchement (8 a 15 % des
+#     tranches de 100 ms a pleine echelle sur des messages normaux, jusqu'a
+#     60 % en parlant fort), ecretage irreparable au traitement. Baisser le
+#     gain ne coute rien en SNR : le hum 50 Hz et le souffle suivent le gain
+#     au dB pres (ils entrent sur la ligne micro), et le plancher reste vers
+#     -70 dBFS, loin des -98 dB du 16 bits. La normalisation de
+#     src/traitement_audio.py remonte ensuite la voix a -20 dBFS. C'est le
+#     preampli Mic 1 qu'on baisse en premier, pour qu'il ne sature pas
+#     lui-meme avant le PGA. Reglage fin : PGA par pas de 1,5 dB
 #   - HPF du codec garde on (anti-DC) : coupure max Fs/3000, inutile contre
 #     le 50 Hz, traite en logiciel par src/traitement_audio.py
 #   - ALC (numid=60) imperativement off : sature l'entree en l'absence de signal
@@ -113,11 +120,11 @@ setup_input() {
     set_ctl 76 on           # MIC Jack Switch — alimente le chemin DAPM
     set_ctl 23 on           # Mic 1 Switch
     set_ctl 79 1            # Mic 1 Amp Source MUX -> MIC_P
-    set_ctl 1  7            # Mic 1 Volume         +36 dB (max)
+    set_ctl 1  5            # Mic 1 Volume         +24 dB
     set_ctl 82 on           # Mixin Left  <- Mic 1
     set_ctl 87 on           # Mixin Right <- Mic 1
     set_ctl 26 on,on        # Mixin PGA Switch
-    set_ctl 4  7,7          # Mixin PGA Volume      +6 dB (total 42 dB)
+    set_ctl 4  3,3          # Mixin PGA Volume       0 dB (total 24 dB)
     set_ctl 27 on,on        # ADC Switch
     set_ctl 5  112,112      # ADC Volume             0 dB
     set_ctl 15 on           # ADC HPF Switch (anti-DC)

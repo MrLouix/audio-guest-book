@@ -73,3 +73,31 @@
   sinon elles deviennent des arguments ignorees.
 - [pris en compte] 20260925-003347-VOIX (voie A, alim USB) : rendu correct selon Louis,
   artefacts confines a la premiere demi seconde.
+## 02/10/2026 — Chaine allegee : anti-ronflement + debruitage leger
+
+- [constat Louis] Sur le telephone monte, la chaine du 25/09 rend une voix faussee et
+  metallique. Prises de reference (Drive) : 6 messages + silence.wav de 25 s, 16 kHz.
+- [mesures silence.wav] Bruit -28.8 dBFS dont 94 % dans les raies secteur (50 Hz -33 dB,
+  150 Hz -39 dB, harmoniques visibles jusqu a ~4 kHz). Frequence secteur 49.98-49.99 Hz,
+  49.92-50.03 Hz selon les prises : un peigne de notchs fixes rate les harmoniques hautes.
+  Souffle large bande restant ~ -41 dBFS.
+- [mesures messages] Plusieurs prises saturent dans la voix elle-meme (jusqu a 19 % des
+  echantillons a pleine echelle sur 19-55-25) : declip et despike interpolaient donc des
+  morceaux de voix. Ecretage irreversible : a corriger par le gain de capture, pas par
+  le traitement.
+- [nouvelle chaine] (1) soustraction du ronflement : harmoniques du secteur jusqu a 4 kHz,
+  frequence suivie par trame de 1 s, amplitude/phase projetees puis retirees en
+  recouvrement-addition (~1 Hz retire par raie) ; (2) Wiener decision dirigee plafonne a
+  -10 dB, bruit = 20 % des trames les plus calmes, saute sans pause ; (3) normalisation
+  -20 dBFS inchangee. Plus de declip, despike, notch Q25, noisered ni expandeur.
+- [resultats, sans normalisation] silence : raies -29 dB, souffle -5 a -9 dB. Messages :
+  perte de voix (95e centile) 0.3-0.5 dB (contre 5-8 dB avant), pauses -10 a -28 dB,
+  spectre hors raies inchange a 0.4 dB pres de 300 Hz a 8 kHz. Cout : ~1 s de calcul pour
+  40 s de message sur PC.
+- [gain de capture] Abaisse de 42 dB (Mic 1 +36, PGA +6) a 24 dB (Mic 1 +24, PGA 0) dans
+  scripts/audio-setup.sh. Sur les prises du 02/10 a 42 dB, 8 a 15 % des tranches de 100 ms
+  ecretent sur des messages parles normalement (20-05-32, 20-00-36), 39 a 60 % en parlant
+  fort (19-50-25, 19-55-25). SNR inchange (hum et souffle suivent le gain), plancher ~ -70
+  dBFS ; la normalisation remonte la voix. A verifier : un message parle fort ne doit plus
+  atteindre la pleine echelle ; s il ecrete encore, PGA a 1 (-3 dB) ; si la voix sort
+  vers -40 dBFS ou moins, PGA a 5 (+3 dB).

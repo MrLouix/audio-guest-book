@@ -212,28 +212,28 @@ RECORD_CHANNELS = _env_int("RECORD_CHANNELS", AUDIO_CHANNELS)
 
 # --- Traitement des messages après enregistrement ------------------------
 
-# Chaîne validée au banc le 25/09/2026 (docs/banc_audio/JOURNAL.md), appliquée
-# en arrière-plan par src/traitement_audio.py à chaque message : declip ->
-# despike -> coupe-bandes 50/100/150 Hz -> noisered -> expandeur doux. Le brut
-# est conservé dans messages/brut/. Hors MODIFIABLE_PARAMS, comme le format.
+# Chaîne légère appliquée en arrière-plan par src/traitement_audio.py à chaque
+# message : anti-ronflement secteur (50 Hz et harmoniques) -> débruitage
+# léger -> normalisation. La chaîne du banc (declip, despike, coupe-bandes,
+# noisered, expandeur) faussait la voix (timbre métallique) ; elle a été
+# abandonnée le 02/10/2026. Le brut est conservé dans messages/brut/. Hors
+# MODIFIABLE_PARAMS, comme le format.
 TRAITEMENT_ACTIF = _env_bool("TRAITEMENT_ACTIF", True)
-# Force de sox noisered : 0.25 retenu à l'oreille (0.35 gagne du SNR mais
-# coûte ~8 dB de voix).
-TRAITEMENT_NR = _env_float("TRAITEMENT_NR", 0.25)
-# Coupe-bandes 50/100/150 Hz contre le hum secteur. Sans intérêt si le bruit
-# est large bande (alimentation USB bruyante, piles) : ils coûtent alors
-# 2 à 5 dB de voix pour rien.
-TRAITEMENT_NOTCH = _env_bool("TRAITEMENT_NOTCH", True)
-# Expandeur doux sur les pauses : supprime le « scintillement » (bruit musical)
-# que laisse noisered, sans toucher la voix (> -60 dB).
-TRAITEMENT_EXPANDEUR = _env_bool("TRAITEMENT_EXPANDEUR", True)
-# Début de la recherche de la fenêtre de silence servant de profil de bruit :
-# la première demi-seconde porte la charge du bias de l'électret.
+# Soustraction du ronflement secteur : 50 Hz et harmoniques jusqu'à 4 kHz,
+# suivis en fréquence ; ~1 Hz de spectre retiré par raie, la voix est intacte.
+TRAITEMENT_ANTI_RONFLEMENT = _env_bool("TRAITEMENT_ANTI_RONFLEMENT", True)
+# Atténuation maximale (dB) du débruitage spectral ; 0 le désactive. Plus le
+# plafond est haut, plus le souffle baisse, mais plus le timbre risque de
+# s'altérer : 10 dB reste léger.
+TRAITEMENT_DEBRUITAGE_DB = _env_float("TRAITEMENT_DEBRUITAGE_DB", 10.0)
+# Début de la zone où le bruit de fond est estimé (et la voix mesurée pour la
+# normalisation) : la première demi-seconde porte la charge du bias de
+# l'électret.
 TRAITEMENT_PROFIL_DEBUT_SEC = _env_float("TRAITEMENT_PROFIL_DEBUT_SEC", 0.5)
-# Normalisation finale : le débruitage coûte 8 à 10 dB de voix, qui sortirait
-# vers -46 dBFS, trop faible à la réécoute. Le niveau de la voix (95e centile
-# des blocs de 20 ms) est ramené à cette cible, avec un limiteur contre les
-# claquements résiduels. Gain plafonné (TRAITEMENT_GAIN_MAX_DB) pour ne pas
+# Normalisation finale : selon la distance et la voix de l'invité, le niveau
+# brut varie de plus de 20 dB d'un message à l'autre. Le niveau de la voix
+# (95e centile des blocs de 20 ms) est ramené à cette cible, avec un limiteur
+# contre les claquements. Gain plafonné (TRAITEMENT_GAIN_MAX_DB) pour ne pas
 # remonter le bruit d'un message sans voix.
 TRAITEMENT_NORMALISATION = _env_bool("TRAITEMENT_NORMALISATION", True)
 TRAITEMENT_NIVEAU_VOIX_DBFS = _env_float("TRAITEMENT_NIVEAU_VOIX_DBFS", -20.0)

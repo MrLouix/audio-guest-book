@@ -82,9 +82,10 @@ python3 tests/run_tous.py --reel     # ou un script à la fois, ci-dessous
 - [ ] Parole clairement audible, sans saturation ni souffle excessif (ALC bien désactivé).
 - [ ] Après un appel complet : `messages/brut/<nom>.wav` (brut) **et** `messages/<nom>.wav` (traité)
       existent, et `logs/livre_dor.log` contient la ligne « Message traité : … ». À l'écoute :
-      plus de ronflement 50 Hz ni de clics, souffle de fond nettement réduit, voix intacte.
+      plus de ronflement 50 Hz, souffle de fond réduit, timbre de la voix inchangé (ni
+      métallique ni « sous l'eau »).
 - [ ] Sur un message sans pause (parlé d'un bout à l'autre), le journal indique
-      « noisered sauté » : attendu, le débruitage retirerait de la voix.
+      « débruitage sauté » : attendu, le débruitage retirerait de la voix.
 
 ## 4ter. Choix des fichiers audio depuis le dashboard
 
