@@ -69,6 +69,7 @@ BISYNC_RESYNC_REQUIS = (
 # plutôt que d'échouer sur « unknown flag ».
 RCLONE_MIN_BISYNC = (1, 58)
 RCLONE_MIN_CONFLICT_RESOLVE = (1, 66)
+RCLONE_MIN_CREATE_EMPTY_SRC_DIRS = (1, 62)
 
 TIMER_TEMPLATE = """[Unit]
 Description=Execute rclone-sync.service toutes les {minutes} minute(s) (spec Sec.5.4)
@@ -263,12 +264,13 @@ def _bisync_command(cfg: dict, resync: bool,
     """
     dest = f"{_remote(cfg)}:{_sources_dossier(cfg)}"
     cmd = ["rclone", "bisync", str(config.AUDIO_SRC_DIR), dest,
-           "--max-delete", str(config.RCLONE_BISYNC_MAX_DELETE_PCT),
-           "--create-empty-src-dirs=false"]
+           "--max-delete", str(config.RCLONE_BISYNC_MAX_DELETE_PCT)]
     avertissements = []
 
     if version is None:
         version = rclone_version()
+    if version and version >= RCLONE_MIN_CREATE_EMPTY_SRC_DIRS:
+        cmd.append("--create-empty-src-dirs=false")
     if version is not None and version >= RCLONE_MIN_CONFLICT_RESOLVE:
         # En cas d'édition des deux côtés, le plus récent gagne et l'autre est
         # conservé sous un nom suffixé : rien n'est jamais perdu.
