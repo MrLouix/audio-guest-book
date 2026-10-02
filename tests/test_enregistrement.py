@@ -98,6 +98,10 @@ def test_simule(rapport: Rapport) -> None:
         crees = banc.enregistrements_crees()
         rapport.egal("le traitement du message est lancé en arrière-plan",
                      banc.traitements, crees)
+    with Banc(MICRO_GAIN_DB=18) as banc:
+        banc.machine._run_enregistrement(should_continue=lambda: False)
+        rapport.egal("le gain micro réglé au dashboard est appliqué avant l'enregistrement",
+                     banc.alsa.gains_micro, [18])
     with Banc(TRAITEMENT_ACTIF=False) as banc:
         banc.machine._run_enregistrement(should_continue=lambda: False)
         rapport.egal("TRAITEMENT_ACTIF=False : aucun traitement lancé",

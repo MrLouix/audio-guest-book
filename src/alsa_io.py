@@ -41,6 +41,9 @@ OUTPUT_BOTH = "both"
 OUTPUTS = (OUTPUT_LINEOUT, OUTPUT_HEADPHONE, OUTPUT_BOTH)
 
 VOLUME_MAX = 100
+# Bornes de ALSA_MIC_GAIN_DB dans audio-setup.sh.
+MIC_GAIN_MIN_DB = 0
+MIC_GAIN_MAX_DB = 42
 
 # Dernière sortie effectivement appliquée, et son volume. Sur un parcours
 # invité la séquence est lineout (sonnerie) -> headphone (message) ->
@@ -51,6 +54,9 @@ _last_volume: Optional[int] = None
 # ils se règlent à chaud, et un changement doit forcer la commutation
 # suivante même si sortie et volume sont inchangés.
 _last_levels: Optional[Tuple[int, int]] = None
+# Dernier gain de prise du micro (dB) appliqué : réglé à chaud depuis le
+# dashboard, réappliqué avant un enregistrement seulement s'il a changé.
+_last_mic_gain: Optional[int] = None
 # L'avertissement « configuration ALSA indisponible » n'est émis qu'une fois,
 # sinon c'est une ligne de log par lecture.
 _unavailable_warned = False
@@ -61,6 +67,15 @@ def max_levels() -> Tuple[int, int]:
     return int(config.AUDIO_MAX_DB_CASQUE), int(config.AUDIO_MAX_DB_LINEOUT)
 
 
+def mic_gain_db() -> int:
+    """Gain de prise du micro (dB), lu à chaque appel (réglage à chaud), borné à 0..42."""
+    try:
+        return max(MIC_GAIN_MIN_DB, min(MIC_GAIN_MAX_DB, int(config.MICRO_GAIN_DB)))
+    except (TypeError, ValueError):
+        logger.warning("Gain micro illisible : %r, 24 dB utilisés.", config.MICRO_GAIN_DB)
+        return 24
+
+
 def _script_env() -> dict:
     """Environnement du script : numéro de carte dérivé de SOUND_CARD, plafonds en dB."""
     env = dict(os.environ)
@@ -68,6 +83,7 @@ def _script_env() -> dict:
     casque, lineout = max_levels()
     env["ALSA_HP_MAX_DB"] = str(casque)
     env["ALSA_LO_MAX_DB"] = str(lineout)
+    env["ALSA_MIC_GAIN_DB"] = str(mic_gain_db())
     return env
 
 
@@ -106,14 +122,14 @@ def _appliquer(argv: List[str], timeout_sec: float, echec: str) -> bool:
     Après un échec, l'état réel du codec est inconnu : la prochaine
     commutation doit être refaite, même vers la même sortie.
     """
-    global _last_output, _last_volume, _last_levels
+    global _last_output, _last_volume, _last_levels, _last_mic_gain
     result = _run(argv, timeout_sec)
     if result is not None and result.returncode == 0:
         return True
     if result is not None:
         logger.warning("%s (code %s) : %s", echec, result.returncode,
                        (result.stderr or "").strip())
-    _last_output = _last_volume = _last_levels = None
+    _last_output = _last_volume = _last_levels = _last_mic_gain = None
     return False
 
 
@@ -132,7 +148,7 @@ def setup_card(mode: str = OUTPUT_HEADPHONE, store: bool = False) -> bool:
     service tourne sous un utilisateur non privilégié — c'est
     `scripts/install.sh` qui fige l'état une fois pour toutes.
     """
-    global _last_output, _last_volume, _last_levels
+    global _last_output, _last_volume, _last_levels, _last_mic_gain
     if not _verifier_sortie(mode):
         return False
 
@@ -142,7 +158,27 @@ def setup_card(mode: str = OUTPUT_HEADPHONE, store: bool = False) -> bool:
 
     # La configuration complète pose le niveau maximum (100 %).
     _last_output, _last_volume, _last_levels = mode, VOLUME_MAX, max_levels()
-    logger.info("Codec configuré (sortie %s).", mode)
+    _last_mic_gain = mic_gain_db()
+    logger.info("Codec configuré (sortie %s, gain micro %d dB).", mode, _last_mic_gain)
+    return True
+
+
+def set_mic_gain(force: bool = False) -> bool:
+    """Applique le gain de prise du micro (config.MICRO_GAIN_DB) avant un enregistrement.
+
+    Ne relance le script que si le gain a changé depuis la dernière
+    application (curseur du dashboard). Un échec est journalisé sans être
+    propagé : mieux vaut enregistrer au gain précédent que pas du tout.
+    """
+    global _last_mic_gain
+    gain = mic_gain_db()
+    if not force and _last_mic_gain == gain:
+        return True
+    if not _appliquer(["mic-gain"], config.AUDIO_SWITCH_TIMEOUT_SEC,
+                      "Réglage du gain micro en échec"):
+        return False
+    _last_mic_gain = gain
+    logger.info("Gain de prise du micro : %d dB.", gain)
     return True
 
 
@@ -210,8 +246,8 @@ def current_output() -> Optional[str]:
 
 def invalidate_cache() -> None:
     """Oublie la dernière sortie appliquée (tests, ou reconfiguration externe)."""
-    global _last_output, _last_volume, _last_levels, _unavailable_warned
-    _last_output = _last_volume = _last_levels = None
+    global _last_output, _last_volume, _last_levels, _last_mic_gain, _unavailable_warned
+    _last_output = _last_volume = _last_levels = _last_mic_gain = None
     _unavailable_warned = False
 
 
