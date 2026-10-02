@@ -15,3 +15,7 @@ WorkingDirectory=/home/pi/livre_dor
 ExecStart=/home/pi/livre_dor/.venv/bin/python3 /home/pi/livre_dor/src/rclone_sync.py --run
 # Marge pour le bisync initial (--resync), plus long que les cycles suivants.
 TimeoutStartSec=600
+# Indispensable : sans User=, le service tourne en root et ne trouve pas le
+# remote (créé par `rclone config` dans ~/.config/rclone/ de l'utilisateur).
+# Remplacé par l'utilisateur réel via le drop-in de scripts/lib_systemd.sh.
+User=pi
