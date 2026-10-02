@@ -94,3 +94,10 @@
   perte de voix (95e centile) 0.3-0.5 dB (contre 5-8 dB avant), pauses -10 a -28 dB,
   spectre hors raies inchange a 0.4 dB pres de 300 Hz a 8 kHz. Cout : ~1 s de calcul pour
   40 s de message sur PC.
+- [gain de capture] Abaisse de 42 dB (Mic 1 +36, PGA +6) a 24 dB (Mic 1 +24, PGA 0) dans
+  scripts/audio-setup.sh. Sur les prises du 02/10 a 42 dB, 8 a 15 % des tranches de 100 ms
+  ecretent sur des messages parles normalement (20-05-32, 20-00-36), 39 a 60 % en parlant
+  fort (19-50-25, 19-55-25). SNR inchange (hum et souffle suivent le gain), plancher ~ -70
+  dBFS ; la normalisation remonte la voix. A verifier : un message parle fort ne doit plus
+  atteindre la pleine echelle ; s il ecrete encore, PGA a 1 (-3 dB) ; si la voix sort
+  vers -40 dBFS ou moins, PGA a 5 (+3 dB).
