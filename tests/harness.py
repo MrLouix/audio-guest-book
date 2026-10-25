@@ -583,6 +583,9 @@ _PARAMS_SAUVEGARDES = (
     # Sources brutes et mapping rôle -> fichier (§4.2). Sans redirection, un
     # scénario écrirait dans le vrai audio_src/ du dépôt.
     "AUDIO_SRC_DIR", "AUDIO_CONFIG_FILE", "RCLONE_CONFIG_FILE",
+    # Index du tri des messages, lu par la restitution : sans redirection, le
+    # vrai audio_src/index_messages.json écarterait des messages simulés.
+    "MESSAGES_INDEX_FILE",
     # Journaux : sans redirection, un scénario qui passe par
     # rclone_sync._log() écrirait dans le vrai logs/rclone.log.
     "LOGS_DIR", "RCLONE_LOG", "LIVRE_DOR_LOG",
@@ -672,6 +675,7 @@ class Banc:
 
         config.AUDIO_DIR = self._dossier / "audio"
         config.AUDIO_SRC_DIR = self._dossier / "audio_src"
+        config.MESSAGES_INDEX_FILE = config.AUDIO_SRC_DIR / config.MESSAGES_INDEX_NAME
         config.MESSAGES_DIR = self._dossier / "messages"
         config.STATUS_FILE = self._dossier / "status.json"
         config.MODE_CONFIG_FILE = self._dossier / "mode_config.json"

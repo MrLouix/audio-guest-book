@@ -22,6 +22,8 @@
 | 10 | Services systemd, supervision, watchdog global | 2–9 |
 | 11 | Transcription batch (optionnelle) | 4 |
 | 12 | Recette finale, checklist de mise en service, documentation | tous |
+| 13 | Mode restitution (après l'événement) | 2, 5 |
+| 14 | Tri des messages (Pi et PC) | 5, 9, 13 |
 
 Chaque sprint liste : objectifs, tâches, fichiers concernés, critères d'acceptation (dérivés des exigences de la spec), et risques.
 
@@ -353,6 +355,30 @@ Chaque sprint liste : objectifs, tâches, fichiers concernés, critères d'accep
 - Le parcours mariage reste intact après retour au mode d'origine.
 
 **Risques :** les enregistrements des invités étant mono et les fichiers préparés stéréo panés, la lecture sort aussi par le haut-parleur externe — à constater au casque, `RESTITUTION_SOUND_CARD` permet de la router autrement sans toucher au code.
+
+---
+
+## Sprint 14 — Tri des messages (après l'événement)
+
+**Objectif :** permettre au client de choisir les messages qu'il conserve et ceux qu'il supprime, depuis le dashboard du Pi ou depuis son PC, sans jamais toucher aux fichiers audio (§5.8).
+
+**Tâches :**
+- Score de pertinence sur 10, calculé sur le message post-traité : 0 sous 5 s, RSB voix/bruit ramené sur [0, 10], pénalités pour trop peu de parole et pour un message de plus de 3 min (`score_message.py`, constantes `SCORE_*`).
+- Index `audio_src/index_messages.json` : statut (`a_trier`, `conserve`, `supprime`) et score de chaque message, empreinte du fichier pour ne recalculer que ce qui a changé, fusion message par message des copies laissées par un conflit de synchro (`messages_index.py`).
+- Mode restitution : les messages supprimés ne sont plus lus ni numérotés ; index absent → tout est lu.
+- Page `/messages` en liste (nom + actions), triable, filtrable, sélection multiple, lecture dans le navigateur ; blueprint partagé (`messages_page.py`).
+- Page autonome sur PC (`tri_messages.py`), sur les dossiers synchronisés par Google Drive pour ordinateur, livrée en un seul fichier `tri_messages.pyz` téléchargeable depuis le dashboard (`paquet_pc.py`) : pas besoin du dépôt sur le PC.
+
+**Fichiers concernés :** `score_message.py`, `messages_index.py`, `messages_page.py`, `tri_messages.py`, `paquet_pc.py` (nouveaux), `config.py`, `livre_dor.py`, `dashboard_app.py`, `templates/messages.html` (nouveau), menus des autres pages, `templates/mode.html`, `static/messages.js` (nouveau), `static/dashboard.css`, `tests/test_messages.py` (nouveau), `tests/harness.py`, `restitution_test.py`.
+
+**Critères d'acceptation :**
+- Aucun fichier de `messages/` n'est créé, modifié ni supprimé par une action de la page.
+- Un message supprimé n'est plus lu en restitution, et les suivants sont renumérotés ; le restaurer le fait revenir.
+- Une décision prise sur le PC est vue sur le Pi après la synchro suivante, et inversement ; deux décisions concurrentes sur des messages différents sont toutes deux conservées.
+- Aucun calcul de score pendant une communication.
+- La liste reste lisible sans défilement horizontal sur un écran de 375 px.
+
+**Risques :** les horloges du Pi et du PC départagent deux décisions sur un même message ; un Pi sans accès au réseau (mode AP) peut avoir une heure fausse. Sans incidence tant que le tri se fait d'un seul côté à la fois.
 
 ---
 

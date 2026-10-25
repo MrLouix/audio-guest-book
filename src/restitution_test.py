@@ -34,6 +34,7 @@ import audio_io
 import config
 import gpio_io
 import livre_dor
+import messages_index
 import mode_io
 import status_io
 
@@ -99,6 +100,7 @@ class Scenario:
         tmp = Path(self._tmpdir.name)
         self._saved = {
             "MESSAGES_DIR": config.MESSAGES_DIR,
+            "MESSAGES_INDEX_FILE": config.MESSAGES_INDEX_FILE,
             "MODE_CONFIG_FILE": config.MODE_CONFIG_FILE,
             "STATUS_FILE": config.STATUS_FILE,
             "RESTITUTION_INTERDIGIT_SEC": config.RESTITUTION_INTERDIGIT_SEC,
@@ -110,6 +112,7 @@ class Scenario:
         }
         config.MESSAGES_DIR = tmp / "messages"
         config.MESSAGES_DIR.mkdir()
+        config.MESSAGES_INDEX_FILE = tmp / config.MESSAGES_INDEX_NAME
         config.MODE_CONFIG_FILE = tmp / "mode_config.json"
         # status.json est écrit en continu par la machine à états : le rediriger
         # évite de polluer celui du dépôt pendant les tests.
@@ -148,6 +151,7 @@ class Scenario:
         self.machine.request_stop()
         self._thread.join(timeout=5.0)
         config.MESSAGES_DIR = self._saved["MESSAGES_DIR"]
+        config.MESSAGES_INDEX_FILE = self._saved["MESSAGES_INDEX_FILE"]
         config.MODE_CONFIG_FILE = self._saved["MODE_CONFIG_FILE"]
         config.STATUS_FILE = self._saved["STATUS_FILE"]
         config.RESTITUTION_INTERDIGIT_SEC = self._saved["RESTITUTION_INTERDIGIT_SEC"]
@@ -333,8 +337,10 @@ def scenario_garde_fou_enregistrement() -> None:
 def scenario_ordre_chronologique() -> None:
     print("11. recorded_messages() : ordre chronologique, collisions, noms non conformes")
     saved = config.MESSAGES_DIR
+    saved_index = config.MESSAGES_INDEX_FILE
     with tempfile.TemporaryDirectory(prefix="restitution_tri_") as tmp:
         config.MESSAGES_DIR = Path(tmp)
+        config.MESSAGES_INDEX_FILE = Path(tmp) / "audio_src" / config.MESSAGES_INDEX_NAME
         try:
             noms = [
                 "message_2026-06-20_14-05-00.wav",
@@ -372,8 +378,21 @@ def scenario_ordre_chronologique() -> None:
             check("le .txt de transcription est exclu",
                   all(not n.endswith(".txt") for n in obtenu))
             check("le sous-dossier est ignoré", "sous_dossier" not in obtenu)
+
+            # Tri des messages (page /messages) : un message marqué supprimé
+            # n'est plus lu, et ne compte plus dans la numérotation.
+            messages_index.appliquer("supprimer", ["message_2026-06-20_14-00-00_1.wav"],
+                                     config.MESSAGES_DIR, config.MESSAGES_INDEX_FILE)
+            obtenu = [p.name for p in livre_dor.recorded_messages()]
+            check("un message marqué supprimé est écarté",
+                  obtenu == [n for n in attendu if n != "message_2026-06-20_14-00-00_1.wav"],
+                  f"obtenu : {obtenu}")
+            config.MESSAGES_INDEX_FILE.write_text("{ illisible", encoding="utf-8")
+            check("index illisible : tous les messages sont lus",
+                  [p.name for p in livre_dor.recorded_messages()] == attendu)
         finally:
             config.MESSAGES_DIR = saved
+            config.MESSAGES_INDEX_FILE = saved_index
 
 
 def scenario_cache_du_mode() -> None:

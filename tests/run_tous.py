@@ -33,11 +33,13 @@ ORDRE = [
     "test_audio_prep.py",
     "test_sonnerie.py",
     "test_mode.py",
+    "test_messages.py",
     "test_status.py",
 ]
 
 # Tests sans mode --reel : ils n'ont rien à valider sur le matériel.
-SANS_MODE_REEL = {"test_mode.py", "test_audio_prep.py", "test_traitement.py"}
+SANS_MODE_REEL = {"test_mode.py", "test_audio_prep.py", "test_traitement.py",
+                  "test_messages.py"}
 
 # Scripts interactifs : ils attendent une saisie au clavier et n'ont donc pas
 # leur place dans une recette automatique, où ils échouent sur l'entrée vide.

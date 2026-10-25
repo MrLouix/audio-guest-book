@@ -33,7 +33,6 @@ import argparse
 import datetime
 import logging
 import random
-import re
 import shutil
 import threading
 import time
@@ -46,6 +45,7 @@ import audio_io
 import config
 import fichiers
 import gpio_io
+import messages_index
 import mode_io
 import status_io
 import traitement_audio
@@ -113,43 +113,23 @@ def timestamped_recording_path(now: datetime.datetime = None) -> Path:
     return path
 
 
-RECORDING_NAME_RE = re.compile(r"^message_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:_(\d+))?$")
-
-
-def _recording_sort_key(path: Path) -> tuple:
-    """Clé de tri chronologique d'un enregistrement d'invité (§5.7).
-
-    L'horodatage inscrit dans le nom du fichier par timestamped_recording_path()
-    est la chronologie de référence : il voyage avec le fichier, contrairement à
-    la date de modification, qu'une copie rclone ou une restauration de
-    sauvegarde peut écraser. Le suffixe de collision _k désigne un
-    enregistrement postérieur dans la même seconde, et se compare comme un
-    entier (_2 avant _10). Repli sur la mtime pour un fichier au nom non
-    conforme, ajouté à la main dans messages/.
-    """
-    match = RECORDING_NAME_RE.match(path.stem)
-    if match:
-        try:
-            stamp = datetime.datetime.strptime(match.group(1), "%Y-%m-%d_%H-%M-%S")
-        except ValueError:
-            stamp = None
-        if stamp is not None:
-            return (stamp.timestamp(), int(match.group(2) or 0), path.name)
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        mtime = 0.0
-    return (mtime, 0, path.name)
+# Nommage des enregistrements, défini avec la chronologie dans l'index du tri
+# des messages, que la page autonome du PC (tri_messages.py) utilise sans ce
+# module.
+RECORDING_NAME_RE = messages_index.RECORDING_NAME_RE
 
 
 def recorded_messages() -> List[Path]:
     """Messages des invités, numérotés 1..N dans l'ordre chronologique (§5.7).
 
-    Lecture seule : ce mode ne crée, ne modifie et ne supprime jamais rien
-    dans messages/.
+    Les messages marqués « supprimé » sur la page /messages sont écartés ;
+    index absent ou illisible -> tous lus. Lecture seule : ce mode ne crée,
+    ne modifie et ne supprime jamais rien dans messages/.
     """
     # Dossier absent ou illisible : aucun message, jamais d'exception (§7.4).
-    return sorted(fichiers.fichiers_wav(config.MESSAGES_DIR), key=_recording_sort_key)
+    supprimes = messages_index.noms_supprimes(config.MESSAGES_INDEX_FILE)
+    return [p for p in messages_index.messages_chronologiques(config.MESSAGES_DIR)
+            if p.name not in supprimes]
 
 
 def restitution_absence_wav() -> Path:

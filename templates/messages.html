@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tri des messages — Livre d'or téléphonique</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header>
+    {% if not autonome %}
+    <button class="burger-button" id="burger-button" aria-label="Menu">☰</button>
+    {% endif %}
+    <h1>🗂️ Tri des messages</h1>
+    {% if not autonome %}
+    <nav class="nav-menu" id="nav-menu">
+      <a class="nav-link" href="{{ url_for('index') }}">Dashboard</a>
+      <a class="nav-link" href="{{ url_for('settings_page') }}">Paramètres</a>
+      <a class="nav-link" href="{{ url_for('mode_page') }}">Mode</a>
+      <a class="nav-link" href="{{ url_for('qr') }}">QR codes</a>
+      <a class="nav-link" href="{{ url_for('wifi_page') }}">WiFi</a>
+      <a class="nav-link" href="{{ url_for('rclone_page') }}">Google Drive</a>
+      <a class="logout-link" href="{{ url_for('logout') }}">Déconnexion</a>
+    </nav>
+    {% endif %}
+  </header>
+
+  <main>
+    <section class="card tri-outils">
+      <div class="tri-filtres">
+        <label>Trier par
+          <select id="tri">
+            <option value="date">Date (plus ancien d'abord)</option>
+            <option value="date-desc">Date (plus récent d'abord)</option>
+            <option value="score-desc">Score (meilleur d'abord)</option>
+            <option value="score">Score (moins bon d'abord)</option>
+          </select>
+        </label>
+        <label>Statut
+          <select id="filtre-statut">
+            <option value="">Tous</option>
+            <option value="a_trier">À trier</option>
+            <option value="conserve">Conservés</option>
+            <option value="supprime">Supprimés</option>
+          </select>
+        </label>
+        <label>Score min.
+          <input type="number" id="filtre-score" min="0" max="10" step="0.5" value="0">
+        </label>
+        <label>Nom
+          <input type="search" id="filtre-nom" placeholder="ex. 2026-06-20_14">
+        </label>
+      </div>
+      <p class="muted" id="tri-resume">chargement…</p>
+    </section>
+
+    <div class="tri-selection">
+      <label class="tri-tout"><input type="checkbox" id="tout-selectionner"> Tout</label>
+      <span class="muted" id="nb-selection">0 sélectionné</span>
+      <div class="tri-groupe">
+        <button type="button" data-action="conserver">✔ Conserver</button>
+        <button type="button" data-action="ne_plus_conserver" class="secondaire">Ne plus conserver</button>
+        <button type="button" data-action="supprimer" class="secondaire">🗑 Supprimer</button>
+        <button type="button" data-action="restaurer" class="secondaire">↺ Restaurer</button>
+      </div>
+    </div>
+
+    <div class="tri-lecteur">
+      <span class="muted" id="lecteur-nom">Aucune lecture</span>
+      <audio id="lecteur" controls preload="none"></audio>
+    </div>
+
+    <p class="warning" id="tri-erreur" hidden></p>
+
+    <ul class="tri-liste" id="liste"></ul>
+
+    <p class="muted">
+      « Supprimer » ne fait que marquer le message : aucun fichier n'est effacé,
+      et « Restaurer » le remet dans la liste. Le mode restitution lit tous les
+      messages sauf les supprimés ; le numéro « n° » est celui à composer.
+    </p>
+
+    {% if not autonome %}
+    <section class="card">
+      <h2>Trier depuis un PC</h2>
+      <p>
+        Avec Google Drive pour ordinateur, les dossiers des messages et
+        d'<code>audio_src</code> sont sur le disque du PC. Cette page peut s'y
+        ouvrir sans copier le projet :
+      </p>
+      <ol>
+        <li>Installer Python 3, puis une fois&nbsp;: <code>python -m pip install flask numpy</code>.</li>
+        <li><a href="{{ url_for('telecharger_tri_pc') }}" download>Télécharger tri_messages.pyz</a>
+            et le poser dans le dossier qui contient les deux dossiers synchronisés.</li>
+        <li>Le lancer (double-clic, ou <code>python tri_messages.pyz</code>)&nbsp;: la page
+            s'ouvre dans le navigateur. Les choix redescendent ici à la synchro suivante.</li>
+      </ol>
+    </section>
+    {% endif %}
+  </main>
+
+  {% if not autonome %}
+  <script src="{{ url_for('static', filename='burger-menu.js') }}"></script>
+  {% endif %}
+  <script src="{{ url_for('static', filename='messages.js') }}"></script>
+</body>
+</html>

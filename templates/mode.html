@@ -12,6 +12,7 @@
     <h1>🎚️ Mode de fonctionnement</h1>
     <nav class="nav-menu" id="nav-menu">
       <a class="nav-link" href="{{ url_for('index') }}">Dashboard</a>
+      <a class="nav-link" href="{{ url_for('messages.page') }}">Messages</a>
       <a class="nav-link" href="{{ url_for('settings_page') }}">Paramètres</a>
       <a class="nav-link" href="{{ url_for('qr') }}">QR codes</a>
       <a class="nav-link" href="{{ url_for('wifi_page') }}">WiFi</a>
@@ -52,8 +53,10 @@
       <ul>
         <li>Décrocher donne la tonalité, puis on compose au cadran le numéro d'un
             message&nbsp;: <strong>{{ digits_max }} chiffres au maximum</strong>.</li>
-        <li>Les messages sont numérotés <strong>1 à {{ messages_count }}</strong> dans
-            l'ordre chronologique d'enregistrement.</li>
+        <li>Les messages sont numérotés <strong>1 à {{ messages_lus }}</strong> dans
+            l'ordre chronologique d'enregistrement. Ceux marqués «&nbsp;supprimé&nbsp;» sur la
+            page <a href="{{ url_for('messages.page') }}">Messages</a> ne sont pas lus et ne
+            comptent pas dans la numérotation.</li>
         <li>Composer «&nbsp;1&nbsp;» puis attendre {{ "%.0f"|format(interdigit_sec) }}&nbsp;s
             lit le premier message. Au {{ digits_max }}<sup>e</sup> chiffre, la saisie se
             ferme aussitôt&nbsp;: la lecture démarre sans attendre.</li>
