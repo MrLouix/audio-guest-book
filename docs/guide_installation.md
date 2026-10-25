@@ -112,6 +112,25 @@ accès SSH n'est nécessaire. Vérification préalable de la logique, sans maté
 python3 src/restitution_test.py
 ```
 
+### Mettre à jour un Pi déjà installé
+
+`scripts/mise_a_jour.sh` enregistre au besoin un réseau WiFi, met à jour le code (`git pull`, modifications locales conservées), réinstalle les dépendances si `requirements.txt` a changé, recharge systemd si une unité a changé, puis relance `dashboard` et `livre-dor` **une fois le téléphone raccroché** (sans `--forcer`, il n'interrompt jamais un invité). Le réseau est seulement enregistré, sous un profil nommé d'après son SSID : la session ssh en cours n'est pas coupée, et `wifi_or_ap.sh` s'y connectera quand il sera à portée.
+
+```bash
+./scripts/mise_a_jour.sh                                   # sur le Pi
+./scripts/mise_a_jour.sh --wifi "SSID" --mdp "mot de passe"
+```
+
+Depuis un PC Windows, `scripts\mise_a_jour_distance.ps1` attend que le Pi réponde en ssh puis lui envoie le script : le Pi n'a pas besoin de l'avoir déjà.
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\mise_a_jour_distance.ps1 -Utilisateur pi -Wifi "SSID" -Mdp "mot de passe"
+```
+
+Le mot de passe WiFi n'est jamais écrit dans le dépôt. Options : `-Hote` (défaut `livredor.local`), `-Depot` (chemin du dépôt sur le Pi, sinon `~/livre_dor`, `~/audio-guest-book` ou `~/audio_guest_book`), `-Branche`, `-Forcer`, et `-Polkit` (`--polkit` côté Pi).
+
+**Page `/wifi` du dashboard et polkit** : le dashboard lance `nmcli` sans sudo, depuis un service systemd, donc sans session active ; polkit lui refuse alors la création de réseaux. `--polkit` pose une règle (`/etc/polkit-1/rules.d/50-livredor-networkmanager.rules`) qui autorise l'utilisateur du dépôt, celui des services, pour toutes les actions NetworkManager, puis affiche `nmcli general permissions` : `org.freedesktop.NetworkManager.settings.modify.system` et les actions wifi doivent y valoir `yes`. Format `.rules` de Bookworm ; sur Bullseye, il faudrait un fichier `.pkla` dans `/etc/polkit-1/localauthority/50-local.d/` (le script s'arrête avec un message).
+
 ### Dépendances logicielles (§10)
 
 - OS : Raspberry Pi OS Lite (Bookworm), NetworkManager (`nmcli`), `avahi-daemon` (mDNS), systemd.
