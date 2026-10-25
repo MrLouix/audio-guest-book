@@ -43,7 +43,7 @@
 # prend le multiple de 6 dB inferieur, le PGA le reste, arrondi au cran de
 # 1,5 dB le plus proche. 24 -> Mic +24 / PGA 0 ; 42 -> Mic +36 / PGA +6.
 #
-# Cablage du livre d'or (cf. README, "Sorties audio") :
+# Cablage du livre d'or (cf. docs/audio.md, "Les deux sorties du codec") :
 #   - line out   -> 1 haut-parleur mono de sonnerie, qui lit la piste gauche
 #   - headphone  -> ecouteur du combine (L) + ecouteur secondaire (R)
 # Les fichiers joues sont donc stereo avec les deux pistes identiques.

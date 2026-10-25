@@ -124,6 +124,22 @@ python3 src/restitution_test.py
 - Front vendorisé : `jsQR.min.js` (déjà présent dans `static/`, aucune installation requise).
 - Optionnel post-événement : `whisper.cpp` + modèle `tiny-q5_0` (`scripts/install_whisper.sh`).
 
+### Recréer l'environnement Python
+
+Le venv des services est `.venv/` (voir `ExecStart` dans `systemctl cat livre-dor`). S'il est corrompu :
+
+```bash
+sudo apt install python3-full        # si python3 -m venv échoue
+rm -rf .venv
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+sudo systemctl restart livre-dor dashboard
+```
+
+### Organisation du dépôt
+
+Le code Python vit dans `src/` ; les données (`audio_src/`, `audio/`, `messages/`, `logs/`, `status.json`…) et `static/`, `templates/` restent à la racine, conformément à l'arborescence du §8. Tous les scripts se lancent directement (`python3 src/<script>.py`), sans installation du projet ni `PYTHONPATH`. Les paramètres sont centralisés dans `src/config.py` et surchargeables par variables d'environnement (§9, et section suivante).
+
 ---
 
 ## 4. Configuration (§9)

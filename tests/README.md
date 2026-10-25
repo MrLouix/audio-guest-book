@@ -26,7 +26,9 @@ python3 tests/run_tous.py               # toutes, avec un bilan final
 | `test_enregistrement.py` | Enregistrement : nom horodaté, `arecord` (48 kHz stéréo), espace disque |
 | `test_audio_prep.py` | Choix des fichiers sources, conversion 48 kHz dual-mono, commutation des sorties, synchro bidirectionnelle |
 | `test_sonnerie.py` | Sonnerie périodique, `ring_trigger`, fenêtre de grâce |
+| `test_traitement.py` | Traitement des messages : anti-ronflement, débruitage, normalisation, brut conservé |
 | `test_mode.py` | Bascule mariage / restitution à chaud (`mode_config.json`) |
+| `test_messages.py` | Tri des messages : score, index, fusion des conflits, pages `/messages` (Pi et PC), archive `tri_messages.pyz` |
 | `test_status.py` | `status.json`, battement de cœur, journaux de mise en service et décisions du watchdog |
 
 `harness.py` n'est pas un test : c'est la boîte à outils commune (rapport
@@ -244,5 +246,7 @@ confirmation dure déjà 75 ms.
 
 - `python3 src/livre_dor.py --test` — affichage temps réel des trois GPIO.
 - `python3 src/load_test.py --cycles 20` — test de charge sur le matériel
-  final (fuites de sous-processus et de fichiers).
+  final : enchaîne décroché, composition, enregistrement et raccroché pour
+  détecter des `aplay`/`arecord` orphelins ou des fichiers en trop, dans un
+  dossier d'enregistrement temporaire (jamais `messages/`).
 - `python3 src/restitution_test.py` — scénarios complets du mode restitution.

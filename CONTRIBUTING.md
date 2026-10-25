@@ -45,8 +45,9 @@ Une faille de sécurité ne se signale **pas** dans une issue publique : voir
   `MODIFIABLE_PARAMS` s'il doit apparaître dans le dashboard.
 - **Codec** : les numids `amixer` du DA7213 ne vivent que dans
   `scripts/audio-setup.sh`, jamais côté Python.
-- **Documentation** : mettez à jour le `README.md` et, si besoin,
-  `docs/` dans la même pull request.
+- **Documentation** : mettez à jour le guide de `docs/` concerné dans la
+  même pull request. Le `README.md` ne garde qu'une vue d'ensemble et la
+  table des documents : n'y ajoutez une ligne que pour un nouveau guide.
 
 En contribuant, vous acceptez que votre contribution soit publiée sous la
 [licence MIT](LICENSE) du projet, et vous vous engagez à respecter le
