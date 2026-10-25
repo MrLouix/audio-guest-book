@@ -590,3 +590,171 @@ button.secondary {
 .card form {
   max-width: 400px;
 }
+
+/* --- Tri des messages (page /messages) ------------------------------------
+   Une ligne = case, nom du fichier (la date est dans le nom) et trois boutons.
+   Score, durée et statut tiennent sur une seconde ligne sous le nom, plutôt
+   qu'en colonnes : la liste reste lisible sur un téléphone. */
+
+.tri-filtres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.tri-filtres label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  flex: 1 1 140px;
+}
+
+.tri-filtres input, .tri-filtres select {
+  font-size: 1rem;
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  min-width: 0;
+}
+
+.tri-outils p {
+  margin: 0.75rem 0 0;
+}
+
+.tri-selection, .tri-lecteur {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 1rem 0;
+}
+
+.tri-tout {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.tri-groupe {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tri-groupe button {
+  font-size: 0.9rem;
+  padding: 0.4rem 0.75rem;
+}
+
+button.secondaire {
+  background: transparent;
+  color: var(--accent);
+}
+
+.tri-lecteur {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  padding: 0.5rem 0;
+}
+
+.tri-lecteur audio {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.tri-liste {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+}
+
+.tri-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.tri-item:first-child {
+  border-top: none;
+}
+
+.tri-item input[type="checkbox"] {
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: none;
+}
+
+.tri-nom {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.tri-fichier {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.tri-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.tri-meta[data-niveau="haut"] { color: #4f8a57; }
+.tri-meta[data-niveau="moyen"] { color: #b07a22; }
+.tri-meta[data-niveau="bas"] { color: #b23b3b; }
+
+.tri-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex: none;
+}
+
+/* Cibles d'au moins 44 px : la page sert surtout au doigt. */
+.tri-bouton {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.25rem;
+  font-size: 1.1rem;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+
+.tri-bouton.actif {
+  background: #4f8a57;
+  border-color: #4f8a57;
+  color: white;
+}
+
+.tri-item.statut-supprime .tri-nom {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+/* Petit écran : case et nom sur la première ligne, boutons alignés sous le nom. */
+@media (max-width: 480px) {
+  .tri-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.4rem 0.75rem;
+  }
+
+  .tri-actions {
+    grid-column: 2;
+  }
+}

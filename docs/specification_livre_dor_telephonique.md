@@ -222,6 +222,10 @@ Serveur Flask écoutant sur `0.0.0.0:5000`, accessible via `http://livredor.loca
 | `/api/audio/reconvert` | POST | **Administrateur.** Reconvertit tous les rôles depuis `audio_src/` (après une synchro Drive) |
 | `/api/audio/test` | POST | **Administrateur.** Joue un fichier généré sur sa sortie, pour vérifier le câblage |
 | `/mode` | GET/POST | Bascule mode mariage / mode restitution (voir §5.7). Écrit `mode_config.json`, relu à chaud par `livre_dor.py` — aucun redémarrage de service |
+| `/messages` | GET | Tri des messages des invités après l'événement (voir §5.8), ouvert à tout utilisateur connecté |
+| `/api/messages` | GET | JSON : un message par ligne (nom, statut, score, n° de restitution) ; lance le calcul des scores manquants, téléphone au repos |
+| `/api/messages/<nom>/audio` | GET | Le message traité, pour le lecteur du navigateur (lecture par plages) |
+| `/api/messages/actions` | POST | `{action, noms}` : conserver, ne plus conserver, supprimer, restaurer — n'écrit que `index_messages.json` |
 
 Le bouton « Sonner maintenant » de l'accueil est **désactivé en mode restitution**, où la sonnerie n'a plus de sens (§5.7) ; `/api/status` expose `mode_restitution` pour que l'UI le sache.
 
@@ -326,9 +330,11 @@ contrairement à la date de modification, qu'une copie `rclone` ou une
 restauration de sauvegarde peut écraser. Le suffixe de collision `_k` désigne un
 enregistrement postérieur dans la même seconde et se compare comme un entier
 (`_2` avant `_10`). Un fichier au nom non conforme (ajouté à la main dans
-`messages/`) est trié par sa date de modification. La liste est relue **une fois
-par communication**, pour que la numérotation reste stable du décroché au
-raccroché.
+`messages/`) est trié par sa date de modification. Les messages marqués
+« supprimé » sur la page `/messages` (§5.8) sont écartés et ne comptent pas
+dans la numérotation ; index absent ou illisible → tous les messages sont lus.
+La liste est relue **une fois par communication**, pour que la numérotation
+reste stable du décroché au raccroché.
 
 **Invariants du mode :**
 
@@ -375,6 +381,56 @@ duplique. `RESTITUTION_SOUND_CARD` (§9) reste l'échappatoire de routage ALSA, 
 modification de code. La conversion des WAV à la volée est **écartée** : elle
 ajouterait ffmpeg/pydub au chemin critique d'exécution, que les primitives audio
 gardent volontairement libre de toute bibliothèque.
+
+### 5.8 Tri des messages (après l'événement)
+
+Le client trie lui-même les messages des invités : ce qu'il **conserve**, ce
+qu'il **supprime**. La page `/messages` est une liste — une ligne par
+enregistrement, réduite au **nom du fichier** (la date et l'heure y sont) et aux
+boutons d'action, pour rester lisible sur un téléphone. Score, durée, statut et
+numéro de restitution tiennent sur une seconde ligne sous le nom.
+
+- **Tri** par date ou par score ; **filtres** par statut, score minimal et nom.
+- **Sélection** d'une ou plusieurs lignes (« Tout » ne coche que les lignes
+  affichées), et mêmes actions sur la sélection que sur une ligne.
+- **Actions** : ▶ lecture dans le navigateur ; ✔ conserver (réversible) ;
+  🗑 supprimer ; ↺ restaurer.
+
+**Aucun fichier audio n'est jamais modifié** : supprimer et restaurer ne sont
+que des statuts (`a_trier`, `conserve`, `supprime`), écrits avec les scores
+dans `audio_src/index_messages.json` (contrat au §8). Le mode restitution
+(§5.7) lit tous les messages sauf les supprimés. La transcription `.txt` et le
+brut de `messages/brut/` restent en place.
+
+**Score de pertinence sur 10**, calculé sur le message **post-traité** (sur le
+brut, le ronflement secteur fausserait le bruit de fond) :
+
+1. durée < `SCORE_DUREE_MIN_SEC` (5 s) : pas de texte, **0** ;
+2. RSB = voix (95e centile des niveaux de blocs de 20 ms) − bruit (20e
+   centile), la première demi-seconde écartée comme au traitement ;
+   `SCORE_RSB_MIN_DB` (6 dB) → 0, `SCORE_RSB_MAX_DB` (30 dB) → 10, linéaire ;
+3. part de parole (blocs à plus de `SCORE_SEUIL_PAROLE_DB` au-dessus du bruit)
+   sous `SCORE_PART_PAROLE_MIN` (30 %) : note réduite d'autant ;
+4. durée > `SCORE_DUREE_LONGUE_SEC` (3 min) : note × `SCORE_FACTEUR_LONG` (0,5).
+
+Les scores sont calculés en arrière-plan à l'ouverture de la page, un fichier à
+la fois, et **jamais pendant une communication** sur le Pi. Chacun est gardé
+avec l'**empreinte** du fichier (taille + condensé du début et de la fin,
+identique sur le Pi et sur le PC) : il n'est recalculé que si le fichier change.
+
+**Tri depuis un PC** : `src/tri_messages.py` sert la même page, sur
+`127.0.0.1` uniquement et sans mot de passe, à partir des deux dossiers Drive
+synchronisés par **Google Drive pour ordinateur** (messages et `audio_src/`).
+Prérequis : Python 3 avec `flask` et `numpy`. Le PC calcule lui-même les scores
+manquants. L'index étant dans `audio_src/`, synchronisé dans les deux sens
+(§5.4), les choix faits sur le PC redescendent sur le Pi au cycle de synchro
+suivant, et inversement.
+
+**Conflits** : si le Pi et le PC modifient l'index entre deux synchros, rclone
+bisync garde le plus récent et renomme l'autre, Google Drive pour ordinateur
+crée `index_messages (1).json`. Toute copie de ce genre trouvée à côté de
+l'index est fusionnée **message par message** (le statut modifié le plus
+récemment gagne, `statut_maj` en UTC), puis supprimée : aucun choix n'est perdu.
 
 ---
 
@@ -480,6 +536,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 ├── scripts/
 │   └── audio-setup.sh        # réglages du codec (numids amixer) + commutation des sorties
 ├── audio_src/                # sources brutes, noms d'origine (mp3, m4a, wav...) — SYNC BIDIRECTIONNELLE
+│   └── index_messages.json   # tri des messages : statut et score de chaque message (§5.8)
 ├── audio/                    # tout généré : 48 kHz, 16 bits, stéréo L = R
 │   ├── tonalite.wav          # généré par synthèse (440 Hz continu)
 │   ├── bip.wav               # généré par synthèse (800 Hz, 600 ms + silences)
@@ -509,6 +566,7 @@ Ces exigences s'appliquent à l'ensemble de l'implémentation. L'appareil doit f
 - `rclone_config.json` : `{ "remote": "gdrive", "dossier": "MariageGuestBook", "intervalle_min": 5, "actif": true, "sources_dossier": "MariageGuestBookSources", "sources_actif": false, "sources_resync_fait": false }` — les clés `sources_*` apparaissent seules sur une installation existante (fusion sur les valeurs par défaut), avec la jambe bidirectionnelle inactive.
 - `audio_config.json` : `{ "roles": { "sonnerie": "cloches du village.mp3", "message_3": "papy.m4a" } }` — les valeurs sont des **noms de fichier relatifs à `audio_src/`**, jamais des chemins. Un rôle absent retombe sur la convention `audio_src/<role>.*` (§4.2).
 - `mode_config.json` : `{ "restitution": false }` — écrit par le dashboard, relu à chaud par le script principal (§5.7). Absent ou illisible → mode mariage (valeur de `MODE_RESTITUTION`).
+- `audio_src/index_messages.json` : `{ "version": 1, "messages": { "message_2026-06-20_14-00-00.wav": { "statut": "conserve", "statut_maj": "2026-10-25T14:03:12Z", "score": 7.4, "duree_sec": 42.3, "rsb_db": 24.1, "part_parole": 0.62, "empreinte": "2764844:3f2a…" } } }` — écrit par la page `/messages` du Pi et par `tri_messages.py` sur un PC, lu par le mode restitution (§5.7, §5.8). Statut `a_trier` | `conserve` | `supprime` ; un message absent est à trier. Absent ou illisible → tout est à trier et tous les messages sont lus.
 
 ---
 

@@ -349,6 +349,24 @@ Le mariage passé, le téléphone devient un **lecteur des messages laissés par
 
 **Point de vigilance matériel** : le micro électret est câblé sur le **jack MIC** (Mic 1), dupliqué sur les deux canaux DAI par `scripts/audio-setup.sh` (numids 89 et 90) — les deux pistes d'un enregistrement portent donc le même signal. À vérifier sur la première prise réelle : si la piste droite ressortait muette, le second écouteur n'entendrait rien en mode restitution. La lecture, elle, est toujours commutée sur la sortie casque, jamais sur le haut-parleur de sonnerie. `RESTITUTION_SOUND_CARD` reste disponible comme échappatoire de routage ALSA, sans modification de code.
 
+## Tri des messages (Sprint 14, après l'événement)
+
+Page **Messages** du dashboard (`/messages`), ouverte à tout utilisateur connecté : une ligne par message (le nom du fichier porte la date et l'heure), triable par date ou par score, filtrable par statut, score minimal et nom, avec sélection multiple. Voir le [§5.8 de la spécification](docs/specification_livre_dor_telephonique.md).
+
+- **▶ Lecture** dans le navigateur, **✔ Conserver** (réversible), **🗑 Supprimer**, **↺ Restaurer** — sur une ligne ou sur la sélection.
+- **Aucun fichier audio n'est touché** : statut et score sont écrits dans `audio_src/index_messages.json`. Le mode restitution lit tous les messages sauf les supprimés (sans index : tous).
+- **Score sur 10**, calculé sur le message traité, en arrière-plan et jamais pendant un appel : 0 sous 5 s, rapport signal sur bruit (6 dB → 0, 30 dB → 10), pénalité si moins de 30 % de parole, note divisée par deux au-delà de 3 min. Seuils `SCORE_*` dans `config.py`.
+
+**Depuis un PC** : avec Google Drive pour ordinateur, les deux dossiers du Drive (`MariageGuestBook` pour les messages, `MariageGuestBookSources` pour `audio_src/`) sont sur le disque. Depuis une copie de ce dépôt :
+
+```bash
+pip install flask numpy
+python src/tri_messages.py "G:\Mon Drive"        # dossier qui contient les deux dossiers synchronisés
+python src/tri_messages.py --messages D:\msg --audio-src D:\sources
+```
+
+La page s'ouvre sur `http://127.0.0.1:5050/messages` (locale uniquement, sans mot de passe). L'index étant dans `audio_src/`, synchronisé dans les deux sens, les choix faits sur le PC redescendent sur le Pi à la synchro suivante, et inversement ; une copie laissée par un conflit de synchro (`index_messages (1).json`…) est fusionnée message par message puis supprimée.
+
 ## Tests unitaires par fonction (`tests/`)
 
 Un script par fonction du téléphone, **indépendant des autres**, à lancer seul dans un terminal — voir [`tests/README.md`](tests/README.md) pour le détail.
@@ -367,9 +385,10 @@ python3 tests/run_tous.py               # les huit, avec un bilan final
 | `test_enregistrement.py` | Enregistrement : nom horodaté, `arecord`, espace disque |
 | `test_sonnerie.py` | Sonnerie périodique, `ring_trigger`, fenêtre de grâce |
 | `test_mode.py` | Bascule mariage / restitution à chaud (`mode_config.json`) |
+| `test_messages.py` | Tri des messages : score, index, fusion des conflits, pages `/messages` (Pi et PC) |
 | `test_status.py` | `status.json`, battement de cœur, journaux de mise en service et décisions du watchdog |
 
-Aucune dépendance à installer (ni `pytest`, ni `flask`, ni `pydub`, ni `RPi.GPIO`) : les scripts appellent directement les fonctions de `src/` et lisent les paramètres déjà configurés (variable d'environnement, puis `custom_config.json` du dashboard, puis défaut de `config.py`).
+Aucune dépendance à installer (ni `pytest`, ni `flask`, ni `pydub`, ni `RPi.GPIO` ; `test_messages.py` saute ses vérifications de pages sans `flask`, et les autres sans `numpy`) : les scripts appellent directement les fonctions de `src/` et lisent les paramètres déjà configurés (variable d'environnement, puis `custom_config.json` du dashboard, puis défaut de `config.py`).
 
 **En simulation** (par défaut), `PhoneInputs` est piloté à la main, `aplay`/`arecord` sont remplacés par des doublures et toute l'arborescence de données est redirigée vers un dossier temporaire : `messages/`, `audio/` et `status.json` ne sont jamais touchés.
 
@@ -382,7 +401,7 @@ python3 tests/run_tous.py --reel             # recette physique complète
 
 ## Statut
 
-Développement terminé — les 12 sprints du plan de développement sont réalisés, plus le Sprint 13 (mode restitution, à activer après l'événement). La checklist de mise en service reste à dérouler sur le matériel physique assemblé avant l'événement, et sa section 9bis après (voir [`docs/checklist_mise_en_service.md`](docs/checklist_mise_en_service.md)).
+Développement terminé — les 12 sprints du plan de développement sont réalisés, plus le Sprint 13 (mode restitution, à activer après l'événement) et le Sprint 14 (tri des messages). La checklist de mise en service reste à dérouler sur le matériel physique assemblé avant l'événement, et sa section 9bis après (voir [`docs/checklist_mise_en_service.md`](docs/checklist_mise_en_service.md)).
 
 ## Contribuer
 

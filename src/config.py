@@ -117,6 +117,11 @@ RCLONE_CONFIG_FILE = BASE_DIR / "rclone_config.json"
 AUDIO_CONFIG_FILE = BASE_DIR / "audio_config.json"
 MODE_CONFIG_FILE = BASE_DIR / "mode_config.json"
 DASHBOARD_CONFIG_FILE = BASE_DIR / "dashboard_config.json"
+# Tri des messages (page /messages) : statut et score de chaque message.
+# Dans audio_src/, seul dossier synchronisé dans les deux sens avec le Drive
+# (§5.4) : le tri fait sur un PC (tri_messages.py) redescend sur le Pi.
+MESSAGES_INDEX_NAME = "index_messages.json"
+MESSAGES_INDEX_FILE = AUDIO_SRC_DIR / MESSAGES_INDEX_NAME
 SECRET_KEY_FILE = BASE_DIR / "secret_key.txt"
 ACTIVE_PORT_FILE = BASE_DIR / "active_port.txt"
 
@@ -247,6 +252,20 @@ TRAITEMENT_PROFIL_DEBUT_SEC = _env_float("TRAITEMENT_PROFIL_DEBUT_SEC", 0.5)
 TRAITEMENT_NORMALISATION = _env_bool("TRAITEMENT_NORMALISATION", True)
 TRAITEMENT_NIVEAU_VOIX_DBFS = _env_float("TRAITEMENT_NIVEAU_VOIX_DBFS", -20.0)
 TRAITEMENT_GAIN_MAX_DB = _env_float("TRAITEMENT_GAIN_MAX_DB", 30.0)
+
+# Score de pertinence sur 10 (page /messages), calculé sur le message traité.
+# Trop court : pas de texte, score 0. RSB = écart entre la voix (95e centile
+# des blocs de 20 ms) et le bruit (20e centile), ramené linéairement de
+# [RSB_MIN, RSB_MAX] dB à [0, 10]. Pénalités : trop peu de blocs parlés (au
+# moins SEUIL_PAROLE_DB au-dessus du bruit) et message trop long, souvent
+# rempli de blanc. Hors MODIFIABLE_PARAMS, comme le traitement.
+SCORE_DUREE_MIN_SEC = _env_float("SCORE_DUREE_MIN_SEC", 5.0)
+SCORE_DUREE_LONGUE_SEC = _env_float("SCORE_DUREE_LONGUE_SEC", 180.0)
+SCORE_FACTEUR_LONG = _env_float("SCORE_FACTEUR_LONG", 0.5)
+SCORE_RSB_MIN_DB = _env_float("SCORE_RSB_MIN_DB", 6.0)
+SCORE_RSB_MAX_DB = _env_float("SCORE_RSB_MAX_DB", 30.0)
+SCORE_SEUIL_PAROLE_DB = _env_float("SCORE_SEUIL_PAROLE_DB", 6.0)
+SCORE_PART_PAROLE_MIN = _env_float("SCORE_PART_PAROLE_MIN", 0.30)
 
 # Intervalle de rafraîchissement de status.json en état attente, pour que le
 # watchdog (§7.1) ne le voie jamais périmé lors des longues idles.

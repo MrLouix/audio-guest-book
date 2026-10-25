@@ -25,6 +25,8 @@ import audio_io
 import auth
 import config
 import fichiers
+import messages_index
+import messages_page
 import mode_io
 import network_info
 import qr_utils
@@ -42,6 +44,23 @@ app = Flask(
 )
 app.secret_key = auth.get_or_create_secret_key()
 app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(hours=config.SESSION_LIFETIME_HOURS)
+
+
+def _telephone_au_repos() -> bool:
+    """Le calcul des scores attend que le téléphone soit raccroché : lire et
+    analyser des WAV pendant un enregistrement provoquerait des ratés."""
+    etat = (status_io.read_status() or {}).get("etat")
+    return etat is None or etat in status_io.ETATS_AU_REPOS
+
+
+# Tri des messages (page /messages) : même blueprint que la page autonome du
+# PC (tri_messages.py), sur les dossiers du Pi.
+app.config.update(
+    TRI_DOSSIERS=lambda: (config.MESSAGES_DIR, config.MESSAGES_INDEX_FILE),
+    TRI_PEUT_CALCULER=_telephone_au_repos,
+    TRI_AUTONOME=False,
+)
+app.register_blueprint(messages_page.bp)
 
 LOG_TAIL_LINES = 150
 
@@ -152,6 +171,12 @@ def logout():
 def _messages_count() -> int:
     """Nombre de messages d'invités ; 0 si le dossier est absent ou illisible (§7.4)."""
     return len(fichiers.fichiers_wav(config.MESSAGES_DIR))
+
+
+def _messages_supprimes() -> int:
+    """Messages présents mais marqués « supprimé » sur /messages : la restitution les saute."""
+    presents = {p.name for p in fichiers.fichiers_wav(config.MESSAGES_DIR)}
+    return len(presents & messages_index.noms_supprimes(config.MESSAGES_INDEX_FILE))
 
 
 def _status_payload() -> dict:
@@ -319,6 +344,7 @@ def mode_page():
     return render_template("mode.html",
                            restitution=mode_io.is_restitution(),
                            messages_count=_messages_count(),
+                           messages_lus=_messages_count() - _messages_supprimes(),
                            digits_max=config.RESTITUTION_DIGITS_MAX,
                            interdigit_sec=config.RESTITUTION_INTERDIGIT_SEC,
                            error=error)

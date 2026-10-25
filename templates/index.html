@@ -13,6 +13,7 @@
     <span id="etat-badge" class="badge badge-inconnu">inconnu</span>
     <nav class="nav-menu" id="nav-menu">
       <a class="nav-link" href="{{ url_for('index') }}">Dashboard</a>
+      <a class="nav-link" href="{{ url_for('messages.page') }}">Messages</a>
       <a class="nav-link" href="{{ url_for('settings_page') }}">Paramètres</a>
       <a class="nav-link" href="{{ url_for('mode_page') }}">Mode</a>
       <a class="nav-link" href="{{ url_for('qr') }}">QR codes</a>
@@ -32,6 +33,7 @@
       <div class="card">
         <h2>Messages enregistrés</h2>
         <p class="big" id="messages-count">—</p>
+        <p class="muted"><a href="{{ url_for('messages.page') }}">Trier les messages</a></p>
       </div>
       <div class="card">
         <h2>Mode</h2>
