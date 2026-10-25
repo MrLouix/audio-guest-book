@@ -79,6 +79,24 @@
       et « Restaurer » le remet dans la liste. Le mode restitution lit tous les
       messages sauf les supprimés ; le numéro « n° » est celui à composer.
     </p>
+
+    {% if not autonome %}
+    <section class="card">
+      <h2>Trier depuis un PC</h2>
+      <p>
+        Avec Google Drive pour ordinateur, les dossiers des messages et
+        d'<code>audio_src</code> sont sur le disque du PC. Cette page peut s'y
+        ouvrir sans copier le projet :
+      </p>
+      <ol>
+        <li>Installer Python 3, puis une fois&nbsp;: <code>python -m pip install flask numpy</code>.</li>
+        <li><a href="{{ url_for('telecharger_tri_pc') }}" download>Télécharger tri_messages.pyz</a>
+            et le poser dans le dossier qui contient les deux dossiers synchronisés.</li>
+        <li>Le lancer (double-clic, ou <code>python tri_messages.pyz</code>)&nbsp;: la page
+            s'ouvre dans le navigateur. Les choix redescendent ici à la synchro suivante.</li>
+      </ol>
+    </section>
+    {% endif %}
   </main>
 
   {% if not autonome %}

@@ -15,7 +15,8 @@ Ce que vérifie ce script, seul et sans matériel :
    et aucun fichier audio modifié ;
 4. la fusion des copies laissées par un conflit de synchro ;
 5. l'empreinte : score gardé tant que le fichier ne change pas ;
-6. la page autonome du PC et la page du dashboard (Flask, sans serveur).
+6. la page autonome du PC et la page du dashboard (Flask, sans serveur) ;
+7. tri_messages.pyz : l'archive lancée seule, hors du dépôt.
 
 Usage :
     python3 tests/test_messages.py
@@ -295,7 +296,83 @@ def test_pages(rapport: Rapport, dossier: Path) -> None:
                         and nom in messages_index.noms_supprimes(config.MESSAGES_INDEX_FILE))
         page = client.get("/messages").get_data(as_text=True)
         rapport.verifie("dashboard : page avec le menu", "Déconnexion" in page)
+        r = client.get("/messages/tri_messages.pyz")
+        rapport.verifie("dashboard : tri_messages.pyz en téléchargement",
+                        r.status_code == 200 and "attachment" in r.headers.get("Content-Disposition", "")
+                        and b"__main__.py" in r.data)
         _attendre_calcul()
+
+
+def _get(url: str, essais: int = 100):
+    """GET sur le serveur lancé à part ; réessaie le temps qu'il démarre."""
+    import urllib.request
+    for _ in range(essais):
+        try:
+            with urllib.request.urlopen(url, timeout=2) as reponse:
+                return reponse.status, reponse.read()
+        except OSError:
+            time.sleep(0.1)
+    return None, b""
+
+
+def test_archive_pc(rapport: Rapport, dossier: Path) -> None:
+    rapport.section("7. tri_messages.pyz : la page de tri sur PC, sans le dépôt")
+    import socket
+    import subprocess
+    import sys
+    import zipfile
+    import paquet_pc                  # noqa: E402
+
+    # Dossier du PC : l'archive posée à côté des deux dossiers synchronisés,
+    # loin du dépôt — rien ne peut être importé depuis src/.
+    racine = dossier / "Mon Drive"
+    messages = racine / config.RCLONE_FOLDER
+    sources = racine / config.RCLONE_SOURCES_FOLDER
+    sources.mkdir(parents=True)
+    nom = "message_2026-06-24_12-00-00.wav"
+    ecrire_message(messages / nom, 8)
+    archive = racine / paquet_pc.NOM
+    paquet_pc.construire(archive)
+    with zipfile.ZipFile(archive) as zf:
+        contenu = set(zf.namelist())
+    rapport.verifie("l'archive ne contient que la page de tri",
+                    contenu == {"__main__.py", *paquet_pc.MODULES, *paquet_pc.RESSOURCES}, contenu)
+    rapport.info(f"taille : {archive.stat().st_size // 1024} Ko")
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    # Lancée comme d'un double-clic : sans argument, depuis son propre dossier.
+    serveur = subprocess.Popen([sys.executable, str(archive), "--sans-navigateur", "--port", str(port)],
+                               cwd=racine, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        statut, page = _get(base + "/messages")
+        rapport.verifie("page servie depuis l'archive",
+                        statut == 200 and "Tri des messages" in page.decode("utf-8"),
+                        f"statut : {statut}")
+        statut, js = _get(base + "/static/messages.js")
+        rapport.verifie("JS servi depuis l'archive", statut == 200 and b"/api/messages" in js)
+        statut, _ = _get(base + "/static/dashboard.css")
+        rapport.egal("CSS servi depuis l'archive", statut, 200)
+        statut, data = _get(base + "/api/messages")
+        rapport.verifie("dossiers Drive trouvés à côté de l'archive",
+                        statut == 200 and json.loads(data)["messages"][0]["nom"] == nom)
+        score = None
+        for _ in range(100):
+            score = json.loads(_get(base + "/api/messages")[1])["messages"][0]["score"]
+            if score is not None:
+                break
+            time.sleep(0.1)
+        rapport.verifie("score calculé par le PC depuis l'archive", score is not None)
+        rapport.verifie("et écrit dans l'index du dossier audio_src synchronisé",
+                        "score" in messages_index.lire(sources / config.MESSAGES_INDEX_NAME).get(nom, {}))
+    finally:
+        serveur.terminate()
+        sortie = serveur.communicate(timeout=10)[0].decode("utf-8", "replace")
+    if rapport.echecs:
+        rapport.info(sortie)
 
 
 def main() -> None:
@@ -305,7 +382,8 @@ def main() -> None:
         rapport.ignore("toutes les vérifications", "numpy absent")
         rapport.conclure()
     test_formule(rapport)
-    for test in (test_wav, test_index, test_conflits, test_scores_index, test_pages):
+    for test in (test_wav, test_index, test_conflits, test_scores_index, test_pages,
+                 test_archive_pc):
         with tempfile.TemporaryDirectory(prefix="tri_messages_") as tmp:
             test(rapport, Path(tmp))
     rapport.conclure()

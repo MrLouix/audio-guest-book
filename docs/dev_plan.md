@@ -367,9 +367,9 @@ Chaque sprint liste : objectifs, tâches, fichiers concernés, critères d'accep
 - Index `audio_src/index_messages.json` : statut (`a_trier`, `conserve`, `supprime`) et score de chaque message, empreinte du fichier pour ne recalculer que ce qui a changé, fusion message par message des copies laissées par un conflit de synchro (`messages_index.py`).
 - Mode restitution : les messages supprimés ne sont plus lus ni numérotés ; index absent → tout est lu.
 - Page `/messages` en liste (nom + actions), triable, filtrable, sélection multiple, lecture dans le navigateur ; blueprint partagé (`messages_page.py`).
-- Page autonome sur PC (`tri_messages.py`), sur les dossiers synchronisés par Google Drive pour ordinateur.
+- Page autonome sur PC (`tri_messages.py`), sur les dossiers synchronisés par Google Drive pour ordinateur, livrée en un seul fichier `tri_messages.pyz` téléchargeable depuis le dashboard (`paquet_pc.py`) : pas besoin du dépôt sur le PC.
 
-**Fichiers concernés :** `score_message.py`, `messages_index.py`, `messages_page.py`, `tri_messages.py` (nouveaux), `config.py`, `livre_dor.py`, `dashboard_app.py`, `templates/messages.html` (nouveau), menus des autres pages, `templates/mode.html`, `static/messages.js` (nouveau), `static/dashboard.css`, `tests/test_messages.py` (nouveau), `tests/harness.py`, `restitution_test.py`.
+**Fichiers concernés :** `score_message.py`, `messages_index.py`, `messages_page.py`, `tri_messages.py`, `paquet_pc.py` (nouveaux), `config.py`, `livre_dor.py`, `dashboard_app.py`, `templates/messages.html` (nouveau), menus des autres pages, `templates/mode.html`, `static/messages.js` (nouveau), `static/dashboard.css`, `tests/test_messages.py` (nouveau), `tests/harness.py`, `restitution_test.py`.
 
 **Critères d'acceptation :**
 - Aucun fichier de `messages/` n'est créé, modifié ni supprimé par une action de la page.

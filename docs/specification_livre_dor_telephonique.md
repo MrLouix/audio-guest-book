@@ -225,6 +225,7 @@ Serveur Flask écoutant sur `0.0.0.0:5000`, accessible via `http://livredor.loca
 | `/messages` | GET | Tri des messages des invités après l'événement (voir §5.8), ouvert à tout utilisateur connecté |
 | `/api/messages` | GET | JSON : un message par ligne (nom, statut, score, n° de restitution) ; lance le calcul des scores manquants, téléphone au repos |
 | `/api/messages/<nom>/audio` | GET | Le message traité, pour le lecteur du navigateur (lecture par plages) |
+| `/messages/tri_messages.pyz` | GET | La page de tri en un seul fichier, à lancer sur un PC (§5.8) |
 | `/api/messages/actions` | POST | `{action, noms}` : conserver, ne plus conserver, supprimer, restaurer — n'écrit que `index_messages.json` |
 
 Le bouton « Sonner maintenant » de l'accueil est **désactivé en mode restitution**, où la sonnerie n'a plus de sens (§5.7) ; `/api/status` expose `mode_restitution` pour que l'UI le sache.
@@ -422,7 +423,11 @@ identique sur le Pi et sur le PC) : il n'est recalculé que si le fichier change
 `127.0.0.1` uniquement et sans mot de passe, à partir des deux dossiers Drive
 synchronisés par **Google Drive pour ordinateur** (messages et `audio_src/`).
 Prérequis : Python 3 avec `flask` et `numpy`. Le PC calcule lui-même les scores
-manquants. L'index étant dans `audio_src/`, synchronisé dans les deux sens
+manquants. Pas besoin du dépôt : la page Messages du Pi propose
+`tri_messages.pyz` en téléchargement (`/messages/tri_messages.pyz`), une
+archive Python exécutable (~40 Ko, construite à la volée par `paquet_pc.py`)
+qui ne contient que la page de tri ; posée dans le dossier qui contient les
+deux dossiers synchronisés, elle se lance d'un double-clic. L'index étant dans `audio_src/`, synchronisé dans les deux sens
 (§5.4), les choix faits sur le PC redescendent sur le Pi au cycle de synchro
 suivant, et inversement.
 

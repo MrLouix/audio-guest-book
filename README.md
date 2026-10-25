@@ -357,13 +357,13 @@ Page **Messages** du dashboard (`/messages`), ouverte à tout utilisateur connec
 - **Aucun fichier audio n'est touché** : statut et score sont écrits dans `audio_src/index_messages.json`. Le mode restitution lit tous les messages sauf les supprimés (sans index : tous).
 - **Score sur 10**, calculé sur le message traité, en arrière-plan et jamais pendant un appel : 0 sous 5 s, rapport signal sur bruit (6 dB → 0, 30 dB → 10), pénalité si moins de 30 % de parole, note divisée par deux au-delà de 3 min. Seuils `SCORE_*` dans `config.py`.
 
-**Depuis un PC** : avec Google Drive pour ordinateur, les deux dossiers du Drive (`MariageGuestBook` pour les messages, `MariageGuestBookSources` pour `audio_src/`) sont sur le disque. Depuis une copie de ce dépôt :
+**Depuis un PC**, sans copier le dépôt : avec Google Drive pour ordinateur, les deux dossiers du Drive (`MariageGuestBook` pour les messages, `MariageGuestBookSources` pour `audio_src/`) sont sur le disque.
 
-```bash
-pip install flask numpy
-python src/tri_messages.py "G:\Mon Drive"        # dossier qui contient les deux dossiers synchronisés
-python src/tri_messages.py --messages D:\msg --audio-src D:\sources
-```
+1. Installer Python 3, puis une fois : `python -m pip install flask numpy`.
+2. Télécharger **`tri_messages.pyz`** depuis la page Messages du dashboard (encadré « Trier depuis un PC ») — un seul fichier de ~40 Ko, qui ne contient que la page de tri — et le poser dans le dossier qui contient les deux dossiers synchronisés.
+3. Le lancer : double-clic sous Windows, ou `python tri_messages.pyz`. Ailleurs : `python tri_messages.pyz "G:\Mon Drive"`, ou `--messages` et `--audio-src` pour désigner chaque dossier.
+
+L'archive se construit aussi à la main : `python3 src/paquet_pc.py`. Depuis une copie du dépôt, `python src/tri_messages.py` fait la même chose.
 
 La page s'ouvre sur `http://127.0.0.1:5050/messages` (locale uniquement, sans mot de passe). L'index étant dans `audio_src/`, synchronisé dans les deux sens, les choix faits sur le PC redescendent sur le Pi à la synchro suivante, et inversement ; une copie laissée par un conflit de synchro (`index_messages (1).json`…) est fusionnée message par message puis supprimée.
 

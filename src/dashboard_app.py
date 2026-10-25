@@ -12,11 +12,12 @@ authentifiée par mot de passe unique (§6) : avant chaque requête, seules
 
 import datetime
 import functools
+import io
 import logging
 import subprocess
 import time
 
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.serving import make_server
 
 import alsa_io
@@ -29,6 +30,7 @@ import messages_index
 import messages_page
 import mode_io
 import network_info
+import paquet_pc
 import qr_utils
 import rclone_sync
 import status_io
@@ -61,6 +63,13 @@ app.config.update(
     TRI_AUTONOME=False,
 )
 app.register_blueprint(messages_page.bp)
+
+
+@app.route("/messages/" + paquet_pc.NOM)
+def telecharger_tri_pc():
+    """La page de tri en un seul fichier, pour la lancer sur un PC (paquet_pc.py)."""
+    return send_file(io.BytesIO(paquet_pc.en_memoire()), mimetype="application/zip",
+                     as_attachment=True, download_name=paquet_pc.NOM)
 
 LOG_TAIL_LINES = 150
 
