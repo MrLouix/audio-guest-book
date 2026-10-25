@@ -27,6 +27,9 @@
 #                      de ~/livre_dor, ~/audio-guest-book, ~/audio_guest_book)
 #   --attente-max SEC  attente du raccroché avant d'abandonner la relance (défaut 600)
 #   --forcer           relance même en pleine communication
+#   --polkit           autorise l'utilisateur du dépôt (celui des services) à
+#                      gérer NetworkManager, pour que la page /wifi du dashboard
+#                      puisse créer des réseaux (règle polkit, Bookworm)
 set -euo pipefail
 
 WIFI_SSID=""
@@ -35,6 +38,7 @@ BRANCHE=""
 DEPOT=""
 ATTENTE_MAX=600
 FORCER=""
+POLKIT=""
 SERVICES=(dashboard livre-dor)
 # États où le téléphone est au repos (status_io.ETATS_AU_REPOS) : relancer
 # livre-dor ailleurs couperait un invité en plein message.
@@ -51,6 +55,7 @@ while [ $# -gt 0 ]; do
         --depot) DEPOT="${2:?--depot attend un chemin}"; shift 2 ;;
         --attente-max) ATTENTE_MAX="${2:?--attente-max attend des secondes}"; shift 2 ;;
         --forcer) FORCER=1; shift ;;
+        --polkit) POLKIT=1; shift ;;
         *) erreur "option inconnue : $1 (voir l'en-tête du script)" ;;
     esac
 done
@@ -95,6 +100,35 @@ if [ -n "$WIFI_SSID" ]; then
             wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$WIFI_MDP" connection.autoconnect yes >/dev/null
         echo "Profil créé : le Pi s'y connectera quand ce réseau sera à portée."
     fi
+fi
+
+# --- 1 bis. Droits NetworkManager pour le dashboard (page /wifi) -----------
+# Le dashboard lance nmcli sans sudo, depuis un service systemd : sans
+# session active, polkit lui refuse la création de réseaux. Cette règle
+# autorise l'utilisateur du dépôt (celui des services) pour NetworkManager.
+if [ -n "$POLKIT" ]; then
+    etape "Règle polkit NetworkManager"
+    # Règles JavaScript (.rules) : polkit de Bookworm. Un polkit plus ancien
+    # (Bullseye) attend un fichier .pkla dans localauthority/50-local.d/.
+    sudo test -d /etc/polkit-1/rules.d \
+        || erreur "/etc/polkit-1/rules.d absent : polkit trop ancien pour une règle .rules (voir cat /etc/os-release)"
+    utilisateur="$(stat -c %U "$DEPOT")"
+    regle=/etc/polkit-1/rules.d/50-livredor-networkmanager.rules
+    contenu="polkit.addRule(function(action, subject) {
+    if (action.id.indexOf(\"org.freedesktop.NetworkManager.\") === 0 &&
+        subject.user === \"$utilisateur\") {
+        return polkit.Result.YES;
+    }
+});"
+    if [ "$(sudo cat "$regle" 2>/dev/null)" = "$contenu" ]; then
+        echo "Règle déjà en place pour $utilisateur."
+    else
+        printf '%s\n' "$contenu" | sudo tee "$regle" >/dev/null
+        sudo chmod 644 "$regle"
+        sudo systemctl restart polkit
+        echo "Règle installée pour $utilisateur : $regle"
+    fi
+    sudo -u "$utilisateur" nmcli general permissions | grep -E "wifi|settings.modify" || true
 fi
 
 # --- 2. Code --------------------------------------------------------------

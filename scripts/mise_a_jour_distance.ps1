@@ -4,7 +4,8 @@
 
 .DESCRIPTION
     Attend que le Pi réponde en ssh, puis lui envoie scripts/mise_a_jour.sh et
-    l'exécute : réseau WiFi enregistré (facultatif), code mis à jour,
+    l'exécute : réseau WiFi enregistré (facultatif), règle polkit pour la
+    page /wifi du dashboard (-Polkit), code mis à jour,
     dépendances réinstallées si besoin, puis relance de dashboard et livre-dor
     une fois le téléphone raccroché. Le script voyage avec la commande : le Pi
     n'a pas besoin de l'avoir déjà.
@@ -25,7 +26,8 @@ param(
     [string]$Branche,
     [string]$Depot,          # chemin du dépôt sur le Pi, si introuvable tout seul
     [int]$Intervalle = 30,
-    [switch]$Forcer
+    [switch]$Forcer,
+    [switch]$Polkit          # règle polkit : la page /wifi du dashboard peut créer des réseaux
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,6 +46,7 @@ if ($Wifi)    { $arguments += "--wifi", (Citer $Wifi), "--mdp", (Citer $Mdp) }
 if ($Branche) { $arguments += "--branche", (Citer $Branche) }
 if ($Depot)   { $arguments += "--depot", (Citer $Depot) }
 if ($Forcer)  { $arguments += "--forcer" }
+if ($Polkit)  { $arguments += "--polkit" }
 
 # Joignable = le port ssh répond (un ping ne dit pas que sshd est prêt).
 function Test-Ssh {
