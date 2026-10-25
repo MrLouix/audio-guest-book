@@ -23,6 +23,9 @@ custom_config.json
 dashboard_config.json
 secret_key.txt
 
+# Page de tri pour PC, construite par src/paquet_pc.py (jamais versionnée)
+*.pyz
+
 # Divers
 .DS_Store
 *.log
