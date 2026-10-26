@@ -127,7 +127,9 @@ Depuis un PC Windows, `scripts\mise_a_jour_distance.ps1` attend que le Pi répon
 powershell -ExecutionPolicy Bypass -File scripts\mise_a_jour_distance.ps1 -Utilisateur pi -Wifi "SSID" -Mdp "mot de passe"
 ```
 
-Le mot de passe WiFi n'est jamais écrit dans le dépôt. Options : `-Hote` (défaut `livredor.local`), `-Depot` (chemin du dépôt sur le Pi, sinon `~/livre_dor`, `~/audio-guest-book` ou `~/audio_guest_book`), `-Branche`, `-Forcer`, et `-Polkit` (`--polkit` côté Pi).
+Le Pi est cherché sur le réseau local, puis sur **Tailscale** : si le client Tailscale est installé sur le PC, il fournit l'adresse `100.x.y.z` du Pi (`tailscale ip -4 livredor`), et le nom `livredor` est aussi essayé pour MagicDNS. Le premier qui répond en ssh est retenu. Si le Pi porte un autre nom sur le tailnet : `-Tailscale <nom>` ; pour ne pas le chercher : `-SansTailscale`. À la première connexion par une nouvelle adresse, ssh demande de confirmer l'empreinte du Pi.
+
+Le mot de passe WiFi n'est jamais écrit dans le dépôt. Options : `-Hote` (défaut `livredor.local`, plusieurs adresses possibles séparées par des virgules), `-Depot` (chemin du dépôt sur le Pi, sinon `~/livre_dor`, `~/audio-guest-book` ou `~/audio_guest_book`), `-Branche`, `-Forcer`, et `-Polkit` (`--polkit` côté Pi).
 
 **Page `/wifi` du dashboard et polkit** : le dashboard lance `nmcli` sans sudo, depuis un service systemd, donc sans session active ; polkit lui refuse alors la création de réseaux. `--polkit` pose une règle (`/etc/polkit-1/rules.d/50-livredor-networkmanager.rules`) qui autorise l'utilisateur du dépôt, celui des services, pour toutes les actions NetworkManager, puis affiche `nmcli general permissions` : `org.freedesktop.NetworkManager.settings.modify.system` et les actions wifi doivent y valoir `yes`. Format `.rules` de Bookworm ; sur Bullseye, il faudrait un fichier `.pkla` dans `/etc/polkit-1/localauthority/50-local.d/` (le script s'arrête avec un message).
 
